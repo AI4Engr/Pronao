@@ -4,10 +4,12 @@
 # Fails if any check prints FAIL, if fewer than EXPECTED checks ran, or if the program does not exit 0.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED=91
+EXPECTED=133
 W="${TMPDIR:-/tmp}/app-cling-headless"
 rm -rf "$W"; mkdir -p "$W/work"
 rm -f "$W/t.exe"
+"${CXX:-g++}" --std=c++17 -O1 "$HERE/tests/proc_helper.cpp" -o "$W/proc_helper.exe" || { echo "HELPER BUILD FAILED"; exit 1; }
+export APP_PROC_ECHO="$W/proc_helper.exe"
 WORK="$W/work" bash "$HERE/scripts/build.sh" "$HERE/tests/headless_main.clg" "$W/t.exe" --headless || { echo "BUILD FAILED"; exit 1; }
 [ -f "$W/t.exe" ] || { echo "BUILD FAILED (no binary)"; exit 1; }
 OUT="$("$W/t.exe")"; RC=$?
@@ -23,4 +25,10 @@ OK=1
 FSOUT="$("$W/fs.exe")"; FSRC=$?
 printf '%s\n' "$FSOUT" | grep -v '^PASS'
 [ "$FSRC" -eq 0 ] || OK=0
+
+# launching programs on its own, against the real helper program
+"${CXX:-g++}" --std=c++17 -DAPP_HEADLESS -I "$HERE/shim" "$HERE/tests/proc_shim_test.cpp" "$HERE/shim/app_proc.cpp" "$HERE/shim/app_fs.cpp" -o "$W/proc.exe" || { echo "PROC TEST BUILD FAILED"; exit 1; }
+PROCOUT="$("$W/proc.exe")"; PROCRC=$?
+printf '%s\n' "$PROCOUT" | grep -v '^PASS'
+[ "$PROCRC" -eq 0 ] || OK=0
 [ "$OK" -eq 1 ]

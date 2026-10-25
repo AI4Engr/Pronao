@@ -101,6 +101,38 @@ asynchronous commands, so the rest of the application keeps running while one is
 extensions of letters, digits, `_` and `-`), as are titles and messages (200 and 4000 bytes). Windows only for now (the
 standard Vista dialogs); elsewhere a dialog rejects with `unsupported`.
 
+## Running programs
+
+The application lists which programs may run and with what arguments; the page can only pick one by name and fill in the
+named slots. It never supplies a program, a command line or an option, and there is no shell.
+
+```
+std::vector<string> log;
+log.push_back("log");  log.push_back("-n");  log.push_back("{count:int:1:500}");
+log.push_back("--format=%H%x09%s");  log.push_back("--");  log.push_back("{file:file}");
+log.push_back("@cwd={repo:folder}");                      // the working folder
+app.allowProgram("git.log", "git", log, 10000, 1000000);   // name, program, template, timeout ms, output cap in bytes
+app.enableProcessCommands();
+```
+```js
+const r = await cling.proc.run({ program: 'git.log', args: { count: 20, repo: '.', file: 'src/a.txt' } });
+// { exitCode, stdout, stderr, timedOut, truncated: {stdout, stderr}, lossy }   -- a non-zero exit code is a result, not an error
+```
+Slots: `{n:int:min:max}` a whole number in range; `{n:token}` letters, digits and `. _ - / @ ~ ^ + =`; `{n:text:maxLen}` any
+plain text; `{n:file}` `{n:folder}` `{n:path}` an existing file / folder / either that the file commands could reach,
+passed as its absolute path. A slot that fills a whole argument may not start with `-` (so a value can never be taken for
+an option); one slot per argument; every slot is required; a parameter the template does not have is refused. `@cwd={n:folder}`
+names the working folder, otherwise it is the first allowed folder.
+
+What the shim does with it (`shim/app_proc.cpp`, trusted C++, 43 checks on Windows and 39 under ASan/UBSan on Linux):
+the program is an absolute `.exe` found on `PATH` only, never the current folder (a `.bat` or `.cmd` is refused, because
+`cmd.exe` would re-read the arguments); arguments are quoted with the C runtime's rules and tested with every character a
+command line treats specially; the child has no standard input, no console window and inherits only its three pipes; it
+runs inside a job object (a process group on Linux), so on a timeout, or if it leaves something behind, the whole tree is
+killed; output is capped per stream and drained past the cap; text that is not valid UTF-8 is repaired (`lossy: true`).
+Not covered: what the program itself does (`git` with a hostile repository, for instance), environment variables (they
+are inherited), and a program that parses its command line in a non-standard way.
+
 ## What is and is not checked
 
 CeeLing checks the command table and everything the commands do with their own data: no dangling references, no
@@ -133,7 +165,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 91 end-to-end checks, no window
+bash tests/run_headless.sh            # 133 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```

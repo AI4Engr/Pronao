@@ -49,6 +49,11 @@ int app_fs_grant_file(std::string path, std::string& canonical);
 int app_fs_grant_folder(std::string path, std::string& canonical);
 int app_fs_revoke_grants();
 
+// Resolves an EXISTING path that the file commands could reach to its canonical absolute form (links resolved), or
+// fails exactly as they would. kind: 0 anything, 1 a file, 2 a folder (APP_FS_IS_DIR / APP_FS_NOT_DIR otherwise).
+// This is how a page-supplied path or working folder is vetted before it is handed to a program.
+int app_fs_resolve(std::string path, int kind, std::string& canonical);
+
 // Reads a whole file. Fails with APP_FS_TOO_LARGE, without reading it, if it is larger than `max_bytes`.
 int app_fs_read(std::string path, int max_bytes, std::string& out);
 

@@ -35,13 +35,13 @@ for variant in work work_pool; do
         echo 'std::string app_page_html() { return ""; }'
     } > "$BASE/$variant/embedded.cpp"
 done
-cp "$HERE/shim/app_shim.cpp" "$HERE/shim/app_fs.cpp" "$HERE/shim/app_fs.h" "$HERE/shim/app_dialog.cpp" "$HERE/shim/app_dialog.h" "$HERE/shim/app_shim_internal.h" "$BASE/shim/"
-cp "$HERE/tests/queue_stress.cpp" "$HERE/tests/fs_shim_test.cpp" "$HERE/tests/wsl_run.sh" "$BASE/"
+cp "$HERE/shim/app_shim.cpp" "$HERE/shim/app_fs.cpp" "$HERE/shim/app_fs.h" "$HERE/shim/app_dialog.cpp" "$HERE/shim/app_dialog.h" "$HERE/shim/app_proc.cpp" "$HERE/shim/app_proc.h" "$HERE/shim/app_shim_internal.h" "$BASE/shim/"
+cp "$HERE/tests/queue_stress.cpp" "$HERE/tests/fs_shim_test.cpp" "$HERE/tests/proc_shim_test.cpp" "$HERE/tests/proc_helper.cpp" "$HERE/tests/wsl_run.sh" "$BASE/"
 # negative controls: a shim with the lock removed in one function
 dropLock() { # <function name prefix> <out dir>
     awk -v fn="$1" '$0 ~ "^int " fn {infn=1} infn && /std::lock_guard<std::mutex> lock\(app->m\);/ {infn=0; next} {print}' \
         "$HERE/shim/app_shim.cpp" > "$2/app_shim.cpp"
-    cp "$HERE/shim/app_shim.h" "$HERE/shim/app_fs.h" "$HERE/shim/app_fs.cpp" "$HERE/shim/app_dialog.cpp" "$HERE/shim/app_dialog.h" "$HERE/shim/app_shim_internal.h" "$2/"
+    cp "$HERE/shim/app_shim.h" "$HERE/shim/app_fs.h" "$HERE/shim/app_fs.cpp" "$HERE/shim/app_dialog.cpp" "$HERE/shim/app_dialog.h" "$HERE/shim/app_proc.cpp" "$HERE/shim/app_proc.h" "$HERE/shim/app_shim_internal.h" "$2/"
     if cmp -s "$HERE/shim/app_shim.cpp" "$2/app_shim.cpp"; then echo "NEGATIVE CONTROL SETUP FAILED ($1: nothing removed)"; exit 1; fi
 }
 dropLock app_test_inject "$BASE/shim_nolock"

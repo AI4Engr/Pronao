@@ -10,6 +10,7 @@ ext_fn int app_fs_test_make_dir_link(string link, string target);
 ext_fn int app_fs_allow(string dir);
 ext_fn int app_dialog_test_push(string answer);
 ext_fn int app_dialog_test_take_request(ref string request);
+ext_fn int app_proc_test_helper(ref string path);
 
 void check(string name, bool ok) {
     if (ok) {
@@ -598,5 +599,347 @@ int main() {
     check("with nothing scripted the dialog is unsupported", startsWith(roundTrip(app, "d23", requestText("dialog.folder", createObject())), "1 {\"code\":\"unsupported\""));
     app_fs_clear();
     app_fs_test_remove_tree(dbase);
+
+    // ---- program commands: the page names an entry of a table, never a command line ---------------------
+    string helper = "";
+    app_proc_test_helper(helper);
+    string pbase = "";
+    app_fs_test_make_temp_dir(pbase);
+    app_fs_allow(pbase);
+    app_fs_write(pbase + "/f.txt", "file", 0);
+    app_fs_mkdir(pbase + "/sub", 0);
+    string pout = "";
+    app_fs_test_make_temp_dir(pout);
+
+    std::vector<string> pEcho;
+    pEcho.push_back("fixed");
+    pEcho.push_back("{a:text:50}");
+    pEcho.push_back("n={n:int:1:100}");
+    pEcho.push_back("{t:token}");
+    pEcho.push_back("--file={f:file}");
+    pEcho.push_back("@cwd={dir:folder}");
+    check("allowProgram accepts a good template", app.allowProgram("echo", helper, pEcho, 5000, 100000));
+
+    std::vector<string> pExit;
+    pExit.push_back("--exit");
+    pExit.push_back("{code:int:0:255}");
+    pExit.push_back("@cwd={dir:folder}");
+    std::vector<string> pSleepy;
+    pSleepy.push_back("--sleep");
+    pSleepy.push_back("{ms:int:0:60000}");
+    pSleepy.push_back("@cwd={dir:folder}");
+    std::vector<string> pBig;
+    pBig.push_back("--big");
+    pBig.push_back("{n:int:0:5000000}");
+    pBig.push_back("@cwd={dir:folder}");
+    std::vector<string> pBytes;
+    pBytes.push_back("--bytes");
+    pBytes.push_back("{hex:token}");
+    pBytes.push_back("@cwd={dir:folder}");
+    std::vector<string> pSleeper;
+    pSleeper.push_back("--leave-sleeper");
+    pSleeper.push_back("@cwd={dir:folder}");
+    std::vector<string> pCwd;
+    pCwd.push_back("--cwd");
+    pCwd.push_back("@cwd={dir:folder}");
+    std::vector<string> pWhere;
+    pWhere.push_back("--cwd");
+    app.allowProgram("exit", helper, pExit, 5000, 1000);
+    app.allowProgram("sleepy", helper, pSleepy, 300, 1000);
+    app.allowProgram("big", helper, pBig, 20000, 1000);
+    app.allowProgram("bytes", helper, pBytes, 5000, 1000);
+    app.allowProgram("sleeper", helper, pSleeper, 20000, 1000);
+    app.allowProgram("cwd", helper, pCwd, 5000, 1000);
+    app.allowProgram("where", helper, pWhere, 5000, 1000);
+    app.enableProcessCommands();
+
+    // the template itself is checked when it is registered
+    std::vector<string> bad1;
+    bad1.push_back("{a:wrongkind}");
+    std::vector<string> bad2;
+    bad2.push_back("{a:int:5}");
+    std::vector<string> bad3;
+    bad3.push_back("x{a:text:5}{b:text:5}");
+    std::vector<string> bad4;
+    bad4.push_back("{a:text:5");
+    std::vector<string> bad5;
+    bad5.push_back("@cwd={a:folder}");
+    bad5.push_back("@cwd={b:folder}");
+    std::vector<string> bad6;
+    bad6.push_back("{a:text:5}");
+    bad6.push_back("{a:token}");
+    std::vector<string> bad7;
+    bad7.push_back("@cwd={a:file}");
+    std::vector<string> bad8;
+    bad8.push_back("{a:int:9:3}");
+    std::vector<string> fine;
+    check("a slot of an unknown kind is refused", !app.allowProgram("t1", helper, bad1, 1000, 1000));
+    check("an int slot needs min and max", !app.allowProgram("t2", helper, bad2, 1000, 1000));
+    check("two slots in one argument are refused", !app.allowProgram("t3", helper, bad3, 1000, 1000));
+    check("an unclosed brace is refused", !app.allowProgram("t4", helper, bad4, 1000, 1000));
+    check("two working folders are refused", !app.allowProgram("t5", helper, bad5, 1000, 1000));
+    check("the same slot name twice is refused", !app.allowProgram("t6", helper, bad6, 1000, 1000));
+    check("the working folder must be a folder slot", !app.allowProgram("t7", helper, bad7, 1000, 1000));
+    check("an int range must be ordered", !app.allowProgram("t8", helper, bad8, 1000, 1000));
+    check("a program that does not exist is refused", !app.allowProgram("t9", pbase + "/nothing.exe", fine, 1000, 1000));
+    check("a bare name that is not on PATH is refused", !app.allowProgram("t10", "surely-not-installed-xyz", fine, 1000, 1000));
+    check("a name with a space is refused", !app.allowProgram("has space", helper, fine, 1000, 1000));
+    check("a taken name is refused", !app.allowProgram("echo", helper, fine, 1000, 1000));
+    check("a timeout below 100 ms is refused", !app.allowProgram("t11", helper, fine, 50, 1000));
+    check("a relative program path is refused", !app.allowProgram("t12", "./helper.exe", fine, 1000, 1000));
+
+    Item eArgs = createObject();
+    addStringToObject(eArgs, "a", "plain");
+    addNumberToObject(eArgs, "n", 7.0);
+    addStringToObject(eArgs, "t", "main");
+    addStringToObject(eArgs, "f", "f.txt");
+    addStringToObject(eArgs, "dir", pbase);
+    Item eReq = createObject();
+    addStringToObject(eReq, "program", "echo");
+    addItemToObject(eReq, "args", eArgs);
+    string eReply = roundTrip(app, "p1", requestText("proc.run", eReq));
+    check("a program runs and its output comes back", startsWith(eReply, "0 {\"exitCode\":0,\"stdout\":\"[1]=fixed") && containsText(eReply, "[3]=n=7") &&
+          containsText(eReply, "[4]=main") && containsText(eReply, "f.txt") && containsText(eReply, "\"timedOut\":false"));
+
+    // shell characters in a value stay inside ONE argument
+    Item i1 = createObject();
+    addStringToObject(i1, "a", "x; calc & echo hi | find > out");
+    addNumberToObject(i1, "n", 1.0);
+    addStringToObject(i1, "t", "main");
+    addStringToObject(i1, "f", "f.txt");
+    addStringToObject(i1, "dir", pbase);
+    Item iReq = createObject();
+    addStringToObject(iReq, "program", "echo");
+    addItemToObject(iReq, "args", i1);
+    string iReply = roundTrip(app, "p2", requestText("proc.run", iReq));
+    check("shell characters are not interpreted", containsText(iReply, "[2]=x; calc & echo hi | find > out") && containsText(iReply, "\"exitCode\":0"));
+
+    Item optionLike = createObject();
+    addStringToObject(optionLike, "a", "--help");
+    addNumberToObject(optionLike, "n", 1.0);
+    addStringToObject(optionLike, "t", "main");
+    addStringToObject(optionLike, "f", "f.txt");
+    addStringToObject(optionLike, "dir", pbase);
+    Item oReq = createObject();
+    addStringToObject(oReq, "program", "echo");
+    addItemToObject(oReq, "args", optionLike);
+    check("a whole argument cannot start with a dash", startsWith(roundTrip(app, "p3", requestText("proc.run", oReq)), "1 {\"code\":\"invalid_argument\""));
+
+    Item tokenBad = createObject();
+    addStringToObject(tokenBad, "a", "ok");
+    addNumberToObject(tokenBad, "n", 1.0);
+    addStringToObject(tokenBad, "t", "a;b");
+    addStringToObject(tokenBad, "f", "f.txt");
+    addStringToObject(tokenBad, "dir", pbase);
+    Item tReq = createObject();
+    addStringToObject(tReq, "program", "echo");
+    addItemToObject(tReq, "args", tokenBad);
+    check("a token with a semicolon is refused", startsWith(roundTrip(app, "p4", requestText("proc.run", tReq)), "1 {\"code\":\"invalid_argument\""));
+
+    Item intBad = createObject();
+    addStringToObject(intBad, "a", "ok");
+    addNumberToObject(intBad, "n", 101.0);
+    addStringToObject(intBad, "t", "main");
+    addStringToObject(intBad, "f", "f.txt");
+    addStringToObject(intBad, "dir", pbase);
+    Item nReq = createObject();
+    addStringToObject(nReq, "program", "echo");
+    addItemToObject(nReq, "args", intBad);
+    check("an int above its range is refused", startsWith(roundTrip(app, "p5", requestText("proc.run", nReq)), "1 {\"code\":\"invalid_argument\""));
+    Item intFrac = createObject();
+    addStringToObject(intFrac, "a", "ok");
+    addNumberToObject(intFrac, "n", 1.5);
+    addStringToObject(intFrac, "t", "main");
+    addStringToObject(intFrac, "f", "f.txt");
+    addStringToObject(intFrac, "dir", pbase);
+    Item fReq = createObject();
+    addStringToObject(fReq, "program", "echo");
+    addItemToObject(fReq, "args", intFrac);
+    check("a fraction is not an int", startsWith(roundTrip(app, "p6", requestText("proc.run", fReq)), "1 {\"code\":\"invalid_argument\""));
+    Item intStr = createObject();
+    addStringToObject(intStr, "a", "ok");
+    addStringToObject(intStr, "n", "5");
+    addStringToObject(intStr, "t", "main");
+    addStringToObject(intStr, "f", "f.txt");
+    addStringToObject(intStr, "dir", pbase);
+    Item sReq = createObject();
+    addStringToObject(sReq, "program", "echo");
+    addItemToObject(sReq, "args", intStr);
+    check("a string is not an int", startsWith(roundTrip(app, "p7", requestText("proc.run", sReq)), "1 {\"code\":\"invalid_argument\""));
+
+    Item fileOutside = createObject();
+    addStringToObject(fileOutside, "a", "ok");
+    addNumberToObject(fileOutside, "n", 1.0);
+    addStringToObject(fileOutside, "t", "main");
+    addStringToObject(fileOutside, "f", pout + "/secret.txt");
+    addStringToObject(fileOutside, "dir", pbase);
+    Item oReq2 = createObject();
+    addStringToObject(oReq2, "program", "echo");
+    addItemToObject(oReq2, "args", fileOutside);
+    check("a file slot outside the allowed folders is forbidden", startsWith(roundTrip(app, "p8", requestText("proc.run", oReq2)), "1 {\"code\":\"forbidden\""));
+    Item fileEscape = createObject();
+    addStringToObject(fileEscape, "a", "ok");
+    addNumberToObject(fileEscape, "n", 1.0);
+    addStringToObject(fileEscape, "t", "main");
+    addStringToObject(fileEscape, "f", "../outside.txt");
+    addStringToObject(fileEscape, "dir", pbase);
+    Item eReq2 = createObject();
+    addStringToObject(eReq2, "program", "echo");
+    addItemToObject(eReq2, "args", fileEscape);
+    check("a file slot with dot-dot is forbidden", startsWith(roundTrip(app, "p9", requestText("proc.run", eReq2)), "1 {\"code\":\"forbidden\""));
+    Item fileMissing = createObject();
+    addStringToObject(fileMissing, "a", "ok");
+    addNumberToObject(fileMissing, "n", 1.0);
+    addStringToObject(fileMissing, "t", "main");
+    addStringToObject(fileMissing, "f", "missing.txt");
+    addStringToObject(fileMissing, "dir", pbase);
+    Item mReq = createObject();
+    addStringToObject(mReq, "program", "echo");
+    addItemToObject(mReq, "args", fileMissing);
+    check("a missing file is not_found", startsWith(roundTrip(app, "p10", requestText("proc.run", mReq)), "1 {\"code\":\"not_found\""));
+    Item fileIsDir = createObject();
+    addStringToObject(fileIsDir, "a", "ok");
+    addNumberToObject(fileIsDir, "n", 1.0);
+    addStringToObject(fileIsDir, "t", "main");
+    addStringToObject(fileIsDir, "f", "sub");
+    addStringToObject(fileIsDir, "dir", pbase);
+    Item dReq = createObject();
+    addStringToObject(dReq, "program", "echo");
+    addItemToObject(dReq, "args", fileIsDir);
+    check("a folder where a file is wanted", startsWith(roundTrip(app, "p11", requestText("proc.run", dReq)), "1 {\"code\":\"is_directory\""));
+
+    Item extra = createObject();
+    addStringToObject(extra, "a", "ok");
+    addNumberToObject(extra, "n", 1.0);
+    addStringToObject(extra, "t", "main");
+    addStringToObject(extra, "f", "f.txt");
+    addStringToObject(extra, "dir", pbase);
+    addStringToObject(extra, "extra", "--delete-everything");
+    Item xReq = createObject();
+    addStringToObject(xReq, "program", "echo");
+    addItemToObject(xReq, "args", extra);
+    check("a parameter the template does not have is refused", containsText(roundTrip(app, "p12", requestText("proc.run", xReq)), "`extra` is not a parameter of echo"));
+    Item lacking = createObject();
+    addStringToObject(lacking, "a", "ok");
+    Item lReq = createObject();
+    addStringToObject(lReq, "program", "echo");
+    addItemToObject(lReq, "args", lacking);
+    check("a missing parameter is refused", startsWith(roundTrip(app, "p13", requestText("proc.run", lReq)), "1 {\"code\":\"invalid_argument\""));
+
+    Item unknown = createObject();
+    addStringToObject(unknown, "program", "rm");
+    check("an unregistered program name", startsWith(roundTrip(app, "p14", requestText("proc.run", unknown)), "1 {\"code\":\"unknown_program\""));
+    Item pathProgram = createObject();
+    addStringToObject(pathProgram, "program", helper);
+    check("a program path from the page is just an unknown name", startsWith(roundTrip(app, "p15", requestText("proc.run", pathProgram)), "1 {\"code\":\"unknown_program\""));
+    check("the program name must be given", startsWith(roundTrip(app, "p16", requestText("proc.run", createObject())), "1 {\"code\":\"invalid_argument\""));
+    Item argsNotObject = createObject();
+    addStringToObject(argsNotObject, "program", "echo");
+    addStringToObject(argsNotObject, "args", "-rf /");
+    check("args must be an object", startsWith(roundTrip(app, "p17", requestText("proc.run", argsNotObject)), "1 {\"code\":\"invalid_argument\""));
+
+    Item exitArgs = createObject();
+    addNumberToObject(exitArgs, "code", 7.0);
+    addStringToObject(exitArgs, "dir", pbase);
+    Item xitReq = createObject();
+    addStringToObject(xitReq, "program", "exit");
+    addItemToObject(xitReq, "args", exitArgs);
+    string xitReply = roundTrip(app, "p18", requestText("proc.run", xitReq));
+    check("a non-zero exit code is a result, not an error", startsWith(xitReply, "0 {\"exitCode\":7,") && containsText(xitReply, "\"timedOut\":false"));
+
+    Item sleepArgs = createObject();
+    addNumberToObject(sleepArgs, "ms", 20000.0);
+    addStringToObject(sleepArgs, "dir", pbase);
+    Item slReq = createObject();
+    addStringToObject(slReq, "program", "sleepy");
+    addItemToObject(slReq, "args", sleepArgs);
+    string slReply = roundTrip(app, "p19", requestText("proc.run", slReq));
+    check("a program over its time limit is killed", startsWith(slReply, "0 {\"exitCode\":-1,") && containsText(slReply, "\"timedOut\":true"));
+
+    Item bigArgs2 = createObject();
+    addNumberToObject(bigArgs2, "n", 1000000.0);
+    addStringToObject(bigArgs2, "dir", pbase);
+    Item bgReq = createObject();
+    addStringToObject(bgReq, "program", "big");
+    addItemToObject(bgReq, "args", bigArgs2);
+    string bgReply = roundTrip(app, "p20", requestText("proc.run", bgReq));
+    check("output beyond the cap is cut and says so", containsText(bgReply, "\"truncated\":{\"stdout\":true,\"stderr\":false}") && bgReply.length() < 2000);
+
+    Item bytesArgs = createObject();
+    addStringToObject(bytesArgs, "hex", "41ff42");
+    addStringToObject(bytesArgs, "dir", pbase);
+    Item byReq = createObject();
+    addStringToObject(byReq, "program", "bytes");
+    addItemToObject(byReq, "args", bytesArgs);
+    string byReply = roundTrip(app, "p21", requestText("proc.run", byReq));
+    check("output that is not UTF-8 is cleaned and flagged", containsText(byReply, "\"lossy\":true") && containsText(byReply, "A") && startsWith(byReply, "0 {"));
+
+    Item sleeperArgs = createObject();
+    addStringToObject(sleeperArgs, "dir", pbase);
+    Item spReq = createObject();
+    addStringToObject(spReq, "program", "sleeper");
+    addItemToObject(spReq, "args", sleeperArgs);
+    string spReply = roundTrip(app, "p22", requestText("proc.run", spReq));
+    check("something left running behind the program is killed", containsText(spReply, "left a sleeper") && containsText(spReply, "\"exitCode\":0"));
+
+    Item cwdIn = createObject();
+    addStringToObject(cwdIn, "dir", pbase + "/sub");
+    Item cwReq = createObject();
+    addStringToObject(cwReq, "program", "cwd");
+    addItemToObject(cwReq, "args", cwdIn);
+    check("the working folder is the one named", containsText(roundTrip(app, "p23", requestText("proc.run", cwReq)), "sub"));
+    Item cwdOut = createObject();
+    addStringToObject(cwdOut, "dir", pout);
+    Item cwReq2 = createObject();
+    addStringToObject(cwReq2, "program", "cwd");
+    addItemToObject(cwReq2, "args", cwdOut);
+    check("a working folder outside the allowed folders is forbidden", startsWith(roundTrip(app, "p24", requestText("proc.run", cwReq2)), "1 {\"code\":\"forbidden\""));
+    Item cwdFile = createObject();
+    addStringToObject(cwdFile, "dir", "f.txt");
+    Item cwReq3 = createObject();
+    addStringToObject(cwReq3, "program", "cwd");
+    addItemToObject(cwReq3, "args", cwdFile);
+    check("a file is not a working folder", startsWith(roundTrip(app, "p25", requestText("proc.run", cwReq3)), "1 {\"code\":\"not_directory\""));
+    Item whereReq = createObject();
+    addStringToObject(whereReq, "program", "where");
+    check("without a working folder it is the first allowed folder", containsText(roundTrip(app, "p26", requestText("proc.run", whereReq)), "app-cling-fs-"));
+
+    // many at once: the pool serves them, every one is answered with its own result
+    int pn = 0;
+    while (pn < 24) {
+        Item eachArgs = createObject();
+        addNumberToObject(eachArgs, "code", double(pn));
+        addStringToObject(eachArgs, "dir", pbase);
+        Item eachReq = createObject();
+        addStringToObject(eachReq, "program", "exit");
+        addItemToObject(eachReq, "args", eachArgs);
+        app_test_inject(app.handle, "q" + intToString(pn), requestText("proc.run", eachReq));
+        pn = pn + 1;
+    }
+    app_test_close_window(app.handle);
+    app.run();
+    int pmatched = 0;
+    pn = 0;
+    while (pn < 24) {
+        string qid = "";
+        int qst = 0;
+        string qbody = "";
+        if (app_test_take_response(app.handle, qid, qst, qbody) == 1 && qst == 0 && qid.length() >= 2) {
+            int idx = 0;
+            int pos = 1;
+            while (pos < qid.length()) {
+                idx = idx * 10 + (int(qid[pos]) - 48);
+                pos = pos + 1;
+            }
+            if (startsWith(qbody, "{\"exitCode\":" + intToString(idx) + ",")) {
+                pmatched = pmatched + 1;
+            }
+        }
+        pn = pn + 1;
+    }
+    check("24 programs at once, each answered with its own exit code", pmatched == 24);
+    app_fs_clear();
+    app_fs_test_remove_tree(pbase);
+    app_fs_test_remove_tree(pout);
     return 0;
 }

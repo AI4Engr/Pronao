@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$1"
 fail=0
-EXPECTED=91
+EXPECTED=133
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print app headless_main embedded"
@@ -19,16 +19,20 @@ build_headless() { # variant shimdir flags exe
     g++ --std=c++14 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_shim.cpp" -o "$1/shim.$4.o" || return 1
     g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_fs.cpp" -o "$1/fs.$4.o" || return 1
     g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_dialog.cpp" -o "$1/dialog.$4.o" || return 1
-    g++ $3 $objs "$1/shim.$4.o" "$1/fs.$4.o" "$1/dialog.$4.o" -pthread -o "$4" || return 1
+    g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_proc.cpp" -o "$1/proc.$4.o" || return 1
+    g++ $3 $objs "$1/shim.$4.o" "$1/fs.$4.o" "$1/dialog.$4.o" "$1/proc.$4.o" -pthread -o "$4" || return 1
 }
 # TSan needs ASLR off on some WSL kernels (its shadow-memory mapping fails otherwise)
 run_tsan() { # exe out
-    TSAN_OPTIONS=halt_on_error=0 setarch "$(uname -m)" -R "./$1" > "$2" 2>&1
+    APP_PROC_ECHO="$PWD/proc_helper" TSAN_OPTIONS=halt_on_error=0 setarch "$(uname -m)" -R "./$1" > "$2" 2>&1
 }
+
+# the program the process tests run (every section below that needs it finds it through APP_PROC_ECHO)
+g++ --std=c++17 -O1 proc_helper.cpp -o proc_helper || { echo "HELPER BUILD FAILED"; exit 1; }
 
 echo "== ASan+UBSan: CeeLing end-to-end tests (includes real worker threads)"
 build_headless work shim "$ASAN" headless.asan || { echo "BUILD FAILED"; exit 1; }
-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1 ./headless.asan > headless.asan.out 2>&1
+APP_PROC_ECHO="$PWD/proc_helper" ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1 ./headless.asan > headless.asan.out 2>&1
 rc=$?; pass=$(grep -c '^PASS ' headless.asan.out); bad=$(grep -c '^FAIL ' headless.asan.out)
 echo "   exit $rc, $pass passed, $bad failed"
 if [ $rc -ne 0 ] || [ "$pass" -ne $EXPECTED ] || [ "$bad" -ne 0 ]; then tail -30 headless.asan.out; fail=1; fi
@@ -38,6 +42,12 @@ g++ --std=c++17 $ASAN -DAPP_HEADLESS -I shim fs_shim_test.cpp shim/app_fs.cpp -o
 ASAN_OPTIONS=detect_leaks=1 ./fs.asan > fs.asan.out 2>&1; rc=$?
 echo "   exit $rc: $(tail -1 fs.asan.out)"
 [ $rc -eq 0 ] || { grep -v '^PASS' fs.asan.out | head -30; fail=1; }
+
+echo "== ASan+UBSan: program launching shim (real child processes)"
+g++ --std=c++17 $ASAN -DAPP_HEADLESS -I shim proc_shim_test.cpp shim/app_proc.cpp shim/app_fs.cpp -o proc.asan || exit 1
+APP_PROC_ECHO="$PWD/proc_helper" ASAN_OPTIONS=detect_leaks=1 ./proc.asan > proc.asan.out 2>&1; rc=$?
+echo "   exit $rc: $(tail -1 proc.asan.out)"
+[ $rc -eq 0 ] || { grep -v '^PASS' proc.asan.out | head -30; fail=1; }
 
 echo "== ASan+UBSan: queue stress"
 g++ --std=c++14 $ASAN -DAPP_HEADLESS -I shim queue_stress.cpp shim/app_shim.cpp -pthread -o stress.asan || exit 1

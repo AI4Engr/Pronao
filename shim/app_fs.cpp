@@ -404,6 +404,24 @@ int app_fs_revoke_grants() {
     return APP_FS_OK;
 }
 
+int app_fs_resolve(std::string path, int kind, std::string& canonical) {
+    std::wstring full;
+    int st = resolve(path, full);
+    if (st != APP_FS_OK) return st;
+    Handle h;
+    h.h = CreateFileW(full.c_str(), FILE_READ_ATTRIBUTES, kShareAll, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (!h.ok()) return mapError(GetLastError());
+    std::wstring fin;
+    if (!finalPathOf(h.h, fin) || !insideAnyFinal(fin)) return APP_FS_FORBIDDEN;
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(h.h, &info)) return APP_FS_IO;
+    const bool isDir = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    if (kind == 1 && isDir) return APP_FS_IS_DIR;
+    if (kind == 2 && !isDir) return APP_FS_NOT_DIR;
+    canonical = narrow(plainOf(fin));
+    return APP_FS_OK;
+}
+
 int app_fs_read(std::string path, int max_bytes, std::string& out) {
     std::wstring full;
     int st = resolve(path, full);
@@ -846,6 +864,24 @@ int app_fs_revoke_grants() {
     std::vector<Root> kept;
     for (const auto& r : g_roots) if (!r.grant) kept.push_back(r);
     g_roots.swap(kept);
+    return APP_FS_OK;
+}
+
+int app_fs_resolve(std::string path, int kind, std::string& canonical) {
+    std::string full;
+    int st = resolve(path, full);
+    if (st != APP_FS_OK) return st;
+    Fd f;
+    f.fd = open(full.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
+    if (!f.ok()) return mapErrno(errno);
+    std::string fin;
+    if (!fdPath(f.fd, fin) || !insideAny(fin)) return APP_FS_FORBIDDEN;
+    struct stat sb;
+    if (fstat(f.fd, &sb) != 0) return APP_FS_IO;
+    const bool isDir = S_ISDIR(sb.st_mode);
+    if (kind == 1 && isDir) return APP_FS_IS_DIR;
+    if (kind == 2 && !isDir) return APP_FS_NOT_DIR;
+    canonical = fin;
     return APP_FS_OK;
 }
 

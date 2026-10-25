@@ -43,6 +43,12 @@ ext_fn int app_fs_is_utf8(string s);
 ext_fn int app_fs_grant_file(string path, ref string canonical);
 ext_fn int app_fs_grant_folder(string path, ref string canonical);
 ext_fn int app_fs_revoke_grants();
+ext_fn int app_fs_resolve(string path, int kind, ref string canonical);
+
+// running programs (shim/app_proc.h)
+ext_fn int app_proc_resolve(string name, ref string absolute);
+ext_fn int app_proc_run(string exe, string args, string cwd, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
+ext_fn int app_proc_clean_text(string in, ref string out);
 
 // native dialogs (shim/app_dialog.h)
 ext_fn int app_dialog_open_file(int handle, string title, string filters, ref string path);
@@ -566,15 +572,313 @@ string buttonName(int button) {
     return "cancel";
 }
 
+// ---- program commands -----------------------------------------------------------------------------
+// The application declares WHICH programs may run and with what arguments (allowProgram); a page can only ask for one
+// of them by name and fill in the named slots of its argument template. It never supplies a program name, a command
+// line or an option: there is no shell, every argument is a separate string, and a slot value that could be read as an
+// option (a leading '-') is refused when the slot is a whole argument. The shim (app_proc.cpp) runs the program with no
+// stdin, a time limit, an output cap, and kills everything it started.
+//
+//     app.allowProgram("git.log", "git",
+//         ["log", "-n", "{count:int:1:500}", "--format=%H%x09%s", "--", "{file:file}", "@cwd={repo:folder}"], 10000, 1000000);
+//     // page:  cling.proc.run({ program: "git.log", args: { count: 20, repo: ".", file: "src/a.txt" } })
+//
+// An argument is literal text, or literal text around ONE slot  {name:kind[:a[:b]]}  with kind
+//   int:min:max   a whole number from min to max        token   letters, digits and . _ - / @ ~ ^ + = (max 200)
+//   text:maxLen   any text of at most maxLen bytes      file / folder / path   an existing file, folder or either that
+//                                                       the file commands could reach (passed as its absolute path)
+// The element "@cwd={name:folder}" (at most one) names the working folder; without it the program runs in the first
+// folder the application allowed.
+
+class ProgramSpec {
+public:
+    string name;
+    string exe;
+    std::vector<string> elements;
+    std::vector<string> slotNames;
+    int timeoutMs;
+    int maxBytes;
+    ProgramSpec(string n, string e, int t, int m) {
+        name = n;
+        exe = e;
+        timeoutMs = t;
+        maxBytes = m;
+    }
+};
+
+class ProgramRegistry {
+public:
+    std::vector<ProgramSpec> specs;
+    ProgramRegistry() { }
+    int indexOf(string name) {
+        int i = 0;
+        while (i < specs.size()) {
+            ProgramSpec spec = specs[i];
+            if (spec.name == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+};
+
+std::vector<string> splitOn(string s, char sep) {
+    std::vector<string> parts;
+    string current = "";
+    int i = 0;
+    while (i < s.length()) {
+        if (s[i] == sep) {
+            parts.push_back(current);
+            current = "";
+        } else {
+            current.push_back(s[i]);
+        }
+        i = i + 1;
+    }
+    parts.push_back(current);
+    return parts;
+}
+
+int indexOfChar(string s, char c) {
+    int i = 0;
+    while (i < s.length()) {
+        if (s[i] == c) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+bool isDigits(string s) {
+    if (s.length() == 0 || s.length() > 9) {
+        return false;
+    }
+    int i = 0;
+    while (i < s.length()) {
+        if (s[i] < '0' || s[i] > '9') {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// "count:int:1:500", "ref:token", "msg:text:80", "f:file" -- is the slot text well formed?
+bool slotSpecOk(string text) {
+    std::vector<string> p = splitOn(text, ':');
+    if (p.size() < 2) {
+        return false;
+    }
+    string slotName = p[0];
+    if (slotName.length() == 0 || slotName.length() > 40) {
+        return false;
+    }
+    int i = 0;
+    while (i < slotName.length()) {
+        char c = slotName[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (!ok) {
+            return false;
+        }
+        i = i + 1;
+    }
+    if (p[1] == "int") {
+        return p.size() == 4 && isDigits(p[2]) && isDigits(p[3]) && decimalValue(p[2]) <= decimalValue(p[3]);
+    }
+    if (p[1] == "text") {
+        return p.size() == 3 && isDigits(p[2]) && decimalValue(p[2]) >= 1.0 && decimalValue(p[2]) <= 100000.0;
+    }
+    if (p[1] == "token" || p[1] == "file" || p[1] == "folder" || p[1] == "path") {
+        return p.size() == 2;
+    }
+    return false;
+}
+
+// where the slot sits in an element: the index of '{' (or -1) -- an element has at most one, and it must close
+int slotOpen(string element) {
+    return indexOfChar(element, '{');
+}
+
+int slotClose(string element) {
+    return indexOfChar(element, '}');
+}
+
+void argError(string name, string what) {
+    string message = "invalid_argument: `" + name + "` " + what;
+    throw message;
+}
+
+bool tokenChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' ||
+           c == '/' || c == '@' || c == '~' || c == '^' || c == '+' || c == '=';
+}
+
+// The checked text for one slot. `whole` = the slot is the entire argument, so a leading '-' could be read as an option.
+string slotValue(string slotText, Item args, bool whole) {
+    std::vector<string> p = splitOn(slotText, ':');
+    string name = p[0];
+    string kind = p[1];
+    Item v = getObjectItem(args, name);
+    if (v == nullptr) {
+        argError(name, "is missing");
+        return "";
+    }
+    if (kind == "int") {
+        if (!isNumber(v)) {
+            argError(name, "must be a number");
+            return "";
+        }
+        double x = v.valuedouble;
+        double lo = decimalValue(p[2]);
+        double hi = decimalValue(p[3]);
+        if (x != double(int(x)) || x < lo || x > hi) {
+            argError(name, "must be a whole number from " + p[2] + " to " + p[3]);
+            return "";
+        }
+        return intToString(int(x));
+    }
+    if (!isString(v)) {
+        argError(name, "must be a string");
+        return "";
+    }
+    string text = v.valuestring;
+    if (kind == "token") {
+        if (text.length() == 0 || text.length() > 200) {
+            argError(name, "must be 1 to 200 characters");
+            return "";
+        }
+        int i = 0;
+        while (i < text.length()) {
+            if (!tokenChar(text[i])) {
+                argError(name, "may only contain letters, digits and . _ - / @ ~ ^ + =");
+                return "";
+            }
+            i = i + 1;
+        }
+    } else if (kind == "text") {
+        if (text.length() > int(decimalValue(p[2]))) {
+            argError(name, "is too long");
+            return "";
+        }
+        if (app_fs_is_utf8(text) == 0 || indexOfChar(text, char(0)) >= 0) {
+            argError(name, "must be plain text");
+            return "";
+        }
+    } else {
+        int want = 0;
+        if (kind == "file") {
+            want = 1;
+        } else if (kind == "folder") {
+            want = 2;
+        }
+        string canonical = "";
+        int status = app_fs_resolve(text, want, canonical);
+        if (status != 0) {
+            string message = fsCodeFor(status) + ": cannot use " + text;
+            throw message;
+        }
+        return canonical;
+    }
+    if (whole && text.length() > 0 && text[0] == '-') {
+        argError(name, "must not start with '-'");
+        return "";
+    }
+    return text;
+}
+
+// The element with its slot replaced by the checked value.
+string renderElement(string element, Item args) {
+    int open = slotOpen(element);
+    if (open < 0) {
+        return element;
+    }
+    int close = slotClose(element);
+    string slotText = element.substr(open + 1, close - open - 1);
+    bool whole = open == 0 && close == element.length() - 1;
+    string value = slotValue(slotText, args, whole);
+    return element.substr(0, open) + value + element.substr(close + 1, element.length() - close - 1);
+}
+
+// Replies for a finished program: {exitCode, stdout, stderr, timedOut, truncated: {stdout, stderr}, lossy}.
+void finishRun(int handle, string id, int status, string out, string err, int exitCode, int flags) {
+    if (status == 0) {
+        Item result = createObject();
+        string cleanOut = "";
+        string cleanErr = "";
+        int lossyOut = app_proc_clean_text(out, cleanOut);
+        int lossyErr = app_proc_clean_text(err, cleanErr);
+        addNumberToObject(result, "exitCode", double(exitCode));
+        addStringToObject(result, "stdout", cleanOut);
+        addStringToObject(result, "stderr", cleanErr);
+        addBoolToObject(result, "timedOut", (flags % 2) == 1);
+        Item cut = addObjectToObject(result, "truncated");
+        addBoolToObject(cut, "stdout", ((flags / 2) % 2) == 1);
+        addBoolToObject(cut, "stderr", ((flags / 4) % 2) == 1);
+        addBoolToObject(result, "lossy", lossyOut == 1 || lossyErr == 1);
+        replyOk(handle, id, printUnformatted(result));
+    } else if (status == 2) {
+        replyError(handle, id, "program_not_found", "the program or its working folder does not exist");
+    } else if (status == 5) {
+        replyError(handle, id, "invalid_argument", "the arguments could not be passed to the program");
+    } else {
+        replyError(handle, id, "spawn_failed", "the program could not be started");
+    }
+}
+
+bool programNameOk(string name) {
+    if (name.length() == 0 || name.length() > 60) {
+        return false;
+    }
+    int i = 0;
+    while (i < name.length()) {
+        char c = name[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if (!ok) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+bool startsWithText(string text, string prefix) {
+    return text.length() >= prefix.length() && text.substr(0, prefix.length()) == prefix;
+}
+
+// The slot text inside an element's braces, or "" if it has none (-1: malformed braces).
+int elementSlotCheck(string element) {
+    int open = slotOpen(element);
+    int close = slotClose(element);
+    if (open < 0 && close < 0) {
+        return 0;
+    }
+    if (open < 0 || close < open) {
+        return -1;
+    }
+    string slotText = element.substr(open + 1, close - open - 1);
+    string rest = element.substr(0, open) + element.substr(close + 1, element.length() - close - 1);
+    if (indexOfChar(rest, '{') >= 0 || indexOfChar(rest, '}') >= 0) {
+        return -1;
+    }
+    if (!slotSpecOk(slotText)) {
+        return -1;
+    }
+    return 1;
+}
+
 // A running application: a window plus a command table.
 class App {
 public:
     int handle;
     Dispatcher dispatcher;
+    ProgramRegistry programs;
 
     App() {
         handle = 0;
         dispatcher = new Dispatcher();
+        programs = new ProgramRegistry();
     }
 
     void command(string name, Command handler) {
@@ -680,6 +984,147 @@ public:
             string path = requiredString(args, "path");
             fsCheck(app_fs_remove(path), "cannot remove " + path);
             return createNull();
+        });
+    }
+
+    // Declares a program the page may run, by name, with an argument template (see the comment above ProgramSpec).
+    // `exe` is an absolute path to a .exe, or a bare name searched for on PATH only. Returns false, and registers
+    // nothing, if the name or the template is malformed, the program cannot be found, or the name is taken.
+    bool allowProgram(string name, string exe, std::vector<string> elements, int timeoutMs, int maxOutputBytes) {
+        if (!programNameOk(name) || programs.indexOf(name) >= 0 || elements.size() > 64) {
+            return false;
+        }
+        if (timeoutMs < 100 || timeoutMs > 600000 || maxOutputBytes < 0 || maxOutputBytes > 67108864) {
+            return false;
+        }
+        string resolved = "";
+        if (app_proc_resolve(exe, resolved) != 0) {
+            return false;
+        }
+        ProgramSpec spec = new ProgramSpec(name, resolved, timeoutMs, maxOutputBytes);
+        std::vector<string> names;
+        int cwdCount = 0;
+        int i = 0;
+        while (i < elements.size()) {
+            string element = elements[i];
+            if (element.length() > 1000 || app_fs_is_utf8(element) == 0 || indexOfChar(element, char(0)) >= 0) {
+                return false;
+            }
+            if (startsWithText(element, "@cwd=")) {
+                string inner = element.substr(5, element.length() - 5);
+                if (elementSlotCheck(inner) != 1 || slotOpen(inner) != 0 || slotClose(inner) != inner.length() - 1) {
+                    return false;
+                }
+                std::vector<string> parts = splitOn(inner.substr(1, inner.length() - 2), ':');
+                if (parts.size() != 2 || parts[1] != "folder") {
+                    return false;
+                }
+                cwdCount = cwdCount + 1;
+                string cwdName = parts[0];
+                names.push_back(cwdName);
+            } else {
+                int has = elementSlotCheck(element);
+                if (has < 0) {
+                    return false;
+                }
+                if (has == 1) {
+                    int open = slotOpen(element);
+                    int close = slotClose(element);
+                    std::vector<string> parts = splitOn(element.substr(open + 1, close - open - 1), ':');
+                    string slotName = parts[0];
+                    names.push_back(slotName);
+                }
+            }
+            spec.elements.push_back(element);
+            i = i + 1;
+        }
+        if (cwdCount > 1) {
+            return false;
+        }
+        int a = 0;
+        while (a < names.size()) {
+            int b = a + 1;
+            while (b < names.size()) {
+                if (names[a] == names[b]) {
+                    return false;
+                }
+                b = b + 1;
+            }
+            a = a + 1;
+        }
+        spec.slotNames = names;
+        programs.specs.push_back(spec);
+        return true;
+    }
+
+    // Registers proc.run: {program: "git.log", args: {count: 20, ...}} -> {exitCode, stdout, stderr, timedOut,
+    // truncated: {stdout, stderr}, lossy}. A non-zero exit code is a result, not an error. Asynchronous: the program
+    // runs on a worker, so the command loop keeps serving.
+    void enableProcessCommands() {
+        ProgramRegistry registry = programs;
+        asyncCommand("proc.run", closure AsyncCommand [registry] (Item args, string id, int handle) {
+            string program = requiredString(args, "program");
+            Item given = getObjectItem(args, "args");
+            if (given == nullptr) {
+                given = createObject();
+            }
+            if (!isObject(given)) {
+                throw "invalid_argument: `args` must be an object";
+            }
+            int index = registry.indexOf(program);
+            if (index < 0) {
+                throw "unknown_program: no program is allowed under that name";
+            }
+            ProgramSpec spec = registry.specs[index];
+            // every value in `args` must belong to a slot: nothing extra is passed along
+            Item child = given.child;
+            while (child != nullptr) {
+                bool known = false;
+                int k = 0;
+                while (k < spec.slotNames.size()) {
+                    if (spec.slotNames[k] == child.key) {
+                        known = true;
+                    }
+                    k = k + 1;
+                }
+                if (!known) {
+                    string message = "invalid_argument: `" + child.key + "` is not a parameter of " + program;
+                    throw message;
+                }
+                child = child.next;
+            }
+            string packed = "";
+            string cwd = "";
+            int e = 0;
+            while (e < spec.elements.size()) {
+                string element = spec.elements[e];
+                if (startsWithText(element, "@cwd=")) {
+                    string inner = element.substr(5, element.length() - 5);
+                    cwd = slotValue(inner.substr(1, inner.length() - 2), given, false);
+                } else {
+                    packed = packed + renderElement(element, given);
+                    packed.push_back(char(0));
+                }
+                e = e + 1;
+            }
+            if (cwd.length() == 0) {
+                int where = app_fs_resolve(".", 2, cwd);
+                if (where != 0) {
+                    string message = fsCodeFor(where) + ": no folder is allowed to run programs in";
+                    throw message;
+                }
+            }
+            string exe = spec.exe;
+            int timeoutMs = spec.timeoutMs;
+            int maxBytes = spec.maxBytes;
+            spawn(closure Job [exe, packed, cwd, timeoutMs, maxBytes, id, handle] () {
+                string out = "";
+                string err = "";
+                int exitCode = 0;
+                int flags = 0;
+                int status = app_proc_run(exe, packed, cwd, timeoutMs, maxBytes, out, err, exitCode, flags);
+                finishRun(handle, id, status, out, err, exitCode, flags);
+            });
         });
     }
 

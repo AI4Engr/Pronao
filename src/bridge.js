@@ -40,6 +40,7 @@
   window.cling.dialog = {
     open: call('dialog.open'), save: call('dialog.save'), folder: call('dialog.folder'), message: call('dialog.message')
   };
+  window.cling.proc = { run: call('proc.run') };
   // Called by the shim (app_eval) with ONE argument: the JSON array [name, payload] that CeeLing's JSON printer built.
   // The page never needs to call this itself.
   window.__cling_emit = function (message) {
