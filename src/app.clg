@@ -45,6 +45,10 @@ ext_fn int app_fs_grant_folder(string path, ref string canonical);
 ext_fn int app_fs_revoke_grants();
 ext_fn int app_fs_resolve(string path, int kind, ref string canonical);
 
+// watching folders (shim/app_watch.h)
+ext_fn int app_watch_start(int handle, string path, int recursive, ref int watchId);
+ext_fn int app_watch_stop(int handle, int watchId);
+
 // running programs (shim/app_proc.h)
 ext_fn int app_proc_resolve(string name, ref string absolute);
 ext_fn int app_proc_run(string exe, string args, string cwd, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
@@ -385,6 +389,7 @@ string fsCodeFor(int status) {
     if (status == 8) { return "is_directory"; }
     if (status == 9) { return "not_directory"; }
     if (status == 10) { return "permission_denied"; }
+    if (status == 11) { return "too_many"; }
     return "io_error";
 }
 
@@ -868,6 +873,40 @@ int elementSlotCheck(string element) {
     return 1;
 }
 
+// ---- watching folders -----------------------------------------------------------------------------
+// fs.watch {path, recursive?} starts a watch and answers {id}; changes then arrive on the page as "fs.change" events
+//     {watch: id, kind: "created" | "modified" | "removed", path}              path is relative to the watched folder
+//     {watch: id, kind: "renamed", path: newName, from: oldName}
+//     {watch: id, kind: "overflow"}                                              events were lost: read the folder again
+//     {watch: id, kind: "stopped", reason: "closed" | "access_revoked" | "folder_gone" | "failed"}   no more will come
+// The watch ends by itself when the permission to read that folder is withdrawn. A record comes from the shim's watcher
+// thread through the call queue with an EMPTY id, which a page's own call never has; this turns it into the event.
+
+void forwardWatchRecord(int handle, string record) {
+    std::vector<string> f = splitFields(record);
+    if (f.size() < 5) {
+        return;
+    }
+    string kind = f[2];
+    string path = f[3];
+    string from = f[4];
+    if (app_fs_is_utf8(path) == 0 || app_fs_is_utf8(from) == 0) {
+        return;
+    }
+    Item e = createObject();
+    addNumberToObject(e, "watch", decimalValue(f[1]));
+    addStringToObject(e, "kind", kind);
+    if (kind == "stopped") {
+        addStringToObject(e, "reason", path);
+    } else if (kind != "overflow") {
+        addStringToObject(e, "path", path);
+        if (kind == "renamed") {
+            addStringToObject(e, "from", from);
+        }
+    }
+    emitEvent(handle, "fs.change", printUnformatted(e));
+}
+
 // A running application: a window plus a command table.
 class App {
 public:
@@ -1128,6 +1167,32 @@ public:
         });
     }
 
+    // Registers fs.watch and fs.unwatch (see "watching folders" above). A page may watch only folders the file commands
+    // can reach, at most 32 at a time.
+    void enableWatchCommands() {
+        asyncCommand("fs.watch", closure AsyncCommand [] (Item args, string id, int handle) {
+            string path = requiredString(args, "path");
+            bool recursive = optionalBool(args, "recursive", false);
+            int flag = 0;
+            if (recursive) {
+                flag = 1;
+            }
+            int watchId = 0;
+            fsCheck(app_watch_start(handle, path, flag, watchId), "cannot watch " + path);
+            Item result = createObject();
+            addNumberToObject(result, "id", double(watchId));
+            replyOk(handle, id, printUnformatted(result));
+        });
+        asyncCommand("fs.unwatch", closure AsyncCommand [] (Item args, string id, int handle) {
+            Item given = getObjectItem(objectArg(args), "id");
+            if (given == nullptr || !isNumber(given)) {
+                throw "invalid_argument: `id` must be a number";
+            }
+            fsCheck(app_watch_stop(handle, int(given.valuedouble)), "no such watch");
+            replyOk(handle, id, "null");
+        });
+    }
+
     // Withdraws everything the user granted through dialogs (the folders added with allowFolder stay).
     void revokeGrants() {
         app_fs_revoke_grants();
@@ -1205,21 +1270,35 @@ public:
         return open(title, width, height, app_page_html(), app_bridge_js(), debug);
     }
 
-    // Serves calls until the window closes. Returns how many calls were answered.
-    int run() {
-        int served = 0;
+    // Serves the next thing in the queue: a call from the page (dispatched and answered) or a record from one of the
+    // shim's file watchers (turned into a page event). Waits up to timeoutMs (-1 = for as long as it takes).
+    // Returns 1 if something was served, 2 if the wait timed out, 0 if the window has closed.
+    int serveOne(int timeoutMs) {
         string id = "";
         string request = "";
-        while (true) {
-            int r = app_next_call(handle, -1, id, request);
-            if (r == 0) {
-                break;
-            }
-            if (r == 1) {
+        int r = app_next_call(handle, timeoutMs, id, request);
+        if (r == 1) {
+            if (id.length() == 0) {
+                forwardWatchRecord(handle, request);
+            } else {
                 Reply reply = dispatcher.handle(handle, id, request);
                 if (reply.status != 2) {
                     app_return(handle, id, reply.status, reply.json);
                 }
+            }
+        }
+        return r;
+    }
+
+    // Serves calls and file-watch records until the window closes. Returns how many calls and records were served.
+    int run() {
+        int served = 0;
+        while (true) {
+            int r = serveOne(-1);
+            if (r == 0) {
+                break;
+            }
+            if (r == 1) {
                 served = served + 1;
             }
         }

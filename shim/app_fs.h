@@ -27,7 +27,8 @@ enum AppFsStatus {
     APP_FS_NOT_EMPTY = 7,    // remove on a folder that has entries
     APP_FS_IS_DIR = 8,       // a file operation on a folder
     APP_FS_NOT_DIR = 9,      // a folder operation on a file
-    APP_FS_DENIED = 10       // inside an allowed folder, but the operating system's own permissions refuse
+    APP_FS_DENIED = 10,      // inside an allowed folder, but the operating system's own permissions refuse
+    APP_FS_TOO_MANY = 11     // a limit on how many of something (grants, watches) is reached
 };
 
 // 1 if `s` is well-formed UTF-8 (no overlongs, no surrogates, nothing above U+10FFFF), else 0. File contents go to the
@@ -41,7 +42,7 @@ int app_fs_clear();
 
 // GRANTS: what the user picked in a dialog. Unlike the folders the application allows itself, a grant is as narrow as
 // the choice: exactly one file (it may not exist yet: a "save as" target, whose folder must) or one folder. `path`
-// must be absolute. At most 256 grants exist at a time (APP_FS_DENIED beyond that). They are kept apart so they can be
+// must be absolute. At most 256 grants exist at a time (APP_FS_TOO_MANY beyond that). They are kept apart so they can be
 // withdrawn without touching the application's own folders.
 // On success `canonical` is the path in the form the file commands will accept (links resolved, case as stored): hand
 // THAT to the page, not the text the dialog returned.
@@ -79,6 +80,8 @@ int app_fs_remove(std::string path);
 // is NOT confined to the allow-list. Not available in the window build.
 int app_fs_test_make_temp_dir(std::string& out);
 int app_fs_test_remove_tree(std::string path);
+// Test-only: writes a file with NO check against the allow-list (to change something the page may no longer reach).
+int app_fs_test_write_raw(std::string path, std::string data);
 // Test-only: a directory link `link` -> `target` (a junction on Windows, a symlink elsewhere). Not allow-listed.
 int app_fs_test_make_dir_link(std::string link, std::string target);
 #endif

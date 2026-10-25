@@ -6,6 +6,7 @@ ext_fn int app_test_close_window(int handle);
 ext_fn int app_test_take_eval(int handle, ref string js);
 ext_fn int app_fs_test_make_temp_dir(ref string out);
 ext_fn int app_fs_test_remove_tree(string path);
+ext_fn int app_fs_test_write_raw(string path, string data);
 ext_fn int app_fs_test_make_dir_link(string link, string target);
 ext_fn int app_fs_allow(string dir);
 ext_fn int app_dialog_test_push(string answer);
@@ -49,6 +50,13 @@ string latestRequest() {
         last = one;
     }
     return last;
+}
+
+// {"id": n}
+Item watchIdArgs(int n) {
+    Item o = createObject();
+    addNumberToObject(o, "id", double(n));
+    return o;
 }
 
 bool startsWith(string text, string prefix) {
@@ -941,5 +949,88 @@ int main() {
     app_fs_clear();
     app_fs_test_remove_tree(pbase);
     app_fs_test_remove_tree(pout);
+
+    // ---- watching folders: a watcher thread -> the call queue -> the main loop -> an event on the page -----
+    app.enableWatchCommands();
+    string wbase = "";
+    app_fs_test_make_temp_dir(wbase);
+    app_fs_allow(wbase);
+    app_fs_mkdir(wbase + "/outside", 0);
+    app_fs_mkdir(wbase + "/outside/watched", 0);
+    app_fs_mkdir(wbase + "/outside/granted", 0);
+    app_fs_clear();
+    app.allowFolder(wbase + "/outside/watched");
+    string trash = "";
+    while (app_test_take_eval(app.handle, trash) == 1) { }
+
+    Item watchArgs = pathArgs(wbase + "/outside/watched");
+    string watchReply = roundTrip(app, "w1", requestText("fs.watch", watchArgs));
+    check("fs.watch answers the watch id", startsWith(watchReply, "0 {\"id\":") );
+    check("a folder outside the allowed ones cannot be watched", startsWith(roundTrip(app, "w2", requestText("fs.watch", pathArgs(wbase + "/outside"))), "1 {\"code\":\"forbidden\""));
+    check("a missing folder is not_found", startsWith(roundTrip(app, "w3", requestText("fs.watch", pathArgs(wbase + "/outside/watched/missing"))), "1 {\"code\":\"not_found\""));
+    check("a dot-dot path is forbidden", startsWith(roundTrip(app, "w4", requestText("fs.watch", pathArgs("../"))), "1 {\"code\":\"forbidden\""));
+
+    app_fs_write(wbase + "/outside/watched/made.txt", "hi", 0);
+    app_sleep_ms(400);
+    app_test_close_window(app.handle);
+    app.run();
+    string allEvals = "";
+    string oneEval = "";
+    while (app_test_take_eval(app.handle, oneEval) == 1) {
+        allEvals = allEvals + oneEval;
+    }
+    check("a new file reaches the page as an event", containsText(allEvals, "window.__cling_emit([\"fs.change\",{\"watch\":") &&
+          containsText(allEvals, "\"kind\":\"created\",\"path\":\"made.txt\""));
+    check("the event carries a relative path only", !containsText(allEvals, wbase) && !containsText(allEvals, "app-cling-fs-"));
+
+    // a name that tries to break out of the script stays a string
+    app_fs_write(wbase + "/outside/watched/a'b);alert(1);(.txt", "x", 0);
+    app_sleep_ms(400);
+    app_test_close_window(app.handle);
+    app.run();
+    allEvals = "";
+    while (app_test_take_eval(app.handle, oneEval) == 1) {
+        allEvals = allEvals + oneEval;
+    }
+    check("a hostile file name stays inside a string literal", containsText(allEvals, "\"kind\":\"created\"") && containsText(allEvals, "alert(1)") && startsWith(allEvals, "window.__cling_emit([\"fs.change\",{"));
+
+    check("unwatch with an unknown id is not_found", startsWith(roundTrip(app, "w5", requestText("fs.unwatch", watchIdArgs(999999))), "1 {\"code\":\"not_found\""));
+    Item badUnwatch = createObject();
+    addStringToObject(badUnwatch, "id", "1");
+    check("unwatch needs a number", startsWith(roundTrip(app, "w6", requestText("fs.unwatch", badUnwatch)), "1 {\"code\":\"invalid_argument\""));
+    string idText = watchReply.substr(6, watchReply.length() - 7);
+    int watchNumber = int(decimalValue(idText));
+    check("unwatch stops the watch", roundTrip(app, "w7", requestText("fs.unwatch", watchIdArgs(watchNumber))) == "0 null");
+    app_fs_write(wbase + "/outside/watched/silent.txt", "x", 0);
+    app_sleep_ms(400);
+    app_test_close_window(app.handle);
+    app.run();
+    allEvals = "";
+    while (app_test_take_eval(app.handle, oneEval) == 1) {
+        allEvals = allEvals + oneEval;
+    }
+    check("after unwatch nothing arrives", !containsText(allEvals, "silent.txt"));
+
+    // a pick is a grant, and a watch on it ends when the grant is withdrawn
+    string pickedCanonical = "";
+    app_fs_grant_folder(wbase + "/outside/granted", pickedCanonical);
+    string revokedReply = roundTrip(app, "w8", requestText("fs.watch", pathArgs(pickedCanonical)));
+    check("the page can watch the folder the user granted", startsWith(revokedReply, "0 {\"id\":"));
+    app.revokeGrants();
+    app_fs_test_write_raw(wbase + "/outside/granted/late.txt", "x");
+    app_sleep_ms(400);
+    app_test_close_window(app.handle);
+    app.run();
+    allEvals = "";
+    while (app_test_take_eval(app.handle, oneEval) == 1) {
+        allEvals = allEvals + oneEval;
+    }
+    check("withdrawing the permission ends the watch with a reason", containsText(allEvals, "\"kind\":\"stopped\",\"reason\":\"access_revoked\"") && !containsText(allEvals, "late.txt"));
+
+    // the queue entry that signals a watch has an empty id: a page cannot produce one
+    check("an injected call with an empty id is dropped", app_test_inject(app.handle, "", "[\"fs.list\",{\"path\":\".\"}]") == 0);
+
+    app_fs_clear();
+    app_fs_test_remove_tree(wbase);
     return 0;
 }

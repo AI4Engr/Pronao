@@ -81,6 +81,30 @@ control run with the final-path check disabled fails the link-escape tests (so t
 Not covered: a local attacker who can create links inside an allowed folder at the very moment of a write (a file may be
 created and then removed again if it turns out to lie outside), and whatever an allowed folder itself contains.
 
+## Watching folders
+
+```
+app.enableWatchCommands();
+```
+```js
+const { id } = await cling.fs.watch({ path: 'notes', recursive: true });
+const off = cling.fs.onChange(e => { /* {watch, kind, path, from?} */ });
+await cling.fs.unwatch({ id });
+```
+`kind` is `created`, `modified`, `removed`, `renamed` (`path` is the new name, `from` the old), `overflow` (events were lost: read
+the folder again) or `stopped` (`reason`: `closed`, `access_revoked`, `folder_gone`, `failed`; nothing more comes from that
+watch). A page may watch only a folder the file commands can reach, at most 32 at a time. `path` is **relative to the watched
+folder**, never absolute, so an event cannot reveal where the folder is. Rapid repeats are merged (sixty quick writes to one
+file are a few events, not sixty), and the permission is re-checked before every delivery: withdrawing it with
+`app.revokeGrants()` ends the watch with `access_revoked` and the change that followed is not reported. Changes made through a
+link that leads out of the watched folder are not reported.
+
+How an event gets to the page: a watcher thread in the shim (ReadDirectoryChangesW on Windows, inotify on Linux) puts a record
+in the same queue the page's calls arrive in, with an EMPTY id (a page's call always has one, and the shim drops an empty-id
+call from the page), the CeeLing main loop (`App.run`, or `serveOne` if you write your own) turns it into an `fs.change` event,
+and the JSON is built with the JSON library, not in the shim. If the main loop falls behind, events beyond 1000 queued are
+dropped and an `overflow` follows.
+
 ## Dialogs
 
 ```
@@ -165,7 +189,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 133 end-to-end checks, no window
+bash tests/run_headless.sh            # 147 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```

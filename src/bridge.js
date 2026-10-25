@@ -35,7 +35,10 @@
   var call = function (name) { return function (args) { return window.cling.invoke(name, args || {}); }; };
   window.cling.fs = {
     read: call('fs.read'), write: call('fs.write'), list: call('fs.list'), stat: call('fs.stat'),
-    exists: call('fs.exists'), mkdir: call('fs.mkdir'), remove: call('fs.remove')
+    exists: call('fs.exists'), mkdir: call('fs.mkdir'), remove: call('fs.remove'),
+    watch: call('fs.watch'), unwatch: call('fs.unwatch'),
+    // fn receives {watch, kind, path, from?}; returns the function that removes the listener
+    onChange: function (fn) { return window.cling.on('fs.change', fn); }
   };
   window.cling.dialog = {
     open: call('dialog.open'), save: call('dialog.save'), folder: call('dialog.folder'), message: call('dialog.message')

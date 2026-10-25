@@ -247,7 +247,7 @@ int main() {
         lastGrant = grantFile(join(g1, "limit" + std::to_string(i) + ".txt"));
         if (lastGrant == APP_FS_OK) ++granted;
     }
-    check("at most 256 grants at a time", granted == 256 && lastGrant == APP_FS_DENIED);
+    check("at most 256 grants at a time", granted == 256 && lastGrant == APP_FS_TOO_MANY);
     check("revoke frees them", app_fs_revoke_grants() == APP_FS_OK && grantFile(join(g1, "again.txt")) == APP_FS_OK);
     app_fs_clear();
 

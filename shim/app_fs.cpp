@@ -27,6 +27,7 @@
 
 #if defined(APP_HEADLESS)
 #include <filesystem>
+#include <fstream>
 #endif
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -339,7 +340,7 @@ int addGrant(const Root& r, std::string& canonical) {
         ++n;
         if (x.exact == r.exact && sameNoCase(x.finalForm, r.finalForm)) return APP_FS_OK;   // already granted
     }
-    if (n >= kMaxGrants) return APP_FS_DENIED;
+    if (n >= kMaxGrants) return APP_FS_TOO_MANY;
     g_roots.push_back(r);
     return APP_FS_OK;
 }
@@ -649,6 +650,11 @@ int app_fs_test_remove_tree(std::string path) {
     std::filesystem::remove_all(std::filesystem::path(widen(path)), ec);
     return ec ? APP_FS_IO : APP_FS_OK;
 }
+int app_fs_test_write_raw(std::string path, std::string data) {
+    std::ofstream f(std::filesystem::path(widen(path)), std::ios::binary | std::ios::trunc);
+    f << data;
+    return f ? APP_FS_OK : APP_FS_IO;
+}
 int app_fs_test_make_dir_link(std::string link, std::string target) {
     // a directory junction: needs no privilege, unlike a symbolic link
     std::string cmd = "cmd /c mklink /J \"" + link + "\" \"" + target + "\" >nul 2>nul";
@@ -813,7 +819,7 @@ int addGrant(const Root& r, std::string& canonical) {
         ++n;
         if (x.exact == r.exact && x.path == r.path) return APP_FS_OK;   // already granted
     }
-    if (n >= kMaxGrants) return APP_FS_DENIED;
+    if (n >= kMaxGrants) return APP_FS_TOO_MANY;
     g_roots.push_back(r);
     return APP_FS_OK;
 }
@@ -1052,6 +1058,11 @@ int app_fs_test_remove_tree(std::string path) {
     std::error_code ec;
     std::filesystem::remove_all(std::filesystem::path(path), ec);
     return ec ? APP_FS_IO : APP_FS_OK;
+}
+int app_fs_test_write_raw(std::string path, std::string data) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f << data;
+    return f ? APP_FS_OK : APP_FS_IO;
 }
 int app_fs_test_make_dir_link(std::string link, std::string target) {
     return symlink(target.c_str(), link.c_str()) == 0 ? APP_FS_OK : APP_FS_IO;

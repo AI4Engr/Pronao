@@ -4,7 +4,7 @@
 # Fails if any check prints FAIL, if fewer than EXPECTED checks ran, or if the program does not exit 0.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED=133
+EXPECTED=147
 W="${TMPDIR:-/tmp}/app-cling-headless"
 rm -rf "$W"; mkdir -p "$W/work"
 rm -f "$W/t.exe"
@@ -31,4 +31,10 @@ printf '%s\n' "$FSOUT" | grep -v '^PASS'
 PROCOUT="$("$W/proc.exe")"; PROCRC=$?
 printf '%s\n' "$PROCOUT" | grep -v '^PASS'
 [ "$PROCRC" -eq 0 ] || OK=0
+
+# the folder watcher on its own, against real file changes
+"${CXX:-g++}" --std=c++17 -DAPP_HEADLESS -I "$HERE/shim" "$HERE/tests/watch_shim_test.cpp" "$HERE/shim/app_watch.cpp" "$HERE/shim/app_fs.cpp" "$HERE/shim/app_shim.cpp" -pthread -o "$W/watch.exe" || { echo "WATCH TEST BUILD FAILED"; exit 1; }
+WATCHOUT="$("$W/watch.exe")"; WATCHRC=$?
+printf '%s\n' "$WATCHOUT" | grep -v '^PASS'
+[ "$WATCHRC" -eq 0 ] || OK=0
 [ "$OK" -eq 1 ]

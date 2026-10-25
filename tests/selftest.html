@@ -13,6 +13,12 @@
     // real native dialogs; tests/close_dialogs.ps1 closes them like a user clicking the X
     r.msg = await cling.invoke('dialog.message', { title: 'app-cling selftest message', message: 'closing by itself', kind: 'info', buttons: 'ok' });
     r.open = await cling.invoke('dialog.open', { title: 'app-cling selftest open', filters: [{ name: 'Text', extensions: ['txt'] }] });
+    const watch = await cling.fs.watch({ path: '.' });                // a real folder watch, in the real window
+    const changed = new Promise(function (resolve) { const off = cling.fs.onChange(function (e) { if (e.path === 'watched.txt') { off(); resolve(e); } }); });
+    await cling.fs.write({ path: 'watched.txt', text: 'x' });
+    const ev = await changed;                                           // arrives from the watcher thread via the main loop
+    await cling.fs.unwatch({ id: watch.id });
+    r.watch = [ev.kind === 'created' || ev.kind === 'modified', ev.watch === watch.id];
     const ran = await cling.proc.run({ program: 'host' });            // a real program, named by the page, templated by the app
     r.proc = [ran.exitCode, ran.stdout.length > 0, ran.timedOut];
     try { await cling.proc.run({ program: 'cmd' }); } catch (e) { r.noShell = e.code; }   // never registered

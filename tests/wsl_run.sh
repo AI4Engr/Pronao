@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$1"
 fail=0
-EXPECTED=133
+EXPECTED=147
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print app headless_main embedded"
@@ -20,7 +20,8 @@ build_headless() { # variant shimdir flags exe
     g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_fs.cpp" -o "$1/fs.$4.o" || return 1
     g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_dialog.cpp" -o "$1/dialog.$4.o" || return 1
     g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_proc.cpp" -o "$1/proc.$4.o" || return 1
-    g++ $3 $objs "$1/shim.$4.o" "$1/fs.$4.o" "$1/dialog.$4.o" "$1/proc.$4.o" -pthread -o "$4" || return 1
+    g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_watch.cpp" -o "$1/watch.$4.o" || return 1
+    g++ $3 $objs "$1/shim.$4.o" "$1/fs.$4.o" "$1/dialog.$4.o" "$1/proc.$4.o" "$1/watch.$4.o" -pthread -o "$4" || return 1
 }
 # TSan needs ASLR off on some WSL kernels (its shadow-memory mapping fails otherwise)
 run_tsan() { # exe out
@@ -49,14 +50,27 @@ APP_PROC_ECHO="$PWD/proc_helper" ASAN_OPTIONS=detect_leaks=1 ./proc.asan > proc.
 echo "   exit $rc: $(tail -1 proc.asan.out)"
 [ $rc -eq 0 ] || { grep -v '^PASS' proc.asan.out | head -30; fail=1; }
 
+echo "== ASan+UBSan: folder watcher (real inotify events)"
+g++ --std=c++17 $ASAN -DAPP_HEADLESS -I shim watch_shim_test.cpp shim/app_watch.cpp shim/app_fs.cpp shim/app_shim.cpp -pthread -o watch.asan || exit 1
+ASAN_OPTIONS=detect_leaks=1 ./watch.asan > watch.asan.out 2>&1; rc=$?
+echo "   exit $rc: $(tail -1 watch.asan.out)"
+[ $rc -eq 0 ] || { grep -v '^PASS' watch.asan.out | head -30; fail=1; }
+
+echo "== TSan: folder watcher"
+g++ --std=c++17 $TSAN -DAPP_HEADLESS -I shim watch_shim_test.cpp shim/app_watch.cpp shim/app_fs.cpp shim/app_shim.cpp -pthread -o watch.tsan || exit 1
+run_tsan watch.tsan watch.tsan.out; rc=$?
+races=$(grep -c 'WARNING: ThreadSanitizer' watch.tsan.out)
+echo "   exit $rc, $races TSan reports: $(grep 'watch shim test' watch.tsan.out | tail -1)"
+if [ $rc -ne 0 ] || [ "$races" -ne 0 ]; then grep -v '^PASS' watch.tsan.out | head -40; fail=1; fi
+
 echo "== ASan+UBSan: queue stress"
-g++ --std=c++14 $ASAN -DAPP_HEADLESS -I shim queue_stress.cpp shim/app_shim.cpp -pthread -o stress.asan || exit 1
+g++ --std=c++17 $ASAN -DAPP_HEADLESS -I shim queue_stress.cpp shim/app_shim.cpp shim/app_watch.cpp shim/app_fs.cpp -pthread -o stress.asan || exit 1
 ASAN_OPTIONS=detect_leaks=1 ./stress.asan > stress.asan.out 2>&1; rc=$?
 echo "   exit $rc: $(tail -1 stress.asan.out)"
 [ $rc -eq 0 ] || { tail -30 stress.asan.out; fail=1; }
 
 echo "== TSan: queue stress"
-g++ --std=c++14 $TSAN -DAPP_HEADLESS -I shim queue_stress.cpp shim/app_shim.cpp -pthread -o stress.tsan || exit 1
+g++ --std=c++17 $TSAN -DAPP_HEADLESS -I shim queue_stress.cpp shim/app_shim.cpp shim/app_watch.cpp shim/app_fs.cpp -pthread -o stress.tsan || exit 1
 run_tsan stress.tsan stress.tsan.out; rc=$?
 races=$(grep -c 'WARNING: ThreadSanitizer' stress.tsan.out)
 echo "   exit $rc, $races TSan reports: $(grep 'queue stress' stress.tsan.out | tail -1)"
@@ -73,7 +87,7 @@ for variant in work work_pool; do
 done
 
 echo "== TSan negative control 1: producer-side lock removed (queue stress; must report a race)"
-g++ --std=c++14 $TSAN -DAPP_HEADLESS -I shim_nolock queue_stress.cpp shim_nolock/app_shim.cpp -pthread -o stress.nolock || exit 1
+g++ --std=c++17 $TSAN -DAPP_HEADLESS -I shim_nolock queue_stress.cpp shim_nolock/app_shim.cpp shim_nolock/app_watch.cpp shim_nolock/app_fs.cpp -pthread -o stress.nolock || exit 1
 run_tsan stress.nolock stress.nolock.out
 races=$(grep -c 'WARNING: ThreadSanitizer' stress.nolock.out)
 echo "   $races TSan reports"

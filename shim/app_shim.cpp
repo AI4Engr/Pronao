@@ -1,5 +1,6 @@
 #include "app_shim.h"
 #include "app_shim_internal.h"
+#include "app_watch.h"
 
 #include <atomic>
 #include <chrono>
@@ -96,6 +97,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
             w.set_size(width, height, WEBVIEW_HINT_NONE);
             w.bind("__cling_invoke",
                    [raw](const std::string& id, const std::string& req, void* /*unused*/) {
+                       if (id.empty()) return;   // an empty id marks the shim's own records (file watchers): never from a page
                        {
                            std::lock_guard<std::mutex> lock(raw->m);
                            raw->calls.push_back(Call{id, req});
@@ -269,9 +271,26 @@ int app_ui_call(int handle, const std::function<void(void*)>& fn) {
 #endif
 }
 
+int app_internal_push_call(int handle, const std::string& id, const std::string& request, size_t max_queued) {
+    auto app = lookup(handle);
+    if (!app) return -1;
+    {
+        std::lock_guard<std::mutex> lock(app->m);
+        if (app->calls.size() >= max_queued) return 0;
+        app->calls.push_back(Call{id, request});
+    }
+    app->cv.notify_all();
+    return 1;
+}
+
+bool app_internal_exists(int handle) {
+    return lookup(handle) != nullptr;
+}
+
 int app_close(int handle) {
     auto app = lookup(handle);
     if (!app) return 0;
+    app_watch_stop_all(handle);
     app_terminate(handle);
     if (app->ui.joinable()) app->ui.join();
     std::lock_guard<std::mutex> lock(g_tableMutex);
@@ -283,6 +302,7 @@ int app_close(int handle) {
 int app_test_inject(int handle, std::string id, std::string request) {
     auto app = lookup(handle);
     if (!app) return 0;
+    if (id.empty()) return 0;     // like the real bind callback: an empty id is the shim's own, never a page's
     {
         std::lock_guard<std::mutex> lock(app->m);
         app->calls.push_back(Call{std::move(id), std::move(request)});
