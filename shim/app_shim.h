@@ -46,3 +46,10 @@ int app_test_close_window(int handle);
 // Sleeps the calling thread. Exists so CeeLing code (which has no sleep of its own) can make a background
 // job take a known time, e.g. in tests that check replies arriving out of order.
 int app_sleep_ms(int ms);
+
+// A concurrency gauge for tests: jobs call app_gauge_enter / app_gauge_leave around their work, and
+// app_gauge_peak() is the highest number that were inside at the same time (so a worker-limit test can tell
+// "at most N ran at once" from "N happened to be enough").
+int app_gauge_enter();
+int app_gauge_leave();
+int app_gauge_peak();

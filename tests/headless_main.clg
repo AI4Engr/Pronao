@@ -126,6 +126,22 @@ int main() {
             replyOk(handle, id, "[" + intToString(t.count) + "," + intToString(t.total) + "]");
         });
     });
+    // a job that throws: the dispatcher's default failure handler must answer the page with a rejection
+    app.asyncCommand("athrow", closure AsyncCommand [] (Item args, string id, int handle) {
+        spawn(closure Job [id] () {
+            throw "kaboom";
+        });
+    });
+    // args [milliseconds]: holds a slot of the worker pool for that long, counted by the shim's gauge
+    app.asyncCommand("agauge", closure AsyncCommand [] (Item args, string id, int handle) {
+        int ms = int(numberAt(args, 0));
+        spawn(closure Job [ms, id, handle] () {
+            app_gauge_enter();
+            app_sleep_ms(ms);
+            app_gauge_leave();
+            replyOk(handle, id, "1");
+        });
+    });
     app.open("t", 100, 100, "<html></html>", "", false);
 
     check("add", roundTrip(app, "1", "[\"add\",[2,3]]") == "0 5");
@@ -182,6 +198,8 @@ int main() {
     check("struct copied into worker", roundTrip(app, "x4", "[\"arepeat\",[3,\"ab\"]]") == "0 \"ababab\"");
 
     check("object moved into worker", roundTrip(app, "x5", "[\"atally\",[4,5,6]]") == "0 [3,15]");
+
+    check("throwing job rejects the promise", roundTrip(app, "x6", "[\"athrow\"]") == "1 {\"code\":\"command_failed\",\"message\":\"kaboom\"}");
 
     // a slow job started first answers LAST; replies are matched by id, not by order
     app_test_inject(app.handle, "slow", "[\"aslow\",[400,\"slow\"]]");
@@ -262,5 +280,48 @@ int main() {
         k = k + 1;
     }
     check("50 concurrent jobs", allOk);
+
+    // ---- the worker limit -------------------------------------------------------------------------
+    // 6 jobs of 80 ms with at most 2 running at once: all answered, and the gauge never saw more than 2 inside
+    app.setWorkerLimit(2);
+    int a = 0;
+    while (a < 6) {
+        app_test_inject(app.handle, "g" + intToString(a), "[\"agauge\",[80]]");
+        a = a + 1;
+    }
+    app_test_close_window(app.handle);
+    app.run();
+    int answered = 0;
+    a = 0;
+    while (a < 6) {
+        string gid = "";
+        int gst = 0;
+        string gbody = "";
+        if (app_test_take_response(app.handle, gid, gst, gbody) == 1 && gst == 0 && gbody == "1") {
+            answered = answered + 1;
+        }
+        a = a + 1;
+    }
+    check("limit 2: all 6 jobs answered", answered == 6);
+    check("limit 2: never more than 2 at once", app_gauge_peak() <= 2 && app_gauge_peak() >= 1);
+
+    // control: without the cap the same jobs overlap more, so the check above could have failed
+    app.setWorkerLimit(0);
+    a = 0;
+    while (a < 6) {
+        app_test_inject(app.handle, "h" + intToString(a), "[\"agauge\",[80]]");
+        a = a + 1;
+    }
+    app_test_close_window(app.handle);
+    app.run();
+    a = 0;
+    while (a < 6) {
+        string hid = "";
+        int hst = 0;
+        string hbody = "";
+        app_test_take_response(app.handle, hid, hst, hbody);
+        a = a + 1;
+    }
+    check("control: default limit lets more than 2 overlap", app_gauge_peak() > 2);
     return 0;
 }

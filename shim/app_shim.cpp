@@ -1,5 +1,6 @@
 #include "app_shim.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <exception>
@@ -260,4 +261,24 @@ int app_test_close_window(int handle) {
 int app_sleep_ms(int ms) {
     if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
     return 1;
+}
+
+namespace {
+std::atomic<int> g_gaugeNow{0};
+std::atomic<int> g_gaugePeak{0};
+}  // namespace
+
+int app_gauge_enter() {
+    const int now = g_gaugeNow.fetch_add(1) + 1;
+    int peak = g_gaugePeak.load();
+    while (now > peak && !g_gaugePeak.compare_exchange_weak(peak, now)) {}
+    return now;
+}
+
+int app_gauge_leave() {
+    return g_gaugeNow.fetch_sub(1) - 1;
+}
+
+int app_gauge_peak() {
+    return g_gaugePeak.load();
 }

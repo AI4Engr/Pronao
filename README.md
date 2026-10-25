@@ -51,12 +51,15 @@ thread cannot touch it afterwards); an `Item` or any other object that does not 
 rebuilds its own JSON tree from the string and answers the page itself with `replyOk` / `replyError`, which go through
 the mutex-protected shim. What this gives, stated exactly: *in the CeeLing code that was checked, a spawned job can
 reach only its own copies and its own allocations, so there are no data races through `spawn`.* What it does not
-give: anything about `ext_fn`s, the shim, the browser engine, the file system, deadlocks, or how many threads a
-page can cause (one per async call, no cap). Nothing here is "thread-safe".
+give: anything about `ext_fn`s, the shim, the browser engine, the file system or deadlocks. Nothing here is
+"thread-safe".
 
-An in-flight job keeps the process alive: on exit the runtime joins every spawned thread, so a job that never
-finishes hangs the exit. A job that throws is reported on stderr and its promise stays pending, so a job should
-catch its own errors and call `replyError`.
+Jobs run on a capped worker pool (default max(4, cores); `app.setWorkerLimit(n)` changes it; extra jobs queue, oldest
+first, and the command loop never blocks). A job that throws rejects the page's promise with `command_failed` and the
+message: the dispatcher installs a default failure handler around every `AsyncCommand.start` (and clears it after), and
+a `spawn` can carry its own as a second closure. An in-flight job keeps the process alive: on exit the runtime
+finishes every queued job and joins the pool, so a job that never finishes hangs the exit, and enough of them occupy
+every slot and starve the queue.
 
 ## Build and test
 
@@ -64,7 +67,7 @@ catch its own errors and call `replyError`.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 27 end-to-end checks, no window
+bash tests/run_headless.sh            # 31 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```

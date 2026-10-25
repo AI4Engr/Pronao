@@ -26,6 +26,9 @@ ext_fn int app_eval(int handle, string js);
 ext_fn int app_terminate(int handle);
 ext_fn int app_close(int handle);
 ext_fn int app_sleep_ms(int ms);
+ext_fn int app_gauge_enter();
+ext_fn int app_gauge_leave();
+ext_fn int app_gauge_peak();
 // the page and the bridge script, compiled into the program by scripts/build.sh
 ext_fn string app_page_html();
 ext_fn string app_bridge_js();
@@ -160,6 +163,15 @@ public:
     virtual void start(Item args, string id, int handle) { }
 };
 
+// What runs when a spawned job throws (see spawn's optional second argument and onJobFailure). The dispatcher
+// installs one around every AsyncCommand.start, so a job that throws answers the page with a rejection
+// {code: "command_failed", message} instead of leaving its promise pending.
+class Failure {
+public:
+    Failure() { }
+    virtual void fail(string message) { }
+};
+
 // Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
 void replyOk(int handle, string id, string json) {
     app_return(handle, id, 0, json);
@@ -239,9 +251,15 @@ public:
         if (index < 0) {
             try {
                 AsyncCommand starter = asyncHandlers[asyncIndex];
+                // every job this start() spawns inherits this: a throw inside it rejects the page's promise
+                onJobFailure(closure Failure [id, appHandle] (string message) {
+                    replyError(appHandle, id, "command_failed", message);
+                });
                 starter.start(args, id, appHandle);
+                cling::clearJobFailure();
                 return new Reply(2, "");
             } catch (string message) {
+                cling::clearJobFailure();
                 return new Reply(1, errorJson("command_failed", message));
             }
         }
@@ -281,6 +299,12 @@ public:
 
     void asyncCommand(string name, AsyncCommand handler) {
         dispatcher.addAsync(name, handler);
+    }
+
+    // At most n async jobs run at the same time (the rest wait in a queue, oldest first); 0 = the default,
+    // max(4, number of cores). A job is never dropped: on exit every queued job still runs.
+    void setWorkerLimit(int n) {
+        cling::setWorkerLimit(n);
     }
 
     // Opens the window. false if it could not be created (the shim has printed why on stderr).
