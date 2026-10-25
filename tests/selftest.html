@@ -6,6 +6,9 @@
     r.sum = await cling.invoke('add', [2, 3]);
     r.echo = await cling.invoke('echo', { a: [1, 'x', null] });
     r.async = await cling.invoke('aecho', { n: [1, 2] });
+    const pushed = cling.once('hello');                 // an event CeeLing pushes after this command returns
+    await cling.invoke('emit_hello');
+    r.event = await pushed;
     try { await cling.invoke('fail'); } catch (e) { r.rejected = e; }
     try { await cling.invoke('nope'); } catch (e) { r.unknown = e; }
     await cling.invoke('selftest', r);

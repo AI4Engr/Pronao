@@ -41,8 +41,12 @@ int main() {
             replyOk(handle, id, printUnformatted(mine));
         });
     });
+    app.command("emit_hello", closure Command [handle] (Item args) {
+        emitEvent(handle, "hello", "{\"x\":[1,\"two\"]}");
+        return createNull();
+    });
     app.command("selftest", closure Command [verdict, handle] (Item args) {
-        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
+        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"event\":{\"x\":[1,\"two\"]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
         string got = printUnformatted(args);
         verdict.set(got == expected);
         if (got != expected) {

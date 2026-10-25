@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$1"
 fail=0
-EXPECTED=31
+EXPECTED=39
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print app headless_main embedded"

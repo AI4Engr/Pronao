@@ -41,6 +41,7 @@ struct App {
     webview::webview* w = nullptr;     // valid only while !closed && created, and only touched under `m`
 #else
     std::deque<Reply> replies;         // what CeeLing answered, for the tests to inspect
+    std::deque<std::string> evals;     // every script passed to app_eval, in order
 #endif
 };
 
@@ -187,7 +188,8 @@ int app_eval(int handle, std::string js) {
     auto app = lookup(handle);
     if (!app) return 0;
 #ifdef APP_HEADLESS
-    (void)js;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->evals.push_back(std::move(js));
     return 1;
 #else
     std::lock_guard<std::mutex> lock(app->m);
@@ -250,6 +252,16 @@ int app_test_take_response(int handle, std::string& id, int& status, std::string
     id = std::move(r.id);
     status = r.status;
     json = std::move(r.json);
+    return 1;
+}
+
+int app_test_take_eval(int handle, std::string& js) {
+    auto app = lookup(handle);
+    if (!app) return 0;
+    std::lock_guard<std::mutex> lock(app->m);
+    if (app->evals.empty()) return 0;
+    js = std::move(app->evals.front());
+    app->evals.pop_front();
     return 1;
 }
 

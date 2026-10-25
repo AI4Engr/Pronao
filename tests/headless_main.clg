@@ -3,6 +3,7 @@
 ext_fn int app_test_inject(int handle, string id, string request);
 ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
 ext_fn int app_test_close_window(int handle);
+ext_fn int app_test_take_eval(int handle, ref string js);
 
 void check(string name, bool ok) {
     if (ok) {
@@ -140,6 +141,13 @@ int main() {
             app_sleep_ms(ms);
             app_gauge_leave();
             replyOk(handle, id, "1");
+        });
+    });
+    // emits from a worker thread through emitEvent, then replies
+    app.asyncCommand("aemit", closure AsyncCommand [] (Item args, string id, int handle) {
+        spawn(closure Job [id, handle] () {
+            emitEvent(handle, "fromWorker", "{\"ok\":true}");
+            replyOk(handle, id, "true");
         });
     });
     app.open("t", 100, 100, "<html></html>", "", false);
@@ -323,5 +331,30 @@ int main() {
         a = a + 1;
     }
     check("control: default limit lets more than 2 overlap", app_gauge_peak() > 2);
+    // ---- events: CeeLing -> page ---------------------------------------------------------------
+    string js = "";
+    check("emit builds the call", app.emit("tick", "{\"n\":1}") && app_test_take_eval(app.handle, js) == 1 && js == "window.__cling_emit([\"tick\",{\"n\":1}]);");
+    check("emit re-prints the payload", app.emit("t", "{ \"a\" : [ 1 , 2 ] }") && app_test_take_eval(app.handle, js) == 1 && js == "window.__cling_emit([\"t\",{\"a\":[1,2]}]);");
+    // a name and a payload that try to break out of the script stay string literals
+    check("emit cannot inject script", app.emit("a\"b", "\"x\\\");alert(1);(\\\"\"") && app_test_take_eval(app.handle, js) == 1 && js == "window.__cling_emit([\"a\\\"b\",\"x\\\");alert(1);(\\\"\"]);");
+    check("emit rejects invalid JSON", !app.emit("bad", "{oops") && app_test_take_eval(app.handle, js) == 0);
+    check("emit rejects a payload with trailing script", !app.emit("bad", "1);alert(1") && app_test_take_eval(app.handle, js) == 0);
+    app.emit("one", "1");
+    app.emit("two", "2");
+    string firstJs = "";
+    string secondJs = "";
+    app_test_take_eval(app.handle, firstJs);
+    app_test_take_eval(app.handle, secondJs);
+    check("events keep their order", firstJs == "window.__cling_emit([\"one\",1]);" && secondJs == "window.__cling_emit([\"two\",2]);");
+
+    // a worker job can emit: the event arrives while the job runs, then it answers
+    int waited = 0;
+    string workerJs = "";
+    check("worker emits then replies", roundTrip(app, "x7", "[\"aemit\"]") == "0 true");
+    while (app_test_take_eval(app.handle, workerJs) == 0 && waited < 100) {
+        app_sleep_ms(20);
+        waited = waited + 1;
+    }
+    check("worker's event arrived", workerJs == "window.__cling_emit([\"fromWorker\",{\"ok\":true}]);");
     return 0;
 }

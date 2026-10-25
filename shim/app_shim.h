@@ -40,6 +40,8 @@ int app_close(int handle);
 // CeeLing answered with. Not available in the window build.
 int app_test_inject(int handle, std::string id, std::string request);
 int app_test_take_response(int handle, std::string& id, int& status, std::string& json);
+// Pops the oldest script passed to app_eval (1), or returns 0 if none is waiting. Does not block.
+int app_test_take_eval(int handle, std::string& js);
 int app_test_close_window(int handle);
 #endif
 

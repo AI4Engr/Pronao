@@ -35,6 +35,21 @@ Errors reach the page as a rejected promise carrying `{code, message}`: `bad_req
 name not a string), `unknown_command`, `command_failed` (the handler threw, e.g. through `numberAt`/`stringAt`/`fieldOf`
 when the page sent the wrong shape). A malformed request never stops the application.
 
+## Events: CeeLing to the page
+
+```
+app.emit("progress", "{\"done\":3}");            // main thread
+emitEvent(handle, "progress", text);              // any thread, e.g. a worker job (capture the int handle)
+```
+```js
+const off = cling.on('progress', p => bar.value = p.done);   // off() removes it
+const next = await cling.once('finished');                   // Promise for the next one
+```
+The payload must be valid JSON text. The script sent to the page is built only with the JSON printer, so a name or a
+string containing quotes, backslashes or script text stays a string literal; an invalid payload, or one with trailing
+text, makes `emit` return false and sends nothing. An event sent before the page has loaded and registered its listener
+is dropped; events from one thread arrive in order.
+
 ## What is and is not checked
 
 CeeLing checks the command table and everything the commands do with their own data: no dangling references, no
@@ -67,7 +82,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 31 end-to-end checks, no window
+bash tests/run_headless.sh            # 39 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```

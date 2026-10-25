@@ -181,6 +181,31 @@ void replyError(int handle, string id, string code, string message) {
     app_return(handle, id, 1, errorJson(code, message));
 }
 
+// ---- events: CeeLing -> page -------------------------------------------------------------------
+// emitEvent(handle, "progress", "{\"done\":3}") runs `cling.on("progress", fn)` listeners on the page with the payload
+// {done: 3}. It takes only an int and strings, so a worker job can call it (capture the handle):
+//
+//     spawn(closure Job [handle, payload] () { ... emitEvent(handle, "progress", text); ... });
+//
+// The payload must be valid JSON text; the script handed to the page is built ONLY with the JSON printer (the name
+// and the payload are re-printed, never pasted), so a name or a string containing quotes, backslashes or script text
+// stays a string literal and cannot become code. Returns false, and sends nothing, if the payload is not valid JSON or
+// the window is gone. An event sent before the page has loaded and registered its listener is dropped.
+bool emitEvent(int handle, string name, string payloadJson) {
+    Item payload = parseWithOpts(payloadJson, true);   // strict: trailing text after the JSON value is an error
+    if (payload == nullptr) {
+        return false;
+    }
+    Item message = createArray();
+    addItemToArray(message, createString(name));
+    addItemToArray(message, payload);
+    string text = printUnformatted(message);
+    if (text.length() == 0) {
+        return false;
+    }
+    return app_eval(handle, "window.__cling_emit(" + text + ");") == 1;
+}
+
 class Dispatcher {
 public:
     std::vector<string> names;
@@ -299,6 +324,12 @@ public:
 
     void asyncCommand(string name, AsyncCommand handler) {
         dispatcher.addAsync(name, handler);
+    }
+
+    // Pushes an event to the page (see emitEvent). Safe to call from the main thread only through this method;
+    // worker jobs use emitEvent with a captured handle.
+    bool emit(string name, string payloadJson) {
+        return emitEvent(handle, name, payloadJson);
     }
 
     // At most n async jobs run at the same time (the rest wait in a queue, oldest first); 0 = the default,
