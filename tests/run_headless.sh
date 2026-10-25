@@ -4,7 +4,7 @@
 # Fails if any check prints FAIL, if fewer than EXPECTED checks ran, or if the program does not exit 0.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED=26
+EXPECTED=27
 W="${TMPDIR:-/tmp}/app-cling-headless"
 rm -rf "$W"; mkdir -p "$W/work"
 rm -f "$W/t.exe"

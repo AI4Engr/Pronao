@@ -42,6 +42,23 @@ public:
     }
 };
 
+// a flat class object: MOVED into the worker, which then owns it alone
+class Tally {
+public:
+    int count;
+    int total;
+    std::vector<int> seen;
+    Tally() {
+        count = 0;
+        total = 0;
+    }
+    void add(int x) {
+        seen.push_back(x);
+        count = count + 1;
+        total = total + x;
+    }
+};
+
 int main() {
     App app = new App();
     app.command("add", closure Command [] (Item args) {
@@ -97,6 +114,18 @@ int main() {
         w.times = 0;
         w.word = "changed after spawn";
     });
+    // args [numbers...]: the Tally is built here and moved into the worker, which replies with count and total
+    app.asyncCommand("atally", closure AsyncCommand [] (Item args, string id, int handle) {
+        Tally t = new Tally();
+        int i = 0;
+        while (i < getArraySize(args)) {
+            t.add(int(numberAt(args, i)));
+            i = i + 1;
+        }
+        spawn(closure Job [t, id, handle] () {
+            replyOk(handle, id, "[" + intToString(t.count) + "," + intToString(t.total) + "]");
+        });
+    });
     app.open("t", 100, 100, "<html></html>", "", false);
 
     check("add", roundTrip(app, "1", "[\"add\",[2,3]]") == "0 5");
@@ -151,6 +180,8 @@ int main() {
     check("async start rejects bad args", roundTrip(app, "x3", "[\"aslow\",[\"no\",\"t\"]]") == "1 {\"code\":\"command_failed\",\"message\":\"argument 0 must be a number\"}");
 
     check("struct copied into worker", roundTrip(app, "x4", "[\"arepeat\",[3,\"ab\"]]") == "0 \"ababab\"");
+
+    check("object moved into worker", roundTrip(app, "x5", "[\"atally\",[4,5,6]]") == "0 [3,15]");
 
     // a slow job started first answers LAST; replies are matched by id, not by order
     app_test_inject(app.handle, "slow", "[\"aslow\",[400,\"slow\"]]");
