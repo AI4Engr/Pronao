@@ -7,6 +7,9 @@ ext_fn int app_test_take_eval(int handle, ref string js);
 ext_fn int app_fs_test_make_temp_dir(ref string out);
 ext_fn int app_fs_test_remove_tree(string path);
 ext_fn int app_fs_test_make_dir_link(string link, string target);
+ext_fn int app_fs_allow(string dir);
+ext_fn int app_dialog_test_push(string answer);
+ext_fn int app_dialog_test_take_request(ref string request);
 
 void check(string name, bool ok) {
     if (ok) {
@@ -14,6 +17,37 @@ void check(string name, bool ok) {
     } else {
         std::cout << "FAIL " << name << std::endl;
     }
+}
+
+bool containsText(string text, string needle) {
+    int i = 0;
+    while (i + needle.length() <= text.length()) {
+        if (text.substr(i, needle.length()) == needle) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+// the most recent dialog request the shim saw (earlier ones are drained)
+string latestRequest() {
+    string last = "";
+    string one = "";
+    while (app_dialog_test_take_request(one) == 1) {
+        last = one;
+    }
+    return last;
 }
 
 bool startsWith(string text, string prefix) {
@@ -469,5 +503,100 @@ int main() {
     app_fs_remove(outside + "/secret.txt");
     app_fs_clear();
     app_fs_test_remove_tree(base);
+
+    // ---- dialog commands: a pick is a grant of exactly what was picked ---------------------------------
+    app.enableDialogCommands();
+    string dbase = "";
+    app_fs_test_make_temp_dir(dbase);
+    app_fs_allow(dbase);
+    app_fs_write(dbase + "/picked.txt", "chosen", 0);
+    app_fs_write(dbase + "/neighbour.txt", "other", 0);
+    app_fs_mkdir(dbase + "/chosen_folder", 0);
+    app_fs_write(dbase + "/chosen_folder/inside.txt", "inside", 0);
+    app_fs_clear();
+
+    check("nothing is reachable before the user picks", startsWith(roundTrip(app, "d1", requestText("fs.read", pathArgs(dbase + "/picked.txt"))), "1 {\"code\":\"forbidden\""));
+    app_dialog_test_push("cancel");
+    check("cancel answers null and grants nothing", roundTrip(app, "d2", requestText("dialog.open", createObject())) == "0 null" &&
+          startsWith(roundTrip(app, "d3", requestText("fs.read", pathArgs(dbase + "/picked.txt"))), "1 {\"code\":\"forbidden\""));
+
+    Item openArgs = createObject();
+    addStringToObject(openArgs, "title", "Open a note");
+    Item filterList = addArrayToObject(openArgs, "filters");
+    Item textFilter = createObject();
+    addStringToObject(textFilter, "name", "Text");
+    Item textExts = addArrayToObject(textFilter, "extensions");
+    addItemToArray(textExts, createString("txt"));
+    addItemToArray(textExts, createString("md"));
+    addItemToArray(filterList, textFilter);
+    Item allFilter = createObject();
+    addStringToObject(allFilter, "name", "Everything");
+    addItemToArray(filterList, allFilter);
+    app_dialog_test_push("path:" + dbase + "/picked.txt");
+    string pickReply = roundTrip(app, "d4", requestText("dialog.open", openArgs));
+    check("a pick answers the path", startsWith(pickReply, "0 {\"path\":\"") && containsText(pickReply, "picked.txt"));
+    check("the dialog was asked with the title and two filters", latestRequest() == "open|Open a note|2");
+    check("the picked file is now readable", roundTrip(app, "d5", requestText("fs.read", pathArgs(dbase + "/picked.txt"))) == "0 {\"text\":\"chosen\"}");
+    check("its neighbour is not", startsWith(roundTrip(app, "d6", requestText("fs.read", pathArgs(dbase + "/neighbour.txt"))), "1 {\"code\":\"forbidden\""));
+    check("neither is the folder listing", startsWith(roundTrip(app, "d7", requestText("fs.list", pathArgs(dbase))), "1 {\"code\":\"forbidden\""));
+
+    Item saveArgs = createObject();
+    addStringToObject(saveArgs, "defaultName", "export.txt");
+    app_dialog_test_push("path:" + dbase + "/export.txt");
+    check("save as grants a file that does not exist yet", startsWith(roundTrip(app, "d8", requestText("dialog.save", saveArgs)), "0 {\"path\":\"") &&
+          latestRequest() == "save||export.txt|0");
+    Item exportWrite = pathArgs(dbase + "/export.txt");
+    addStringToObject(exportWrite, "text", "exported");
+    addStringToObject(exportWrite, "mode", "create");
+    check("which the page may then create", roundTrip(app, "d9", requestText("fs.write", exportWrite)) == "0 null");
+    Item otherWrite = pathArgs(dbase + "/other.txt");
+    addStringToObject(otherWrite, "text", "x");
+    check("but not a second file beside it", startsWith(roundTrip(app, "d10", requestText("fs.write", otherWrite)), "1 {\"code\":\"forbidden\""));
+
+    app_dialog_test_push("path:" + dbase + "/chosen_folder");
+    check("a folder pick grants the folder", startsWith(roundTrip(app, "d11", requestText("dialog.folder", createObject())), "0 {\"path\":\"") &&
+          roundTrip(app, "d12", requestText("fs.read", pathArgs(dbase + "/chosen_folder/inside.txt"))) == "0 {\"text\":\"inside\"}");
+
+    app.revokeGrants();
+    check("revoking withdraws every grant", startsWith(roundTrip(app, "d13", requestText("fs.read", pathArgs(dbase + "/picked.txt"))), "1 {\"code\":\"forbidden\"") &&
+          startsWith(roundTrip(app, "d14", requestText("fs.read", pathArgs(dbase + "/chosen_folder/inside.txt"))), "1 {\"code\":\"forbidden\""));
+
+    Item msgArgs = createObject();
+    addStringToObject(msgArgs, "title", "Delete?");
+    addStringToObject(msgArgs, "message", "Really delete the note?");
+    addStringToObject(msgArgs, "kind", "question");
+    addStringToObject(msgArgs, "buttons", "yesno");
+    app_dialog_test_push("button:3");
+    check("a message box answers the button", roundTrip(app, "d15", requestText("dialog.message", msgArgs)) == "0 {\"button\":\"yes\"}" &&
+          latestRequest() == "message|Delete?|question|yesno");
+    app_dialog_test_push("button:4");
+    check("and the other button", roundTrip(app, "d16", requestText("dialog.message", msgArgs)) == "0 {\"button\":\"no\"}");
+
+    Item badKind = createObject();
+    addStringToObject(badKind, "message", "x");
+    addStringToObject(badKind, "kind", "alarm");
+    check("an unknown kind is invalid_argument", startsWith(roundTrip(app, "d17", requestText("dialog.message", badKind)), "1 {\"code\":\"invalid_argument\""));
+    Item noMessage = createObject();
+    check("a message box needs a message", startsWith(roundTrip(app, "d18", requestText("dialog.message", noMessage)), "1 {\"code\":\"invalid_argument\""));
+    Item badFilters = createObject();
+    addStringToObject(badFilters, "filters", "txt");
+    check("filters must be an array", startsWith(roundTrip(app, "d19", requestText("dialog.open", badFilters)), "1 {\"code\":\"invalid_argument\""));
+    Item badExtension = createObject();
+    Item badList = addArrayToObject(badExtension, "filters");
+    Item oddFilter = createObject();
+    addStringToObject(oddFilter, "name", "Odd");
+    Item oddExts = addArrayToObject(oddFilter, "extensions");
+    addItemToArray(oddExts, createString("a;b"));
+    addItemToArray(badList, oddFilter);
+    check("an extension with odd characters is refused", startsWith(roundTrip(app, "d20", requestText("dialog.open", badExtension)), "1 {\"code\":\"invalid_argument\""));
+    Item longTitle = createObject();
+    addStringToObject(longTitle, "title", repeated("x", 201));
+    check("an over-long title is refused", startsWith(roundTrip(app, "d21", requestText("dialog.open", longTitle)), "1 {\"code\":\"invalid_argument\""));
+    Item badName = createObject();
+    addStringToObject(badName, "defaultName", "../escape.txt");
+    check("a default name with a folder in it is refused", startsWith(roundTrip(app, "d22", requestText("dialog.save", badName)), "1 {\"code\":\"invalid_argument\""));
+    check("with nothing scripted the dialog is unsupported", startsWith(roundTrip(app, "d23", requestText("dialog.folder", createObject())), "1 {\"code\":\"unsupported\""));
+    app_fs_clear();
+    app_fs_test_remove_tree(dbase);
     return 0;
 }

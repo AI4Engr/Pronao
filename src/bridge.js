@@ -30,6 +30,16 @@
       });
     }
   };
+  // Thin wrappers over the commands the application enables (app.enableFileCommands / enableDialogCommands). A
+  // wrapper for a command that was not enabled rejects with {code: "unknown_command"} like any other call.
+  var call = function (name) { return function (args) { return window.cling.invoke(name, args || {}); }; };
+  window.cling.fs = {
+    read: call('fs.read'), write: call('fs.write'), list: call('fs.list'), stat: call('fs.stat'),
+    exists: call('fs.exists'), mkdir: call('fs.mkdir'), remove: call('fs.remove')
+  };
+  window.cling.dialog = {
+    open: call('dialog.open'), save: call('dialog.save'), folder: call('dialog.folder'), message: call('dialog.message')
+  };
   // Called by the shim (app_eval) with ONE argument: the JSON array [name, payload] that CeeLing's JSON printer built.
   // The page never needs to call this itself.
   window.__cling_emit = function (message) {

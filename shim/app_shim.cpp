@@ -1,9 +1,11 @@
 #include "app_shim.h"
+#include "app_shim_internal.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <functional>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -217,6 +219,53 @@ int app_terminate(int handle) {
     // thread-safe; that holds on Linux, where it dispatches internally). Run it on the UI thread.
     webview::webview* w = app->w;
     return w->dispatch([w] { w->terminate(); }).ok() ? 1 : 0;
+#endif
+}
+
+int app_ui_call(int handle, const std::function<void(void*)>& fn) {
+#ifdef APP_HEADLESS
+    if (!lookup(handle)) return 0;
+    fn(nullptr);
+    return 1;
+#else
+    auto app = lookup(handle);
+    if (!app) return 0;
+    struct State {
+        std::mutex m;
+        std::condition_variable cv;
+        bool started = false, done = false, cancelled = false;
+    };
+    auto st = std::make_shared<State>();
+    {
+        std::lock_guard<std::mutex> lock(app->m);
+        if (app->w == nullptr) return 0;
+        webview::webview* w = app->w;
+        auto r = w->dispatch([st, fn, w] {
+            {
+                std::lock_guard<std::mutex> l(st->m);
+                if (st->cancelled) { st->done = true; st->cv.notify_all(); return; }
+                st->started = true;
+            }
+            void* native = nullptr;
+            auto win = w->window();
+            if (win.ok()) native = win.value();
+            fn(native);
+            { std::lock_guard<std::mutex> l(st->m); st->done = true; }
+            st->cv.notify_all();
+        });
+        if (!r.ok()) return 0;
+    }
+    std::unique_lock<std::mutex> lock(st->m);
+    while (!st->done) {
+        timedWait(st->cv, lock, std::chrono::milliseconds(100), [&] { return st->done; });
+        if (st->done || st->started) continue;   // running (a dialog may stay open as long as the user likes): wait for it
+        lock.unlock();                           // not started: if the window has closed meanwhile it never will
+        bool closed;
+        { std::lock_guard<std::mutex> l(app->m); closed = app->closed; }
+        lock.lock();
+        if (closed && !st->started) { st->cancelled = true; return 0; }
+    }
+    return 1;
 #endif
 }
 

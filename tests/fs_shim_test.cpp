@@ -39,6 +39,8 @@ static void mkd(const std::string& p) {
     mkdir(p.c_str(), 0755);
 #endif
 }
+static int grantFile(const std::string& p) { std::string c; return app_fs_grant_file(p, c); }
+static int grantFolder(const std::string& p) { std::string c; return app_fs_grant_folder(p, c); }
 static std::string join(const std::string& a, const std::string& b) { return a + PATHSEP + b; }
 
 // records: kind NUL size NUL mtime NUL name NUL
@@ -201,6 +203,53 @@ int main() {
     check("the second folder is now readable", app_fs_read(join(outside, "secret.txt"), 1000, out) == APP_FS_OK && out == "TOP SECRET");
     check("the sibling that only shares a prefix still is not", app_fs_read(join(evil, "x.txt"), 1000, out) == APP_FS_FORBIDDEN);
     check("clear removes every folder", app_fs_clear() == APP_FS_OK && app_fs_read(join(allowed, "hello.txt"), 1000, out) == APP_FS_FORBIDDEN);
+
+    // ---- grants: what the user picked in a dialog is exactly that, no more ----
+    const std::string g1 = join(base, "g1");
+    mkd(g1);
+    put(join(g1, "a.txt"), "picked");
+    put(join(g1, "b.txt"), "neighbour");
+    mkd(join(g1, "dir"));
+    put(join(g1, "dir" PATHSEP "deep.txt"), "deep");
+    {
+        std::string canon;
+        check("grant a file", app_fs_grant_file(join(g1, "a.txt"), canon) == APP_FS_OK);
+        check("the canonical form is a path the file commands accept", app_fs_read(canon, 100, out) == APP_FS_OK && out == "picked");
+    }
+    check("the granted file is readable", app_fs_read(join(g1, "a.txt"), 100, out) == APP_FS_OK && out == "picked");
+    check("its neighbour is not", app_fs_read(join(g1, "b.txt"), 100, out) == APP_FS_FORBIDDEN);
+    check("its folder is not listable", app_fs_list(g1, out) == APP_FS_FORBIDDEN);
+    check("a path that goes up and comes back to the neighbour", app_fs_read(join(g1, "dir" PATHSEP ".." PATHSEP "b.txt"), 100, out) == APP_FS_FORBIDDEN);
+    check("a path that goes up and comes back to the granted file", app_fs_read(join(g1, "dir" PATHSEP ".." PATHSEP "a.txt"), 100, out) == APP_FS_OK);
+    check("the granted file is writable", app_fs_write(join(g1, "a.txt"), "changed", 0) == APP_FS_OK && slurp(join(g1, "a.txt")) == "changed");
+    check("a new file next to it is not", app_fs_write(join(g1, "c.txt"), "x", 2) == APP_FS_FORBIDDEN && !exists(join(g1, "c.txt")));
+    check("a relative path has no base when only grants exist", app_fs_read("a.txt", 100, out) == APP_FS_FORBIDDEN);
+    check("a relative path cannot be granted", grantFile("a.txt") == APP_FS_INVALID);
+    check("a folder cannot be granted as a file", grantFile(g1) == APP_FS_IS_DIR);
+    check("grant a file that does not exist yet (save as)", grantFile(join(g1, "new.txt")) == APP_FS_OK);
+    check("the new name can be created", app_fs_write(join(g1, "new.txt"), "n", 2) == APP_FS_OK && slurp(join(g1, "new.txt")) == "n");
+    check("and read back", app_fs_read(join(g1, "new.txt"), 100, out) == APP_FS_OK && out == "n");
+    check("a save-as target in a missing folder", grantFile(join(g1, "nofolder" PATHSEP "x.txt")) == APP_FS_NOT_FOUND);
+    check("a granted file may be removed", app_fs_remove(join(g1, "new.txt")) == APP_FS_OK && !exists(join(g1, "new.txt")));
+    check("grant a folder", grantFolder(join(g1, "dir")) == APP_FS_OK);
+    check("the granted folder's contents are readable", app_fs_read(join(g1, "dir" PATHSEP "deep.txt"), 100, out) == APP_FS_OK && out == "deep");
+    check("the granted folder itself cannot be removed", app_fs_remove(join(g1, "dir")) == APP_FS_FORBIDDEN);
+    check("granting a file as a folder", grantFolder(join(g1, "b.txt")) == APP_FS_NOT_DIR);
+    check("grants do not widen to the parent", app_fs_read(join(g1, "b.txt"), 100, out) == APP_FS_FORBIDDEN);
+    check("an application folder and a grant coexist", app_fs_allow(allowed) == APP_FS_OK && app_fs_read("hello.txt", 100, out) == APP_FS_OK);
+    check("a relative path still means the application's folder", app_fs_read("a.txt", 100, out) == APP_FS_NOT_FOUND);
+    check("revoking grants keeps the application's folders", app_fs_revoke_grants() == APP_FS_OK &&
+          app_fs_read("hello.txt", 100, out) == APP_FS_OK && app_fs_read(join(g1, "a.txt"), 100, out) == APP_FS_FORBIDDEN &&
+          app_fs_read(join(g1, "dir" PATHSEP "deep.txt"), 100, out) == APP_FS_FORBIDDEN);
+    int lastGrant = APP_FS_OK;
+    int granted = 0;
+    for (int i = 0; i < 300 && lastGrant == APP_FS_OK; ++i) {
+        lastGrant = grantFile(join(g1, "limit" + std::to_string(i) + ".txt"));
+        if (lastGrant == APP_FS_OK) ++granted;
+    }
+    check("at most 256 grants at a time", granted == 256 && lastGrant == APP_FS_DENIED);
+    check("revoke frees them", app_fs_revoke_grants() == APP_FS_OK && grantFile(join(g1, "again.txt")) == APP_FS_OK);
+    app_fs_clear();
 
     app_fs_test_remove_tree(base);
     std::printf("fs shim test: %d passed, %d failed\n", g_passed, g_failed);

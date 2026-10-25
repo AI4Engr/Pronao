@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$1"
 fail=0
-EXPECTED=70
+EXPECTED=91
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print app headless_main embedded"
@@ -18,7 +18,8 @@ build_headless() { # variant shimdir flags exe
     done
     g++ --std=c++14 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_shim.cpp" -o "$1/shim.$4.o" || return 1
     g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_fs.cpp" -o "$1/fs.$4.o" || return 1
-    g++ $3 $objs "$1/shim.$4.o" "$1/fs.$4.o" -pthread -o "$4" || return 1
+    g++ --std=c++17 $3 -DAPP_HEADLESS -I "$2" -c "$2/app_dialog.cpp" -o "$1/dialog.$4.o" || return 1
+    g++ $3 $objs "$1/shim.$4.o" "$1/fs.$4.o" "$1/dialog.$4.o" -pthread -o "$4" || return 1
 }
 # TSan needs ASLR off on some WSL kernels (its shadow-memory mapping fails otherwise)
 run_tsan() { # exe out

@@ -40,6 +40,15 @@ ext_fn int app_fs_stat(string path, ref string out);
 ext_fn int app_fs_mkdir(string path, int parents);
 ext_fn int app_fs_remove(string path);
 ext_fn int app_fs_is_utf8(string s);
+ext_fn int app_fs_grant_file(string path, ref string canonical);
+ext_fn int app_fs_grant_folder(string path, ref string canonical);
+ext_fn int app_fs_revoke_grants();
+
+// native dialogs (shim/app_dialog.h)
+ext_fn int app_dialog_open_file(int handle, string title, string filters, ref string path);
+ext_fn int app_dialog_save_file(int handle, string title, string defaultName, string filters, ref string path);
+ext_fn int app_dialog_pick_folder(int handle, string title, ref string path);
+ext_fn int app_dialog_message(int handle, string title, string message, string kind, string buttons);
 // the page and the bridge script, compiled into the program by scripts/build.sh
 ext_fn string app_page_html();
 ext_fn string app_bridge_js();
@@ -466,6 +475,97 @@ Item entryItem(string kind, string size, string modified, string name) {
     return e;
 }
 
+// ---- dialog commands ------------------------------------------------------------------------------
+// The user's choice in a native dialog is a grant: exactly the file (or folder) they picked becomes reachable through
+// the file commands, and nothing around it. A page cannot reach a file it has not been given, by the app or by the
+// user; and a dialog is the only way the user can give one.
+
+// [{name: "Text", extensions: ["txt", "md"]}, {name: "Everything"}] -> the shim's "label NUL extensions NUL ..." form
+string filterText(Item args) {
+    Item list = getObjectItem(objectArg(args), "filters");
+    if (list == nullptr) {
+        return "";
+    }
+    if (!isArray(list)) {
+        throw "invalid_argument: `filters` must be an array";
+    }
+    string text = "";
+    int i = 0;
+    while (i < getArraySize(list)) {
+        Item f = getArrayItem(list, i);
+        Item name = nullptr;
+        if (isObject(f)) {
+            name = getObjectItem(f, "name");
+        }
+        if (name == nullptr || !isString(name)) {
+            throw "invalid_argument: every filter needs a string `name`";
+        }
+        string extensions = "*";
+        Item exts = getObjectItem(f, "extensions");
+        if (exts != nullptr) {
+            if (!isArray(exts)) {
+                throw "invalid_argument: `extensions` must be an array of strings";
+            }
+            if (getArraySize(exts) > 0) {
+                extensions = "";
+                int j = 0;
+                while (j < getArraySize(exts)) {
+                    Item e = getArrayItem(exts, j);
+                    if (!isString(e)) {
+                        throw "invalid_argument: `extensions` must be an array of strings";
+                    }
+                    if (j > 0) {
+                        extensions.push_back(',');
+                    }
+                    extensions = extensions + e.valuestring;
+                    j = j + 1;
+                }
+            }
+        }
+        text = text + name.valuestring;
+        text.push_back(char(0));
+        text = text + extensions;
+        text.push_back(char(0));
+        i = i + 1;
+    }
+    return text;
+}
+
+// Answers a picker: null if the user cancelled, {path} (the form the file commands accept) after granting it.
+void finishPick(int handle, string id, int status, string chosen, bool folder) {
+    if (status == 0) {
+        replyOk(handle, id, "null");
+    } else if (status < 0) {
+        if (status == -2) {
+            replyError(handle, id, "invalid_argument", "the dialog arguments were refused (title or filter too long or malformed)");
+        } else {
+            replyError(handle, id, "unsupported", "the dialog could not be shown");
+        }
+    } else {
+        string canonical = "";
+        int granted = 0;
+        if (folder) {
+            granted = app_fs_grant_folder(chosen, canonical);
+        } else {
+            granted = app_fs_grant_file(chosen, canonical);
+        }
+        if (granted != 0) {
+            replyError(handle, id, fsCodeFor(granted), "the chosen path cannot be used");
+        } else {
+            Item result = createObject();
+            addStringToObject(result, "path", canonical);
+            replyOk(handle, id, printUnformatted(result));
+        }
+    }
+}
+
+string buttonName(int button) {
+    if (button == 1) { return "ok"; }
+    if (button == 3) { return "yes"; }
+    if (button == 4) { return "no"; }
+    return "cancel";
+}
+
 // A running application: a window plus a command table.
 class App {
 public:
@@ -580,6 +680,62 @@ public:
             string path = requiredString(args, "path");
             fsCheck(app_fs_remove(path), "cannot remove " + path);
             return createNull();
+        });
+    }
+
+    // Withdraws everything the user granted through dialogs (the folders added with allowFolder stay).
+    void revokeGrants() {
+        app_fs_revoke_grants();
+    }
+
+    // Registers dialog.open, dialog.save, dialog.folder and dialog.message. They are asynchronous commands, so the
+    // command loop keeps serving while a dialog is open. A pick answers null on cancel, else {path} and grants that
+    // one file (or folder) to the file commands.
+    void enableDialogCommands() {
+        asyncCommand("dialog.open", closure AsyncCommand [] (Item args, string id, int handle) {
+            string title = optionalString(args, "title", "");
+            string filters = filterText(args);
+            spawn(closure Job [title, filters, id, handle] () {
+                string chosen = "";
+                int status = app_dialog_open_file(handle, title, filters, chosen);
+                finishPick(handle, id, status, chosen, false);
+            });
+        });
+        asyncCommand("dialog.save", closure AsyncCommand [] (Item args, string id, int handle) {
+            string title = optionalString(args, "title", "");
+            string suggested = optionalString(args, "defaultName", "");
+            string filters = filterText(args);
+            spawn(closure Job [title, suggested, filters, id, handle] () {
+                string chosen = "";
+                int status = app_dialog_save_file(handle, title, suggested, filters, chosen);
+                finishPick(handle, id, status, chosen, false);
+            });
+        });
+        asyncCommand("dialog.folder", closure AsyncCommand [] (Item args, string id, int handle) {
+            string title = optionalString(args, "title", "");
+            spawn(closure Job [title, id, handle] () {
+                string chosen = "";
+                int status = app_dialog_pick_folder(handle, title, chosen);
+                finishPick(handle, id, status, chosen, true);
+            });
+        });
+        asyncCommand("dialog.message", closure AsyncCommand [] (Item args, string id, int handle) {
+            string title = optionalString(args, "title", "");
+            string message = requiredString(args, "message");
+            string kind = optionalString(args, "kind", "info");
+            string buttons = optionalString(args, "buttons", "ok");
+            spawn(closure Job [title, message, kind, buttons, id, handle] () {
+                int button = app_dialog_message(handle, title, message, kind, buttons);
+                if (button > 0) {
+                    Item result = createObject();
+                    addStringToObject(result, "button", buttonName(button));
+                    replyOk(handle, id, printUnformatted(result));
+                } else if (button == -2) {
+                    replyError(handle, id, "invalid_argument", "the dialog arguments were refused (text too long, or an unknown kind or buttons)");
+                } else {
+                    replyError(handle, id, "unsupported", "the dialog could not be shown");
+                }
+            });
         });
     }
 

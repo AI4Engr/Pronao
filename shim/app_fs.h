@@ -36,8 +36,18 @@ int app_fs_is_utf8(std::string s);
 
 // Adds a folder to the allow-list. It must exist; it is stored in its canonical form (links resolved).
 int app_fs_allow(std::string dir);
-// Empties the allow-list (nothing is accessible afterwards).
+// Empties the allow-list (nothing is accessible afterwards), grants included.
 int app_fs_clear();
+
+// GRANTS: what the user picked in a dialog. Unlike the folders the application allows itself, a grant is as narrow as
+// the choice: exactly one file (it may not exist yet: a "save as" target, whose folder must) or one folder. `path`
+// must be absolute. At most 256 grants exist at a time (APP_FS_DENIED beyond that). They are kept apart so they can be
+// withdrawn without touching the application's own folders.
+// On success `canonical` is the path in the form the file commands will accept (links resolved, case as stored): hand
+// THAT to the page, not the text the dialog returned.
+int app_fs_grant_file(std::string path, std::string& canonical);
+int app_fs_grant_folder(std::string path, std::string& canonical);
+int app_fs_revoke_grants();
 
 // Reads a whole file. Fails with APP_FS_TOO_LARGE, without reading it, if it is larger than `max_bytes`.
 int app_fs_read(std::string path, int max_bytes, std::string& out);

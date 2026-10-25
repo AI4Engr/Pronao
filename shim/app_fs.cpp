@@ -90,6 +90,8 @@ namespace {
 struct Root {
     std::wstring finalForm;   // what GetFinalPathNameByHandle returns for the folder: \\?\C:\dir  or  \\?\UNC\srv\share\dir
     std::wstring plain;       // the same without the \\?\ prefix:                         C:\dir  or  \\srv\share\dir
+    bool exact = false;       // a granted FILE: only this very path matches, not anything under it
+    bool grant = false;       // added by app_fs_grant_*, withdrawable with app_fs_revoke_grants
 };
 std::vector<Root> g_roots;
 
@@ -141,22 +143,31 @@ bool finalPathOf(HANDLE h, std::wstring& out) {
     return false;
 }
 
+bool sameNoCase(const std::wstring& a, const std::wstring& b) {
+    return a.size() == b.size() && equalNoCase(a, 0, b, b.size());
+}
+
 bool insideAnyFinal(const std::wstring& finalPath) {
     std::lock_guard<std::mutex> lock(g_rootsMutex);
-    for (const auto& r : g_roots) if (isInside(finalPath, r.finalForm)) return true;
+    for (const auto& r : g_roots) {
+        if (r.exact ? sameNoCase(finalPath, r.finalForm) : isInside(finalPath, r.finalForm)) return true;
+    }
     return false;
 }
 
 bool insideAnyPlain(const std::wstring& plainPath) {
     std::lock_guard<std::mutex> lock(g_rootsMutex);
-    for (const auto& r : g_roots) if (isInside(plainPath, r.plain)) return true;
+    for (const auto& r : g_roots) {
+        if (r.exact ? sameNoCase(plainPath, r.plain) : isInside(plainPath, r.plain)) return true;
+    }
     return false;
 }
 
+// an allowed FOLDER itself (never removable); a granted file may be removed, the user chose it
 bool isRootItself(const std::wstring& finalPath) {
     std::lock_guard<std::mutex> lock(g_rootsMutex);
     for (const auto& r : g_roots) {
-        if (finalPath.size() == r.finalForm.size() && equalNoCase(finalPath, 0, r.finalForm, r.finalForm.size())) return true;
+        if (!r.exact && sameNoCase(finalPath, r.finalForm)) return true;
     }
     return false;
 }
@@ -169,7 +180,14 @@ bool isDriveAbsolute(const std::wstring& w) {
 // Lexical: the absolute, normalized form of `path` (relative paths hang off the first allowed folder). Fails for
 // device paths (\\?\ \\.\), drive-relative or root-relative paths, and anything with a colon after the drive (alternate
 // data streams).
+int normalize(const std::string& path, std::wstring& full, bool allowRelative);
 int resolve(const std::string& path, std::wstring& full) {
+    int st = normalize(path, full, true);
+    if (st != APP_FS_OK) return st;
+    return insideAnyPlain(full) ? APP_FS_OK : APP_FS_FORBIDDEN;
+}
+
+int normalize(const std::string& path, std::wstring& full, bool allowRelative) {
     if (!validInput(path)) return APP_FS_INVALID;
     std::wstring w = widen(path);
     if (w.empty()) return APP_FS_INVALID;
@@ -179,12 +197,14 @@ int resolve(const std::string& path, std::wstring& full) {
     }
     const bool unc = w.size() >= 2 && (w[0] == L'\\' || w[0] == L'/') && (w[1] == L'\\' || w[1] == L'/');
     if (!unc && !isDriveAbsolute(w)) {
+        if (!allowRelative) return APP_FS_INVALID;
         if (w[0] == L'\\' || w[0] == L'/' || (w.size() >= 2 && w[1] == L':')) return APP_FS_FORBIDDEN;
         std::wstring base;
         {
+            // relative paths hang off the FIRST folder the application allowed (never off a grant)
             std::lock_guard<std::mutex> lock(g_rootsMutex);
-            if (g_roots.empty()) return APP_FS_FORBIDDEN;
-            base = g_roots[0].plain;
+            for (const auto& r : g_roots) if (!r.exact && !r.grant) { base = r.plain; break; }
+            if (base.empty()) return APP_FS_FORBIDDEN;
         }
         if (!base.empty() && base.back() != L'\\') base += L'\\';
         w = base + w;
@@ -216,7 +236,6 @@ int resolve(const std::string& path, std::wstring& full) {
     if (full.compare(0, 4, L"\\\\.\\") == 0 || full.compare(0, 4, L"\\\\?\\") == 0) return APP_FS_FORBIDDEN;  // CON, NUL ...
     // strip trailing separators (not from a drive root)
     while (full.size() > 3 && full.back() == L'\\') full.pop_back();
-    if (!insideAnyPlain(full)) return APP_FS_FORBIDDEN;
     return APP_FS_OK;
 }
 
@@ -306,6 +325,82 @@ int app_fs_allow(std::string dir) {
 int app_fs_clear() {
     std::lock_guard<std::mutex> lock(g_rootsMutex);
     g_roots.clear();
+    return APP_FS_OK;
+}
+
+namespace {
+const size_t kMaxGrants = 256;
+int addGrant(const Root& r, std::string& canonical) {
+    canonical = narrow(r.plain);
+    std::lock_guard<std::mutex> lock(g_rootsMutex);
+    size_t n = 0;
+    for (const auto& x : g_roots) {
+        if (!x.grant) continue;
+        ++n;
+        if (x.exact == r.exact && sameNoCase(x.finalForm, r.finalForm)) return APP_FS_OK;   // already granted
+    }
+    if (n >= kMaxGrants) return APP_FS_DENIED;
+    g_roots.push_back(r);
+    return APP_FS_OK;
+}
+}  // namespace
+
+int app_fs_grant_folder(std::string path, std::string& canonical) {
+    std::wstring full;
+    int st = normalize(path, full, false);
+    if (st != APP_FS_OK) return st;
+    Handle h;
+    h.h = CreateFileW(full.c_str(), FILE_LIST_DIRECTORY, kShareAll, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (!h.ok()) return mapError(GetLastError());
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(h.h, &info)) return APP_FS_IO;
+    if (!(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) return APP_FS_NOT_DIR;
+    Root r;
+    if (!finalPathOf(h.h, r.finalForm)) return APP_FS_IO;
+    while (r.finalForm.size() > 7 && r.finalForm.back() == L'\\') r.finalForm.pop_back();
+    r.plain = plainOf(r.finalForm);
+    r.grant = true;
+    return addGrant(r, canonical);
+}
+
+int app_fs_grant_file(std::string path, std::string& canonical) {
+    std::wstring full;
+    int st = normalize(path, full, false);
+    if (st != APP_FS_OK) return st;
+    Root r;
+    r.exact = true;
+    r.grant = true;
+    Handle h;
+    h.h = CreateFileW(full.c_str(), FILE_READ_ATTRIBUTES, kShareAll, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h.ok()) {
+        BY_HANDLE_FILE_INFORMATION info;
+        if (!GetFileInformationByHandle(h.h, &info)) return APP_FS_IO;
+        if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return APP_FS_IS_DIR;
+        if (!finalPathOf(h.h, r.finalForm)) return APP_FS_IO;
+    } else {
+        DWORD e = GetLastError();
+        if (e != ERROR_FILE_NOT_FOUND) return mapError(e);
+        // a file that does not exist yet (a "save as" target): its folder must, and the name must be an ordinary one
+        const std::wstring leaf = leafOf(full);
+        if (!nameOk(leaf)) return APP_FS_FORBIDDEN;
+        std::wstring parent = full.substr(0, full.size() - leaf.size());
+        while (parent.size() > 3 && parent.back() == L'\\') parent.pop_back();
+        Handle ph;
+        ph.h = CreateFileW(parent.c_str(), FILE_LIST_DIRECTORY, kShareAll, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (!ph.ok()) return mapError(GetLastError());
+        std::wstring parentFinal;
+        if (!finalPathOf(ph.h, parentFinal)) return APP_FS_IO;
+        r.finalForm = parentFinal + (parentFinal.back() == L'\\' ? L"" : L"\\") + leaf;
+    }
+    r.plain = plainOf(r.finalForm);
+    return addGrant(r, canonical);
+}
+
+int app_fs_revoke_grants() {
+    std::lock_guard<std::mutex> lock(g_rootsMutex);
+    std::vector<Root> kept;
+    for (const auto& r : g_roots) if (!r.grant) kept.push_back(r);
+    g_roots.swap(kept);
     return APP_FS_OK;
 }
 
@@ -550,7 +645,12 @@ int app_fs_test_make_dir_link(std::string link, std::string target) {
 // ===============================================================================================================
 namespace {
 
-std::vector<std::string> g_roots;   // realpath()s, no trailing slash (except "/")
+struct Root {
+    std::string path;      // a realpath(), no trailing slash (except "/")
+    bool exact = false;    // a granted FILE: only this very path matches
+    bool grant = false;    // added by app_fs_grant_*
+};
+std::vector<Root> g_roots;
 
 bool isInside(const std::string& path, const std::string& root) {
     if (path.size() < root.size() || path.compare(0, root.size(), root) != 0) return false;
@@ -561,13 +661,14 @@ bool isInside(const std::string& path, const std::string& root) {
 
 bool insideAny(const std::string& p) {
     std::lock_guard<std::mutex> lock(g_rootsMutex);
-    for (const auto& r : g_roots) if (isInside(p, r)) return true;
+    for (const auto& r : g_roots) if (r.exact ? p == r.path : isInside(p, r.path)) return true;
     return false;
 }
 
+// an allowed FOLDER itself (never removable); a granted file may be removed, the user chose it
 bool isRoot(const std::string& p) {
     std::lock_guard<std::mutex> lock(g_rootsMutex);
-    for (const auto& r : g_roots) if (p == r) return true;
+    for (const auto& r : g_roots) if (!r.exact && p == r.path) return true;
     return false;
 }
 
@@ -587,13 +688,16 @@ struct Fd {
 };
 
 // absolute, with "." and ".." collapsed lexically; relative paths hang off the first allowed folder
-int resolve(const std::string& path, std::string& full) {
+int normalize(const std::string& path, std::string& full, bool allowRelative) {
     if (!validInput(path)) return APP_FS_INVALID;
     std::string p = path;
     if (p[0] != '/') {
+        if (!allowRelative) return APP_FS_INVALID;
         std::lock_guard<std::mutex> lock(g_rootsMutex);
-        if (g_roots.empty()) return APP_FS_FORBIDDEN;
-        p = g_roots[0] + "/" + p;
+        std::string base;
+        for (const auto& r : g_roots) if (!r.exact && !r.grant) { base = r.path; break; }   // never off a grant
+        if (base.empty()) return APP_FS_FORBIDDEN;
+        p = base + "/" + p;
     }
     std::vector<std::string> parts;
     size_t i = 0;
@@ -608,6 +712,12 @@ int resolve(const std::string& path, std::string& full) {
     full.clear();
     for (const auto& c : parts) full += "/" + c;
     if (full.empty()) full = "/";
+    return APP_FS_OK;
+}
+
+int resolve(const std::string& path, std::string& full) {
+    int st = normalize(path, full, true);
+    if (st != APP_FS_OK) return st;
     return insideAny(full) ? APP_FS_OK : APP_FS_FORBIDDEN;
 }
 
@@ -634,12 +744,20 @@ int mapErrno(int e) {
 
 char kindOfMode(mode_t m) { return S_ISLNK(m) ? 'l' : S_ISDIR(m) ? 'd' : 'f'; }
 
-// opens the parent folder of `full` and checks it is inside an allowed folder
+bool isExactGrant(const std::string& full) {
+    std::lock_guard<std::mutex> lock(g_rootsMutex);
+    for (const auto& r : g_roots) if (r.exact && r.path == full) return true;
+    return false;
+}
+
+// opens the parent folder of `full` and checks it is inside an allowed folder. A file the user granted by name has no
+// allowed parent; for exactly that file the parent is opened anyway (only to act on that one entry through it).
 int openParent(const std::string& full, Fd& parent) {
     parent.fd = open(parentOf(full).c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (!parent.ok()) return mapErrno(errno);
     std::string fin;
-    if (!fdPath(parent.fd, fin) || !insideAny(fin)) return APP_FS_FORBIDDEN;
+    if (!fdPath(parent.fd, fin)) return APP_FS_FORBIDDEN;
+    if (!insideAny(fin) && !isExactGrant(full)) return APP_FS_FORBIDDEN;
     return APP_FS_OK;
 }
 
@@ -652,8 +770,9 @@ int app_fs_allow(std::string dir) {
     struct stat sb;
     if (stat(buf, &sb) != 0) return mapErrno(errno);
     if (!S_ISDIR(sb.st_mode)) return APP_FS_NOT_DIR;
-    std::string r = buf;
-    while (r.size() > 1 && r.back() == '/') r.pop_back();
+    Root r;
+    r.path = buf;
+    while (r.path.size() > 1 && r.path.back() == '/') r.path.pop_back();
     std::lock_guard<std::mutex> lock(g_rootsMutex);
     g_roots.push_back(r);
     return APP_FS_OK;
@@ -662,6 +781,71 @@ int app_fs_allow(std::string dir) {
 int app_fs_clear() {
     std::lock_guard<std::mutex> lock(g_rootsMutex);
     g_roots.clear();
+    return APP_FS_OK;
+}
+
+namespace {
+const size_t kMaxGrants = 256;
+int addGrant(const Root& r, std::string& canonical) {
+    canonical = r.path;
+    std::lock_guard<std::mutex> lock(g_rootsMutex);
+    size_t n = 0;
+    for (const auto& x : g_roots) {
+        if (!x.grant) continue;
+        ++n;
+        if (x.exact == r.exact && x.path == r.path) return APP_FS_OK;   // already granted
+    }
+    if (n >= kMaxGrants) return APP_FS_DENIED;
+    g_roots.push_back(r);
+    return APP_FS_OK;
+}
+}  // namespace
+
+int app_fs_grant_folder(std::string path, std::string& canonical) {
+    std::string full;
+    int st = normalize(path, full, false);
+    if (st != APP_FS_OK) return st;
+    char buf[PATH_MAX + 1];
+    if (realpath(full.c_str(), buf) == nullptr) return mapErrno(errno);
+    struct stat sb;
+    if (stat(buf, &sb) != 0) return mapErrno(errno);
+    if (!S_ISDIR(sb.st_mode)) return APP_FS_NOT_DIR;
+    Root r;
+    r.path = buf;
+    while (r.path.size() > 1 && r.path.back() == '/') r.path.pop_back();
+    r.grant = true;
+    return addGrant(r, canonical);
+}
+
+int app_fs_grant_file(std::string path, std::string& canonical) {
+    std::string full;
+    int st = normalize(path, full, false);
+    if (st != APP_FS_OK) return st;
+    Root r;
+    r.exact = true;
+    r.grant = true;
+    char buf[PATH_MAX + 1];
+    if (realpath(full.c_str(), buf) != nullptr) {
+        struct stat sb;
+        if (stat(buf, &sb) != 0) return mapErrno(errno);
+        if (S_ISDIR(sb.st_mode)) return APP_FS_IS_DIR;
+        r.path = buf;
+    } else {
+        if (errno != ENOENT) return mapErrno(errno);
+        // a file that does not exist yet (a "save as" target): its folder must
+        const std::string leaf = leafOf(full);
+        if (!nameOk(leaf)) return APP_FS_FORBIDDEN;
+        if (realpath(parentOf(full).c_str(), buf) == nullptr) return mapErrno(errno);
+        r.path = std::string(buf) + (std::string(buf) == "/" ? "" : "/") + leaf;
+    }
+    return addGrant(r, canonical);
+}
+
+int app_fs_revoke_grants() {
+    std::lock_guard<std::mutex> lock(g_rootsMutex);
+    std::vector<Root> kept;
+    for (const auto& r : g_roots) if (!r.grant) kept.push_back(r);
+    g_roots.swap(kept);
     return APP_FS_OK;
 }
 

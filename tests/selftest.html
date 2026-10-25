@@ -10,6 +10,9 @@
     r.file = await cling.invoke('fs.read', { path: 'a.txt' });
     try { await cling.invoke('fs.read', { path: '../t.exe' }); } catch (e) { r.escape = e.code; }   // out of it
     try { await cling.invoke('fs.read', { path: 'nothing.txt' }); } catch (e) { r.missing = e.code; }
+    // real native dialogs; tests/close_dialogs.ps1 closes them like a user clicking the X
+    r.msg = await cling.invoke('dialog.message', { title: 'app-cling selftest message', message: 'closing by itself', kind: 'info', buttons: 'ok' });
+    r.open = await cling.invoke('dialog.open', { title: 'app-cling selftest open', filters: [{ name: 'Text', extensions: ['txt'] }] });
     const pushed = cling.once('hello');                 // an event CeeLing pushes after this command returns
     await cling.invoke('emit_hello');
     r.event = await pushed;

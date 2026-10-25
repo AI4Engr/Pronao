@@ -81,6 +81,26 @@ control run with the final-path check disabled fails the link-escape tests (so t
 Not covered: a local attacker who can create links inside an allowed folder at the very moment of a write (a file may be
 created and then removed again if it turns out to lie outside), and whatever an allowed folder itself contains.
 
+## Dialogs
+
+```
+app.enableDialogCommands();
+```
+```js
+const picked = await cling.dialog.open({ title: 'Open a note', filters: [{ name: 'Text', extensions: ['txt', 'md'] }, { name: 'Everything' }] });
+if (picked) { const { text } = await cling.fs.read({ path: picked.path }); ... }        // null when the user cancels
+const saved  = await cling.dialog.save({ title: 'Export', defaultName: 'notes.txt' });  // {path} of a file that may not exist yet
+const folder = await cling.dialog.folder({ title: 'Choose a project folder' });
+const { button } = await cling.dialog.message({ title: 'Delete?', message: 'Delete the note?', kind: 'question', buttons: 'yesno' });  // 'yes' | 'no' | 'ok' | 'cancel'
+```
+**A pick is a grant.** What the user chooses in a native dialog becomes reachable through the file commands, exactly that
+file (or, for a folder pick, that folder), and nothing around it: the neighbour files and the parent are still refused,
+and `app.revokeGrants()` withdraws all of it. So a page cannot reach a file the application did not give it and the user
+did not choose. The returned `path` is in the form the file commands accept (links resolved); use it as is. Dialogs are
+asynchronous commands, so the rest of the application keeps running while one is open. Filters are checked (at most 20,
+extensions of letters, digits, `_` and `-`), as are titles and messages (200 and 4000 bytes). Windows only for now (the
+standard Vista dialogs); elsewhere a dialog rejects with `unsupported`.
+
 ## What is and is not checked
 
 CeeLing checks the command table and everything the commands do with their own data: no dangling references, no
@@ -113,7 +133,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 70 end-to-end checks, no window
+bash tests/run_headless.sh            # 91 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```
