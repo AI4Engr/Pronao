@@ -30,6 +30,18 @@ string roundTrip(App app, string id, string request) {
     return intToString(status) + " " + json;
 }
 
+// a plain-value struct: copied into the worker, the main thread changes its own copy afterwards
+struct Work {
+public:
+    int times;
+    string word;
+    std::vector<int> extra;
+    Work(int t, string w) {
+        times = t;
+        word = w;
+    }
+};
+
 int main() {
     App app = new App();
     app.command("add", closure Command [] (Item args) {
@@ -68,6 +80,22 @@ int main() {
         spawn(closure Job [id, handle] () {
             replyError(handle, id, "worker_failed", "the job gave up");
         });
+    });
+    // args [times, word]: the worker repeats the word; the struct is built here and COPIED into the job
+    app.asyncCommand("arepeat", closure AsyncCommand [] (Item args, string id, int handle) {
+        Work w = new Work(int(numberAt(args, 0)), stringAt(args, 1));
+        w.extra.push_back(1);
+        spawn(closure Job [w, id, handle] () {
+            string out = "";
+            int i = 0;
+            while (i < w.times) {
+                out = out + w.word;
+                i = i + 1;
+            }
+            replyOk(handle, id, "\"" + out + "\"");
+        });
+        w.times = 0;
+        w.word = "changed after spawn";
     });
     app.open("t", 100, 100, "<html></html>", "", false);
 
@@ -121,6 +149,8 @@ int main() {
     check("async echo", roundTrip(app, "x1", "[\"aecho\",{\"k\":[1,2]}]") == "0 {\"k\":[1,2]}");
     check("async worker error", roundTrip(app, "x2", "[\"afail\"]") == "1 {\"code\":\"worker_failed\",\"message\":\"the job gave up\"}");
     check("async start rejects bad args", roundTrip(app, "x3", "[\"aslow\",[\"no\",\"t\"]]") == "1 {\"code\":\"command_failed\",\"message\":\"argument 0 must be a number\"}");
+
+    check("struct copied into worker", roundTrip(app, "x4", "[\"arepeat\",[3,\"ab\"]]") == "0 \"ababab\"");
 
     // a slow job started first answers LAST; replies are matched by id, not by order
     app_test_inject(app.handle, "slow", "[\"aslow\",[400,\"slow\"]]");
