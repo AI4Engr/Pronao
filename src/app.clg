@@ -25,6 +25,7 @@ ext_fn int app_return(int handle, string id, int status, string json);
 ext_fn int app_eval(int handle, string js);
 ext_fn int app_terminate(int handle);
 ext_fn int app_close(int handle);
+ext_fn int app_sleep_ms(int ms);
 // the page and the bridge script, compiled into the program by scripts/build.sh
 ext_fn string app_page_html();
 ext_fn string app_bridge_js();
@@ -131,16 +132,72 @@ Item fieldOf(Item object, string name) {
     return v;
 }
 
+// ---- background work ---------------------------------------------------------------------------
+// A command that must not block the window loop is an AsyncCommand. `start` runs on the main thread, copies
+// what it needs out of `args` into plain values, and hands them to a worker:
+//
+//     app.asyncCommand("scan", closure AsyncCommand [] (Item args, string id, int handle) {
+//         string payload = printUnformatted(args);
+//         spawn(closure Job [payload, id, handle] () {
+//             Item mine = parse(payload);            // the worker builds its OWN tree
+//             replyOk(handle, id, printUnformatted(mine));
+//         });
+//     });
+//
+// `spawn` accepts only primitives, string and vectors of primitives in the capture list (the compiler refuses
+// an Item or any other object), so the worker shares no CeeLing memory with the main thread; it answers the
+// page itself through replyOk / replyError, which go through the mutex-protected shim. `start` must either
+// spawn and return, or throw BEFORE spawning -- a promise is answered exactly once.
+class Job {
+public:
+    Job() { }
+    virtual void run() { }
+};
+
+class AsyncCommand {
+public:
+    AsyncCommand() { }
+    virtual void start(Item args, string id, int handle) { }
+};
+
+// Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
+void replyOk(int handle, string id, string json) {
+    app_return(handle, id, 0, json);
+}
+
+void replyError(int handle, string id, string code, string message) {
+    app_return(handle, id, 1, errorJson(code, message));
+}
+
 class Dispatcher {
 public:
     std::vector<string> names;
     std::vector<Command> handlers;
+    std::vector<string> asyncNames;
+    std::vector<AsyncCommand> asyncHandlers;
 
     Dispatcher() { }
 
     void add(string name, Command handler) {
         names.push_back(name);
         handlers.push_back(handler);
+    }
+
+    void addAsync(string name, AsyncCommand handler) {
+        asyncNames.push_back(name);
+        asyncHandlers.push_back(handler);
+    }
+
+    // The index of the async command called `name`, or -1.
+    int indexOfAsync(string name) {
+        int i = 0;
+        while (i < asyncNames.size()) {
+            if (asyncNames[i] == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
     }
 
     // The index of the command called `name`, or -1.
@@ -156,8 +213,9 @@ public:
     }
 
     // One request in, one reply out. Never throws and never aborts on a malformed request: a bad
-    // request is a rejected promise, not a dead application.
-    Reply handle(string request) {
+    // request is a rejected promise, not a dead application. For an async command the reply has status 2
+    // ("deferred"): nothing is sent now, the worker answers later.
+    Reply handle(int appHandle, string id, string request) {
         Item parsed = parse(request);
         if (parsed == nullptr) {
             return new Reply(1, errorJson("bad_request", "the request is not valid JSON"));
@@ -170,12 +228,22 @@ public:
             return new Reply(1, errorJson("bad_request", "the command name must be a string"));
         }
         int index = indexOf(nameItem.valuestring);
-        if (index < 0) {
+        int asyncIndex = indexOfAsync(nameItem.valuestring);
+        if (index < 0 && asyncIndex < 0) {
             return new Reply(1, errorJson("unknown_command", "no command named " + nameItem.valuestring));
         }
         Item args = getArrayItem(parsed, 1);
         if (args == nullptr) {
             args = createNull();
+        }
+        if (index < 0) {
+            try {
+                AsyncCommand starter = asyncHandlers[asyncIndex];
+                starter.start(args, id, appHandle);
+                return new Reply(2, "");
+            } catch (string message) {
+                return new Reply(1, errorJson("command_failed", message));
+            }
         }
         try {
             // (a local first: the checker cannot resolve a method call made directly on `handlers[index]`)
@@ -211,6 +279,10 @@ public:
         dispatcher.add(name, handler);
     }
 
+    void asyncCommand(string name, AsyncCommand handler) {
+        dispatcher.addAsync(name, handler);
+    }
+
     // Opens the window. false if it could not be created (the shim has printed why on stderr).
     bool open(string title, int width, int height, string html, string bridgeJs, bool debug) {
         int d = 0;
@@ -237,8 +309,10 @@ public:
                 break;
             }
             if (r == 1) {
-                Reply reply = dispatcher.handle(request);
-                app_return(handle, id, reply.status, reply.json);
+                Reply reply = dispatcher.handle(handle, id, request);
+                if (reply.status != 2) {
+                    app_return(handle, id, reply.status, reply.json);
+                }
                 served = served + 1;
             }
         }

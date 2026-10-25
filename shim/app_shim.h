@@ -42,3 +42,7 @@ int app_test_inject(int handle, std::string id, std::string request);
 int app_test_take_response(int handle, std::string& id, int& status, std::string& json);
 int app_test_close_window(int handle);
 #endif
+
+// Sleeps the calling thread. Exists so CeeLing code (which has no sleep of its own) can make a background
+// job take a known time, e.g. in tests that check replies arriving out of order.
+int app_sleep_ms(int ms);

@@ -34,8 +34,15 @@ int main() {
         return 2;
     }
     int handle = app.handle;
+    app.asyncCommand("aecho", closure AsyncCommand [] (Item args, string id, int handle) {
+        string payload = printUnformatted(args);
+        spawn(closure Job [payload, id, handle] () {
+            Item mine = parse(payload);
+            replyOk(handle, id, printUnformatted(mine));
+        });
+    });
     app.command("selftest", closure Command [verdict, handle] (Item args) {
-        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
+        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
         string got = printUnformatted(args);
         verdict.set(got == expected);
         if (got != expected) {

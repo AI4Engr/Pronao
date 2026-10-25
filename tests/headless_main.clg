@@ -47,6 +47,28 @@ int main() {
     app.command("field", closure Command [] (Item args) {
         return duplicate(fieldOf(args, "x"), true);
     });
+    // async commands: the worker rebuilds its own JSON tree from a string and answers the page itself
+    app.asyncCommand("aecho", closure AsyncCommand [] (Item args, string id, int handle) {
+        string payload = printUnformatted(args);
+        spawn(closure Job [payload, id, handle] () {
+            Item mine = parse(payload);
+            replyOk(handle, id, printUnformatted(mine));
+        });
+    });
+    // args [milliseconds, tag]: answers the tag after sleeping
+    app.asyncCommand("aslow", closure AsyncCommand [] (Item args, string id, int handle) {
+        int ms = int(numberAt(args, 0));
+        string tag = stringAt(args, 1);
+        spawn(closure Job [ms, tag, id, handle] () {
+            app_sleep_ms(ms);
+            replyOk(handle, id, "\"" + tag + "\"");
+        });
+    });
+    app.asyncCommand("afail", closure AsyncCommand [] (Item args, string id, int handle) {
+        spawn(closure Job [id, handle] () {
+            replyError(handle, id, "worker_failed", "the job gave up");
+        });
+    });
     app.open("t", 100, 100, "<html></html>", "", false);
 
     check("add", roundTrip(app, "1", "[\"add\",[2,3]]") == "0 5");
@@ -94,5 +116,90 @@ int main() {
     app_test_take_response(app.handle, id1, s1, j1);
     app_test_take_response(app.handle, id2, s2, j2);
     check("ordering", id1 == "a" && j1 == "2" && id2 == "b" && j2 == "4");
+
+    // ---- async commands -------------------------------------------------------------------------
+    check("async echo", roundTrip(app, "x1", "[\"aecho\",{\"k\":[1,2]}]") == "0 {\"k\":[1,2]}");
+    check("async worker error", roundTrip(app, "x2", "[\"afail\"]") == "1 {\"code\":\"worker_failed\",\"message\":\"the job gave up\"}");
+    check("async start rejects bad args", roundTrip(app, "x3", "[\"aslow\",[\"no\",\"t\"]]") == "1 {\"code\":\"command_failed\",\"message\":\"argument 0 must be a number\"}");
+
+    // a slow job started first answers LAST; replies are matched by id, not by order
+    app_test_inject(app.handle, "slow", "[\"aslow\",[400,\"slow\"]]");
+    app_test_inject(app.handle, "fast", "[\"aslow\",[5,\"fast\"]]");
+    app_test_close_window(app.handle);
+    app.run();
+    string firstId = "";
+    string secondId = "";
+    int st1 = 0;
+    int st2 = 0;
+    string body1 = "";
+    string body2 = "";
+    app_test_take_response(app.handle, firstId, st1, body1);
+    app_test_take_response(app.handle, secondId, st2, body2);
+    check("out-of-order replies", firstId == "fast" && body1 == "\"fast\"" && secondId == "slow" && body2 == "\"slow\"");
+
+    // a sync and an async call queued together are both answered, whichever comes first
+    app_test_inject(app.handle, "m1", "[\"add\",[1,2]]");
+    app_test_inject(app.handle, "m2", "[\"aecho\",[\"x\"]]");
+    app_test_close_window(app.handle);
+    app.run();
+    string mixA = "";
+    string mixB = "";
+    int ms1 = 0;
+    int ms2 = 0;
+    string mb1 = "";
+    string mb2 = "";
+    app_test_take_response(app.handle, mixA, ms1, mb1);
+    app_test_take_response(app.handle, mixB, ms2, mb2);
+    bool mixedOk = false;
+    if (mixA == "m1") {
+        mixedOk = mb1 == "3" && mixB == "m2" && mb2 == "[\"x\"]";
+    } else {
+        mixedOk = mixA == "m2" && mb1 == "[\"x\"]" && mixB == "m1" && mb2 == "3";
+    }
+    check("sync and async mixed", mixedOk);
+
+    // many concurrent jobs: every call answered exactly once with its own payload
+    int total = 50;
+    int n = 0;
+    while (n < total) {
+        app_test_inject(app.handle, "c" + intToString(n), "[\"aecho\",[" + intToString(n) + "]]");
+        n = n + 1;
+    }
+    app_test_close_window(app.handle);
+    app.run();
+    std::vector<int> seen;
+    int k = 0;
+    while (k < total) {
+        seen.push_back(0);
+        k = k + 1;
+    }
+    bool allOk = true;
+    k = 0;
+    while (k < total) {
+        string rid = "";
+        int rst = 0;
+        string rbody = "";
+        int got = app_test_take_response(app.handle, rid, rst, rbody);
+        if (got != 1 || rst != 0 || rid.length() < 2) {
+            allOk = false;
+        } else {
+            int idx = 0;
+            int pos = 1;
+            while (pos < rid.length()) {
+                idx = idx * 10 + (int(rid[pos]) - 48);
+                pos = pos + 1;
+            }
+            if (idx < 0 || idx >= total || rbody != "[" + intToString(idx) + "]") {
+                allOk = false;
+            } else {
+                if (seen[idx] != 0) {
+                    allOk = false;
+                }
+                seen[idx] = 1;
+            }
+        }
+        k = k + 1;
+    }
+    check("50 concurrent jobs", allOk);
     return 0;
 }

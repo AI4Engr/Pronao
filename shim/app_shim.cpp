@@ -43,6 +43,19 @@ struct App {
 #endif
 };
 
+// A timed wait on `cv`. Under ThreadSanitizer only, the deadline is a system_clock one: GCC 11's TSan does not
+// intercept pthread_cond_clockwait (what a steady_clock wait compiles to), so it misses the unlock/relock inside
+// the wait and reports a "double lock" and races that are not there. Normal builds use wait_for unchanged.
+template <typename Pred>
+bool timedWait(std::condition_variable& cv, std::unique_lock<std::mutex>& lock,
+               std::chrono::milliseconds timeout, Pred pred) {
+#if defined(__SANITIZE_THREAD__)
+    return cv.wait_until(lock, std::chrono::system_clock::now() + timeout, pred);
+#else
+    return cv.wait_for(lock, timeout, pred);
+#endif
+}
+
 std::mutex g_tableMutex;
 std::vector<std::shared_ptr<App>> g_table;   // handle - 1 = index; a closed slot is reset, not reused
 
@@ -143,7 +156,7 @@ int app_next_call(int handle, int timeout_ms, std::string& id, std::string& requ
     auto ready = [&] { return !app->calls.empty() || app->closed; };
     if (timeout_ms < 0) {
         app->cv.wait(lock, ready);
-    } else if (!app->cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
+    } else if (!timedWait(app->cv, lock, std::chrono::milliseconds(timeout_ms), ready)) {
         return 2;
     }
     if (app->calls.empty()) return 0;   // closed and drained
@@ -230,7 +243,7 @@ int app_test_take_response(int handle, std::string& id, int& status, std::string
     auto app = lookup(handle);
     if (!app) return 0;
     std::unique_lock<std::mutex> lock(app->m);
-    if (!app->cv.wait_for(lock, std::chrono::seconds(10), [&] { return !app->replies.empty(); })) return 2;
+    if (!timedWait(app->cv, lock, std::chrono::seconds(10), [&] { return !app->replies.empty(); })) return 2;
     Reply r = std::move(app->replies.front());
     app->replies.pop_front();
     id = std::move(r.id);
@@ -243,3 +256,8 @@ int app_test_close_window(int handle) {
     return app_terminate(handle);
 }
 #endif
+
+int app_sleep_ms(int ms) {
+    if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    return 1;
+}

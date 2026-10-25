@@ -40,10 +40,21 @@ when the page sent the wrong shape). A malformed request never stops the applica
 CeeLing checks the command table and everything the commands do with their own data: no dangling references, no
 use-after-move, no raw pointers, bounds and null checks at run time. **Not checked, and trusted:** the shim, the
 `webview` library, the browser engine, the six `ext_fn` declarations (a wrong signature is silently believed), and
-any other C++ you link in. There are **no thread rules yet**: commands run one at a time on the CeeLing main thread,
-so the question of shared mutable state across threads does not arise; adding workers would, and the design for it
-(ownership transfer of sendable values, results back through a queue) is still to be done. Nothing here is
-"thread-safe", and no claim is made beyond: *no dangling references in the CeeLing code that was checked*.
+any other C++ you link in.
+
+**Background work and the thread rule.** A command that must not block the window is an `AsyncCommand`: its `start`
+copies what it needs out of the request into plain values and calls `spawn(closure Job [payload, id, handle] () {...})`.
+The compiler lets only primitives, `string` and vectors of primitives into the capture list, so the worker shares no
+CeeLing memory with the main thread; an `Item` (or any object) in the capture list is a compile error. The worker
+rebuilds its own JSON tree from the string and answers the page itself with `replyOk` / `replyError`, which go through
+the mutex-protected shim. What this gives, stated exactly: *in the CeeLing code that was checked, a spawned job can
+reach only its own copies and its own allocations, so there are no data races through `spawn`.* What it does not
+give: anything about `ext_fn`s, the shim, the browser engine, the file system, deadlocks, or how many threads a
+page can cause (one per async call, no cap). Nothing here is "thread-safe".
+
+An in-flight job keeps the process alive: on exit the runtime joins every spawned thread, so a job that never
+finishes hangs the exit. A job that throws is reported on stderr and its promise stays pending, so a job should
+catch its own errors and call `replyError`.
 
 ## Build and test
 
@@ -51,7 +62,7 @@ so the question of shared mutable state across threads does not arise; adding wo
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 19 end-to-end checks, no window
+bash tests/run_headless.sh            # 25 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```
