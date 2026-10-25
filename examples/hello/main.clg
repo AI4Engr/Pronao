@@ -1,0 +1,23 @@
+// examples/hello -- the smallest complete app-cling program: a window and three commands.
+//   PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
+#include "app.clh"
+
+int main() {
+    App app = new App();
+    app.command("ping", closure Command [] (Item args) {
+        return createString("pong");
+    });
+    app.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    app.command("fail", closure Command [] (Item args) {
+        throw "this command always fails";
+    });
+    if (!app.openPage("hello app-cling", 640, 420, false)) {
+        std::cout << "could not open the window" << std::endl;
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>hello app-cling</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  pre { background: #f4f4f4; padding: 1em; }
+</style></head>
+<body>
+<h1>hello, app-cling</h1>
+<p>Every button calls a command written in CeeLing.</p>
+<button id="ping">ping</button>
+<button id="add">add 2 + 3</button>
+<button id="fail">fail</button>
+<pre id="out">(results appear here)</pre>
+<script>
+  const out = document.getElementById('out');
+  const show = (label, p) => p.then(v => { out.textContent = label + ' -> ' + JSON.stringify(v); },
+                                    e => { out.textContent = label + ' rejected: ' + JSON.stringify(e); });
+  document.getElementById('ping').onclick = () => show('ping', cling.invoke('ping'));
+  document.getElementById('add').onclick = () => show('add', cling.invoke('add', [2, 3]));
+  document.getElementById('fail').onclick = () => show('fail', cling.invoke('fail'));
+</script>
+</body>
+</html>

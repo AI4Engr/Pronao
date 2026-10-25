@@ -1,0 +1,12 @@
+<!doctype html>
+<html><body><script>
+  (async () => {
+    const r = {};
+    r.ping = await cling.invoke('ping');
+    r.sum = await cling.invoke('add', [2, 3]);
+    r.echo = await cling.invoke('echo', { a: [1, 'x', null] });
+    try { await cling.invoke('fail'); } catch (e) { r.rejected = e; }
+    try { await cling.invoke('nope'); } catch (e) { r.unknown = e; }
+    await cling.invoke('selftest', r);
+  })();
+</script></body></html>

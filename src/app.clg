@@ -1,0 +1,256 @@
+// app-cling -- the CeeLing layer: command table, dispatch and the run loop.
+//
+// This is the only part of an app-cling program that CeeLing checks. Everything native (the window, the
+// browser engine, the queue between threads) is behind the six `ext_fn`s below and is trusted, not checked.
+//
+// A command is a class with one virtual method, `call(Item args)`, that returns the JSON value to send back
+// (or throws a string, which becomes a rejected promise). Register one with a closure:
+//
+//     app.command("add", closure Command [] (Item args) {
+//         return createNumber(getArrayItem(args, 0).valuedouble + getArrayItem(args, 1).valuedouble);
+//     });
+//
+// A request arrives as the JSON array ["command", args]; the reply is a status (0 = resolve, 1 = reject) and a
+// JSON text. Reply texts are built with the JSON library, never by string concatenation, so they are always
+// valid JSON whatever the command or the error message contains.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "../shim/app_shim.h"
+
+ext_fn int app_open(string title, int width, int height, string html, string initJs, int debug);
+ext_fn int app_next_call(int handle, int timeoutMs, ref string id, ref string request);
+ext_fn int app_return(int handle, string id, int status, string json);
+ext_fn int app_eval(int handle, string js);
+ext_fn int app_terminate(int handle);
+ext_fn int app_close(int handle);
+// the page and the bridge script, compiled into the program by scripts/build.sh
+ext_fn string app_page_html();
+ext_fn string app_bridge_js();
+
+// What a handler produces. status 0 resolves the page's promise with `json`; 1 rejects it.
+class Reply {
+public:
+    int status;
+    string json;
+    Reply(int s, string j) {
+        status = s;
+        json = j;
+    }
+};
+
+// A command. Override `call`; the default answers null.
+class Command {
+public:
+    Command() { }
+    virtual Item call(Item args) {
+        return createNull();
+    }
+};
+
+// {"code": code, "message": message} as JSON text
+string errorJson(string code, string message) {
+    Item e = createObject();
+    addStringToObject(e, "code", code);
+    addStringToObject(e, "message", message);
+    return printUnformatted(e);
+}
+
+// ---- argument helpers --------------------------------------------------------------------------
+// A command receives whatever the page sent. Reading a missing or wrongly typed value straight off the
+// JSON would dereference a null handle and stop the application (the runtime null check turns that into a
+// clean abort naming the line, but a web page should not be able to end the program). These helpers reject
+// the call instead: the page's promise is rejected with the message.
+
+string intToString(int v) {
+    if (v == 0) {
+        return "0";
+    }
+    int n = v;
+    string digits = "";
+    bool negative = n < 0;
+    if (negative) {
+        n = 0 - n;
+    }
+    while (n > 0) {
+        digits.push_back(char(48 + n % 10));
+        n = n / 10;
+    }
+    string text = "";
+    if (negative) {
+        text.push_back('-');
+    }
+    int i = digits.length() - 1;
+    while (i >= 0) {
+        text.push_back(digits[i]);
+        i = i - 1;
+    }
+    return text;
+}
+
+string argName(int index) {
+    return "argument " + intToString(index);
+}
+
+// args[index] as a number, or throws "argument N must be a number"
+double numberAt(Item args, int index) {
+    Item v = getArrayItem(args, index);
+    if (!isNumber(v)) {
+        string message = argName(index) + " must be a number";
+        throw message;
+    }
+    return v.valuedouble;
+}
+
+string stringAt(Item args, int index) {
+    Item v = getArrayItem(args, index);
+    if (!isString(v)) {
+        string message = argName(index) + " must be a string";
+        throw message;
+    }
+    return v.valuestring;
+}
+
+bool boolAt(Item args, int index) {
+    Item v = getArrayItem(args, index);
+    if (!isBool(v)) {
+        string message = argName(index) + " must be a boolean";
+        throw message;
+    }
+    return isTrue(v);
+}
+
+// the member `name` of an object argument, or throws "missing field NAME"
+Item fieldOf(Item object, string name) {
+    Item v = getObjectItem(object, name);
+    if (v == nullptr) {
+        string message = "missing field " + name;
+        throw message;
+    }
+    return v;
+}
+
+class Dispatcher {
+public:
+    std::vector<string> names;
+    std::vector<Command> handlers;
+
+    Dispatcher() { }
+
+    void add(string name, Command handler) {
+        names.push_back(name);
+        handlers.push_back(handler);
+    }
+
+    // The index of the command called `name`, or -1.
+    int indexOf(string name) {
+        int i = 0;
+        while (i < names.size()) {
+            if (names[i] == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // One request in, one reply out. Never throws and never aborts on a malformed request: a bad
+    // request is a rejected promise, not a dead application.
+    Reply handle(string request) {
+        Item parsed = parse(request);
+        if (parsed == nullptr) {
+            return new Reply(1, errorJson("bad_request", "the request is not valid JSON"));
+        }
+        if (!isArray(parsed) || getArraySize(parsed) < 1) {
+            return new Reply(1, errorJson("bad_request", "the request must be a JSON array [command, args]"));
+        }
+        Item nameItem = getArrayItem(parsed, 0);
+        if (!isString(nameItem)) {
+            return new Reply(1, errorJson("bad_request", "the command name must be a string"));
+        }
+        int index = indexOf(nameItem.valuestring);
+        if (index < 0) {
+            return new Reply(1, errorJson("unknown_command", "no command named " + nameItem.valuestring));
+        }
+        Item args = getArrayItem(parsed, 1);
+        if (args == nullptr) {
+            args = createNull();
+        }
+        try {
+            // (a local first: the checker cannot resolve a method call made directly on `handlers[index]`)
+            Command handler = handlers[index];
+            Item result = handler.call(args);
+            if (result == nullptr) {
+                return new Reply(0, "null");
+            }
+            string text = printUnformatted(result);
+            if (text.length() == 0) {
+                return new Reply(1, errorJson("command_failed", "the command returned a value that cannot be printed"));
+            }
+            return new Reply(0, text);
+        } catch (string message) {
+            return new Reply(1, errorJson("command_failed", message));
+        }
+        return new Reply(1, errorJson("internal", "unreachable"));
+    }
+};
+
+// A running application: a window plus a command table.
+class App {
+public:
+    int handle;
+    Dispatcher dispatcher;
+
+    App() {
+        handle = 0;
+        dispatcher = new Dispatcher();
+    }
+
+    void command(string name, Command handler) {
+        dispatcher.add(name, handler);
+    }
+
+    // Opens the window. false if it could not be created (the shim has printed why on stderr).
+    bool open(string title, int width, int height, string html, string bridgeJs, bool debug) {
+        int d = 0;
+        if (debug) {
+            d = 1;
+        }
+        handle = app_open(title, width, height, html, bridgeJs, d);
+        return handle != 0;
+    }
+
+    // Opens the window on the page embedded at build time, with the standard bridge script.
+    bool openPage(string title, int width, int height, bool debug) {
+        return open(title, width, height, app_page_html(), app_bridge_js(), debug);
+    }
+
+    // Serves calls until the window closes. Returns how many calls were answered.
+    int run() {
+        int served = 0;
+        string id = "";
+        string request = "";
+        while (true) {
+            int r = app_next_call(handle, -1, id, request);
+            if (r == 0) {
+                break;
+            }
+            if (r == 1) {
+                Reply reply = dispatcher.handle(request);
+                app_return(handle, id, reply.status, reply.json);
+                served = served + 1;
+            }
+        }
+        return served;
+    }
+
+    void quit() {
+        app_terminate(handle);
+    }
+
+    void close() {
+        app_close(handle);
+        handle = 0;
+    }
+};

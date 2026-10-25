@@ -1,0 +1,98 @@
+#include "app.clh"
+
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_close_window(int handle);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+// Sends one request through the whole pipeline and returns "<status> <json>".
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    app_test_close_window(app.handle);
+    app.run();
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    if (gotId != id) {
+        return "WRONG ID " + gotId;
+    }
+    return intToString(status) + " " + json;
+}
+
+int main() {
+    App app = new App();
+    app.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    app.command("echo", closure Command [] (Item args) {
+        return duplicate(args, true);
+    });
+    app.command("fail", closure Command [] (Item args) {
+        throw "refused";
+    });
+    app.command("greet", closure Command [] (Item args) {
+        return createString("hello, " + stringAt(args, 0));
+    });
+    app.command("field", closure Command [] (Item args) {
+        return duplicate(fieldOf(args, "x"), true);
+    });
+    app.open("t", 100, 100, "<html></html>", "", false);
+
+    check("add", roundTrip(app, "1", "[\"add\",[2,3]]") == "0 5");
+    check("echo object", roundTrip(app, "2", "[\"echo\",{\"a\":[1,true,null]}]") == "0 {\"a\":[1,true,null]}");
+    check("echo no args", roundTrip(app, "3", "[\"echo\"]") == "0 null");
+    check("greet", roundTrip(app, "4", "[\"greet\",[\"web\"]]") == "0 \"hello, web\"");
+    check("string with quote", roundTrip(app, "5", "[\"echo\",\"a\\\"b\"]") == "0 \"a\\\"b\"");
+
+    check("unknown command", roundTrip(app, "6", "[\"nope\",1]") == "1 {\"code\":\"unknown_command\",\"message\":\"no command named nope\"}");
+    check("bad json", roundTrip(app, "7", "[\"add\",") == "1 {\"code\":\"bad_request\",\"message\":\"the request is not valid JSON\"}");
+    check("not an array", roundTrip(app, "8", "{\"add\":1}") == "1 {\"code\":\"bad_request\",\"message\":\"the request must be a JSON array [command, args]\"}");
+    check("empty array", roundTrip(app, "9", "[]") == "1 {\"code\":\"bad_request\",\"message\":\"the request must be a JSON array [command, args]\"}");
+    check("command not a string", roundTrip(app, "10", "[7,1]") == "1 {\"code\":\"bad_request\",\"message\":\"the command name must be a string\"}");
+
+    check("handler throws", roundTrip(app, "11", "[\"fail\"]") == "1 {\"code\":\"command_failed\",\"message\":\"refused\"}");
+    check("missing args", roundTrip(app, "12", "[\"add\"]") == "1 {\"code\":\"command_failed\",\"message\":\"argument 0 must be a number\"}");
+    check("wrong arg type", roundTrip(app, "13", "[\"add\",[1,\"x\"]]") == "1 {\"code\":\"command_failed\",\"message\":\"argument 1 must be a number\"}");
+    check("args not an array", roundTrip(app, "14", "[\"greet\",5]") == "1 {\"code\":\"command_failed\",\"message\":\"argument 0 must be a string\"}");
+    check("missing field", roundTrip(app, "15", "[\"field\",{\"y\":1}]") == "1 {\"code\":\"command_failed\",\"message\":\"missing field x\"}");
+    check("field present", roundTrip(app, "16", "[\"field\",{\"x\":[4]}]") == "0 [4]");
+
+    // a large payload goes through unchanged
+    string big = "";
+    int i = 0;
+    while (i < 20000) {
+        big.push_back('a');
+        i = i + 1;
+    }
+    check("large payload", roundTrip(app, "17", "[\"echo\",\"" + big + "\"]") == "0 \"" + big + "\"");
+
+    // the server survives all of the above: one more good call at the end
+    check("still serving", roundTrip(app, "18", "[\"add\",[40,2]]") == "0 42");
+
+    // two requests queued together are answered in order
+    app_test_inject(app.handle, "a", "[\"add\",[1,1]]");
+    app_test_inject(app.handle, "b", "[\"add\",[2,2]]");
+    app_test_close_window(app.handle);
+    app.run();
+    string id1 = "";
+    string id2 = "";
+    int s1 = 0;
+    int s2 = 0;
+    string j1 = "";
+    string j2 = "";
+    app_test_take_response(app.handle, id1, s1, j1);
+    app_test_take_response(app.handle, id2, s2, j2);
+    check("ordering", id1 == "a" && j1 == "2" && id2 == "b" && j2 == "4");
+    return 0;
+}
