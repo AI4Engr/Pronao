@@ -45,8 +45,9 @@ any other C++ you link in.
 **Background work and the thread rule.** A command that must not block the window is an `AsyncCommand`: its `start`
 copies what it needs out of the request into plain values and calls `spawn(closure Job [payload, id, handle] () {...})`.
 The compiler lets only plain values into the capture list (primitives, `string`, vectors of those, and `struct`s made
-only of those), all copied, so the worker shares no CeeLing memory with the main thread; an `Item` or any other class
-object in the capture list is a compile error (make the data a `struct`, or pass a string). The worker
+only of those) are copied, and a flat class object created with `new` in the same function can be MOVED in (the main
+thread cannot touch it afterwards); an `Item` or any other object that does not meet the rules is a compile error
+(make the data a `struct`, or pass a string). The exact rules are in CeeLing's CLAUDE.md. The worker
 rebuilds its own JSON tree from the string and answers the page itself with `replyOk` / `replyError`, which go through
 the mutex-protected shim. What this gives, stated exactly: *in the CeeLing code that was checked, a spawned job can
 reach only its own copies and its own allocations, so there are no data races through `spawn`.* What it does not
@@ -63,7 +64,7 @@ catch its own errors and call `replyError`.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 26 end-to-end checks, no window
+bash tests/run_headless.sh            # 27 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```
