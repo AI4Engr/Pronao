@@ -50,6 +50,37 @@ string containing quotes, backslashes or script text stays a string literal; an 
 text, makes `emit` return false and sends nothing. An event sent before the page has loaded and registered its listener
 is dropped; events from one thread arrive in order.
 
+## Files
+
+```
+app.allowFolder("C:/Users/me/Documents/notes");   // nothing is reachable until a folder is allowed
+app.enableFileCommands(16 * 1024 * 1024);          // fs.read refuses files larger than this
+```
+```js
+await cling.invoke('fs.write', { path: 'todo.txt', text: 'buy milk', mode: 'append' });   // mode: replace | append | create
+const { text } = await cling.invoke('fs.read', { path: 'todo.txt' });
+const entries = await cling.invoke('fs.list', { path: '.' });     // [{name, kind: 'file'|'dir'|'link', size, modified}]
+await cling.invoke('fs.stat', { path: 'todo.txt' });
+await cling.invoke('fs.exists', { path: 'todo.txt' });            // true / false
+await cling.invoke('fs.mkdir', { path: 'a/b/c', parents: true });
+await cling.invoke('fs.remove', { path: 'a/b/c' });               // a file, a link, or an EMPTY folder
+```
+A relative path means "inside the first allowed folder". Errors reject with a code the page can switch on:
+`forbidden`, `not_found`, `too_large`, `not_text`, `invalid_path`, `invalid_argument`, `already_exists`, `not_empty`,
+`is_directory`, `not_directory`, `permission_denied`, `io_error`.
+
+**Where the policy lives, and why.** The allowed-folder check is in the C++ shim (`shim/app_fs.cpp`), not in CeeLing,
+because whether a path is inside a folder cannot be decided from its text (`..`, symlinks and junctions, `C:foo`,
+`\\?\` prefixes, `file:stream`, device names such as `NUL`, trailing dots). Every operation opens first, asks the
+operating system where the open handle really points, compares that with the canonical allowed folders, and only then
+reads or writes through the same handle; a link that leads out of an allowed folder is refused (and removing a link
+removes the link, never its target). A `forbidden` answer is the same whether or not the file exists, so a page cannot
+probe the rest of the disk. Text only: `fs.read` returns the file as a JSON string and refuses anything that is not valid
+UTF-8. This file code is trusted C++; it is tested with 96 checks on Windows and 80 under ASan/UBSan on Linux, and a
+control run with the final-path check disabled fails the link-escape tests (so they can fail).
+Not covered: a local attacker who can create links inside an allowed folder at the very moment of a write (a file may be
+created and then removed again if it turns out to lie outside), and whatever an allowed folder itself contains.
+
 ## What is and is not checked
 
 CeeLing checks the command table and everything the commands do with their own data: no dangling references, no
@@ -82,7 +113,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 39 end-to-end checks, no window
+bash tests/run_headless.sh            # 70 end-to-end checks, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
 ```

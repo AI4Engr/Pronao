@@ -6,6 +6,10 @@
     r.sum = await cling.invoke('add', [2, 3]);
     r.echo = await cling.invoke('echo', { a: [1, 'x', null] });
     r.async = await cling.invoke('aecho', { n: [1, 2] });
+    await cling.invoke('fs.write', { path: 'a.txt', text: 'hi \u00e9' });          // inside the one allowed folder
+    r.file = await cling.invoke('fs.read', { path: 'a.txt' });
+    try { await cling.invoke('fs.read', { path: '../t.exe' }); } catch (e) { r.escape = e.code; }   // out of it
+    try { await cling.invoke('fs.read', { path: 'nothing.txt' }); } catch (e) { r.missing = e.code; }
     const pushed = cling.once('hello');                 // an event CeeLing pushes after this command returns
     await cling.invoke('emit_hello');
     r.event = await pushed;

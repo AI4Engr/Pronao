@@ -17,7 +17,7 @@ mkdir -p "$WORK"
 # generated code includes "../shim/<header>": give the work directory a sibling shim/ with those headers
 SHIMDIR="$(cd "$WORK/.." && pwd)/shim"
 mkdir -p "$SHIMDIR"
-cp "$CJSON"/shim/cjson_num.h "$HERE"/shim/app_shim.h "$SHIMDIR/"
+cp "$CJSON"/shim/cjson_num.h "$HERE"/shim/app_shim.h "$HERE"/shim/app_fs.h "$SHIMDIR/"
 
 for f in cjson_item cjson_api cjson_parse cjson_print; do cp "$CJSON/src/$f.clg" "$WORK/"; done
 cp "$HERE/src/app.clg" "$WORK/"
@@ -49,11 +49,13 @@ done
 
 if [ "$MODE" = "--headless" ]; then
     "$CXX" --std=c++14 -O1 -DAPP_HEADLESS -I "$HERE/shim" -c "$HERE/shim/app_shim.cpp" -o "$WORK/app_shim.o"
+    "$CXX" --std=c++17 -O1 -DAPP_HEADLESS -I "$HERE/shim" -c "$HERE/shim/app_fs.cpp" -o "$WORK/app_fs.o"
     "$CXX" -c "$EMBED" -o "$WORK/embedded.o"
-    "$CXX" "${OBJS[@]}" "$WORK/app_shim.o" "$WORK/embedded.o" -pthread -o "$OUT"
+    "$CXX" "${OBJS[@]}" "$WORK/app_shim.o" "$WORK/app_fs.o" "$WORK/embedded.o" -pthread -o "$OUT"
 else
     INC="-I $HERE/shim -I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
     "$CXX" --std=c++14 -O1 -Wno-unknown-pragmas $INC -c "$HERE/shim/app_shim.cpp" -o "$WORK/app_shim.o"
+    "$CXX" --std=c++17 -O1 -I "$HERE/shim" -c "$HERE/shim/app_fs.cpp" -o "$WORK/app_fs.o"
     "$CXX" -c "$EMBED" -o "$WORK/embedded.o"
-    "$CXX" "${OBJS[@]}" "$WORK/app_shim.o" "$WORK/embedded.o" -static -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -o "$OUT"
+    "$CXX" "${OBJS[@]}" "$WORK/app_shim.o" "$WORK/app_fs.o" "$WORK/embedded.o" -static -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -o "$OUT"
 fi

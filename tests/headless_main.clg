@@ -4,6 +4,9 @@ ext_fn int app_test_inject(int handle, string id, string request);
 ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
 ext_fn int app_test_close_window(int handle);
 ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_fs_test_make_temp_dir(ref string out);
+ext_fn int app_fs_test_remove_tree(string path);
+ext_fn int app_fs_test_make_dir_link(string link, string target);
 
 void check(string name, bool ok) {
     if (ok) {
@@ -11,6 +14,25 @@ void check(string name, bool ok) {
     } else {
         std::cout << "FAIL " << name << std::endl;
     }
+}
+
+bool startsWith(string text, string prefix) {
+    return text.length() >= prefix.length() && text.substr(0, prefix.length()) == prefix;
+}
+
+// {"path": p}
+Item pathArgs(string p) {
+    Item o = createObject();
+    addStringToObject(o, "path", p);
+    return o;
+}
+
+// The request text ["command", args]
+string requestText(string command, Item args) {
+    Item arr = createArray();
+    addItemToArray(arr, createString(command));
+    addItemToArray(arr, args);
+    return printUnformatted(arr);
 }
 
 // Sends one request through the whole pipeline and returns "<status> <json>".
@@ -356,5 +378,96 @@ int main() {
         waited = waited + 1;
     }
     check("worker's event arrived", workerJs == "window.__cling_emit([\"fromWorker\",{\"ok\":true}]);");
+
+    // ---- file commands ----------------------------------------------------------------------------
+    app.enableFileCommands(16);
+    string base = "";
+    app_fs_test_make_temp_dir(base);
+    string allowed = base + "/allowed";
+    string outside = base + "/outside";
+    check("a folder that does not exist cannot be allowed", !app.allowFolder(base + "/nope"));
+    app.allowFolder(base);
+    app_fs_mkdir(allowed, 0);
+    app_fs_mkdir(outside, 0);
+    app_fs_write(outside + "/secret.txt", "TOP SECRET", 0);
+    string badBytes = "";
+    badBytes.push_back(char(255));
+    app_fs_write(allowed + "/binary.dat", badBytes, 0);
+    app_fs_clear();
+    check("allowFolder accepts a real folder", app.allowFolder(allowed));
+
+    Item writeArgs = pathArgs("note.txt");
+    addStringToObject(writeArgs, "text", "hello");
+    check("fs.write then fs.read", roundTrip(app, "f1", requestText("fs.write", writeArgs)) == "0 null" &&
+          roundTrip(app, "f2", requestText("fs.read", pathArgs("note.txt"))) == "0 {\"text\":\"hello\"}");
+    check("fs.stat describes the file", startsWith(roundTrip(app, "f3", requestText("fs.stat", pathArgs("note.txt"))),
+          "0 {\"name\":\"note.txt\",\"kind\":\"file\",\"size\":5,\"modified\":"));
+    string listed = roundTrip(app, "f4", requestText("fs.list", pathArgs(".")));
+    check("fs.list shows it", startsWith(listed, "0 [{\"name\":") && listed.length() > 40);
+    check("fs.exists true", roundTrip(app, "f6", requestText("fs.exists", pathArgs("note.txt"))) == "0 true");
+    check("fs.exists false", roundTrip(app, "f7", requestText("fs.exists", pathArgs("absent.txt"))) == "0 false");
+    check("missing file is not_found", startsWith(roundTrip(app, "f8", requestText("fs.read", pathArgs("absent.txt"))),
+          "1 {\"code\":\"not_found\",\"message\":\"cannot read absent.txt\"}"));
+
+    check("dot-dot escape is forbidden", startsWith(roundTrip(app, "f9", requestText("fs.read", pathArgs("../outside/secret.txt"))),
+          "1 {\"code\":\"forbidden\""));
+    check("absolute path outside is forbidden", startsWith(roundTrip(app, "f10", requestText("fs.read", pathArgs(outside + "/secret.txt"))),
+          "1 {\"code\":\"forbidden\""));
+    check("exists does not leak outside", startsWith(roundTrip(app, "f11", requestText("fs.exists", pathArgs(outside + "/secret.txt"))),
+          "1 {\"code\":\"forbidden\"") &&
+          startsWith(roundTrip(app, "f12", requestText("fs.exists", pathArgs(outside + "/no-such-file"))), "1 {\"code\":\"forbidden\""));
+    check("write without text is invalid_argument", startsWith(roundTrip(app, "f13", requestText("fs.write", pathArgs(outside + "/planted.txt"))), "1 {\"code\":\"invalid_argument\""));
+    Item plant = pathArgs(outside + "/planted.txt");
+    addStringToObject(plant, "text", "x");
+    check("write outside with all arguments is forbidden", startsWith(roundTrip(app, "f14", requestText("fs.write", plant)), "1 {\"code\":\"forbidden\""));
+
+    string link = allowed + "/linkout";
+    app_fs_test_make_dir_link(link, outside);
+    check("a link that leads out is forbidden", startsWith(roundTrip(app, "f15", requestText("fs.read", pathArgs("linkout/secret.txt"))), "1 {\"code\":\"forbidden\""));
+    check("listing through that link is forbidden", startsWith(roundTrip(app, "f16", requestText("fs.list", pathArgs("linkout"))), "1 {\"code\":\"forbidden\""));
+    check("removing the link leaves its target", startsWith(roundTrip(app, "f17", requestText("fs.remove", pathArgs("linkout"))), "0 null") &&
+          startsWith(roundTrip(app, "f18", requestText("fs.exists", pathArgs(outside + "/secret.txt"))), "1 {\"code\":\"forbidden\""));
+
+    check("a missing path argument is invalid_argument", roundTrip(app, "f19", requestText("fs.read", createObject())) ==
+          "1 {\"code\":\"invalid_argument\",\"message\":\"`path` must be a string\"}");
+    check("a non-object argument is invalid_argument", startsWith(roundTrip(app, "f20", "[\"fs.read\",5]"), "1 {\"code\":\"invalid_argument\""));
+    Item badMode = pathArgs("m.txt");
+    addStringToObject(badMode, "text", "x");
+    addStringToObject(badMode, "mode", "overwrite");
+    check("an unknown mode is invalid_argument", startsWith(roundTrip(app, "f21", requestText("fs.write", badMode)), "1 {\"code\":\"invalid_argument\""));
+
+    Item createOnly = pathArgs("once.txt");
+    addStringToObject(createOnly, "text", "1");
+    addStringToObject(createOnly, "mode", "create");
+    check("create mode creates", roundTrip(app, "f22", requestText("fs.write", createOnly)) == "0 null");
+    check("create mode refuses an existing name", startsWith(roundTrip(app, "f23", requestText("fs.write", createOnly)), "1 {\"code\":\"already_exists\""));
+    Item appendArgs = pathArgs("once.txt");
+    addStringToObject(appendArgs, "text", "2");
+    addStringToObject(appendArgs, "mode", "append");
+    check("append mode", roundTrip(app, "f24", requestText("fs.write", appendArgs)) == "0 null" &&
+          roundTrip(app, "f25", requestText("fs.read", pathArgs("once.txt"))) == "0 {\"text\":\"12\"}");
+
+    Item bigArgs = pathArgs("big.txt");
+    addStringToObject(bigArgs, "text", "this text is longer than sixteen bytes");
+    roundTrip(app, "f26", requestText("fs.write", bigArgs));
+    check("a file over the read limit is too_large", startsWith(roundTrip(app, "f27", requestText("fs.read", pathArgs("big.txt"))), "1 {\"code\":\"too_large\""));
+    check("a file that is not UTF-8 is not_text", startsWith(roundTrip(app, "f28", requestText("fs.read", pathArgs("binary.dat"))), "1 {\"code\":\"not_text\""));
+
+    Item dirArgs = pathArgs("a/b/c");
+    addBoolToObject(dirArgs, "parents", true);
+    check("mkdir with parents", roundTrip(app, "f29", requestText("fs.mkdir", dirArgs)) == "0 null" &&
+          roundTrip(app, "f30", requestText("fs.mkdir", dirArgs)) == "0 null");
+    check("mkdir without parents needs the parent", startsWith(roundTrip(app, "f31", requestText("fs.mkdir", pathArgs("x/y/z"))), "1 {\"code\":\"not_found\""));
+    check("removing a folder with entries is not_empty", startsWith(roundTrip(app, "f32", requestText("fs.remove", pathArgs("a"))), "1 {\"code\":\"not_empty\""));
+    check("removing an empty folder", roundTrip(app, "f33", requestText("fs.remove", pathArgs("a/b/c"))) == "0 null");
+    check("the allowed folder itself cannot be removed", startsWith(roundTrip(app, "f34", requestText("fs.remove", pathArgs(allowed))), "1 {\"code\":\"forbidden\""));
+    check("reading a folder is is_directory", startsWith(roundTrip(app, "f35", requestText("fs.read", pathArgs("a"))), "1 {\"code\":\"is_directory\""));
+    check("the secret outside was never touched", app_fs_allow(outside) == 0 && app_fs_read(outside + "/secret.txt", 100, badBytes) == 0 && badBytes == "TOP SECRET" &&
+          app_fs_stat(outside + "/planted.txt", badBytes) == 2);
+    app_fs_clear();
+    app_fs_allow(base);
+    app_fs_remove(outside + "/secret.txt");
+    app_fs_clear();
+    app_fs_test_remove_tree(base);
     return 0;
 }

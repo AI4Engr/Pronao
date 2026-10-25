@@ -29,6 +29,17 @@ ext_fn int app_sleep_ms(int ms);
 ext_fn int app_gauge_enter();
 ext_fn int app_gauge_leave();
 ext_fn int app_gauge_peak();
+
+// file access with the allowed-folder policy enforced inside the shim (shim/app_fs.h)
+ext_fn int app_fs_allow(string dir);
+ext_fn int app_fs_clear();
+ext_fn int app_fs_read(string path, int maxBytes, ref string out);
+ext_fn int app_fs_write(string path, string data, int mode);
+ext_fn int app_fs_list(string dir, ref string out);
+ext_fn int app_fs_stat(string path, ref string out);
+ext_fn int app_fs_mkdir(string path, int parents);
+ext_fn int app_fs_remove(string path);
+ext_fn int app_fs_is_utf8(string s);
 // the page and the bridge script, compiled into the program by scripts/build.sh
 ext_fn string app_page_html();
 ext_fn string app_bridge_js();
@@ -59,6 +70,43 @@ string errorJson(string code, string message) {
     addStringToObject(e, "code", code);
     addStringToObject(e, "message", message);
     return printUnformatted(e);
+}
+
+// A thrown message may start with "<code>: " (lower-case letters, digits and underscores, at most 40): the code becomes
+// the reply's error code and the rest its message, so a page can tell "not_found" from "forbidden". Anything else keeps
+// the code "command_failed" and the whole message.
+int errorPrefixLength(string thrown) {
+    int i = 0;
+    while (i < thrown.length() && i < 40) {
+        char c = thrown[i];
+        bool lower = c >= 'a' && c <= 'z';
+        bool digit = c >= '0' && c <= '9';
+        if (lower || (i > 0 && (digit || c == '_'))) {
+            i = i + 1;
+        } else {
+            break;
+        }
+    }
+    if (i > 0 && i + 1 < thrown.length() && thrown[i] == ':' && thrown[i + 1] == ' ') {
+        return i + 2;
+    }
+    return 0;
+}
+
+string errorCodeOf(string thrown) {
+    int n = errorPrefixLength(thrown);
+    if (n == 0) {
+        return "command_failed";
+    }
+    return thrown.substr(0, n - 2);
+}
+
+string errorTextOf(string thrown) {
+    int n = errorPrefixLength(thrown);
+    if (n == 0) {
+        return thrown;
+    }
+    return thrown.substr(n, thrown.length() - n);
 }
 
 // ---- argument helpers --------------------------------------------------------------------------
@@ -278,14 +326,14 @@ public:
                 AsyncCommand starter = asyncHandlers[asyncIndex];
                 // every job this start() spawns inherits this: a throw inside it rejects the page's promise
                 onJobFailure(closure Failure [id, appHandle] (string message) {
-                    replyError(appHandle, id, "command_failed", message);
+                    replyError(appHandle, id, errorCodeOf(message), errorTextOf(message));
                 });
                 starter.start(args, id, appHandle);
                 cling::clearJobFailure();
                 return new Reply(2, "");
             } catch (string message) {
                 cling::clearJobFailure();
-                return new Reply(1, errorJson("command_failed", message));
+                return new Reply(1, errorJson(errorCodeOf(message), errorTextOf(message)));
             }
         }
         try {
@@ -301,11 +349,122 @@ public:
             }
             return new Reply(0, text);
         } catch (string message) {
-            return new Reply(1, errorJson("command_failed", message));
+            return new Reply(1, errorJson(errorCodeOf(message), errorTextOf(message)));
         }
         return new Reply(1, errorJson("internal", "unreachable"));
     }
 };
+
+// ---- file commands --------------------------------------------------------------------------------
+// The allowed folders and every check on a path live in the C++ shim (shim/app_fs.cpp): it decides on what the
+// operating system actually opened, which a CeeLing string comparison cannot do. These helpers only map its status
+// codes to error codes and shape the JSON.
+
+string fsCodeFor(int status) {
+    if (status == 1) { return "forbidden"; }
+    if (status == 2) { return "not_found"; }
+    if (status == 3) { return "too_large"; }
+    if (status == 5) { return "invalid_path"; }
+    if (status == 6) { return "already_exists"; }
+    if (status == 7) { return "not_empty"; }
+    if (status == 8) { return "is_directory"; }
+    if (status == 9) { return "not_directory"; }
+    if (status == 10) { return "permission_denied"; }
+    return "io_error";
+}
+
+void fsCheck(int status, string what) {
+    if (status != 0) {
+        string message = fsCodeFor(status) + ": " + what;
+        throw message;
+    }
+}
+
+Item objectArg(Item args) {
+    if (args == nullptr || !isObject(args)) {
+        throw "invalid_argument: expected an object such as {path: \"...\"}";
+    }
+    return args;
+}
+
+string requiredString(Item args, string name) {
+    Item v = getObjectItem(objectArg(args), name);
+    if (v == nullptr || !isString(v)) {
+        string message = "invalid_argument: `" + name + "` must be a string";
+        throw message;
+    }
+    return v.valuestring;
+}
+
+string optionalString(Item args, string name, string fallback) {
+    Item v = getObjectItem(objectArg(args), name);
+    if (v == nullptr) {
+        return fallback;
+    }
+    if (!isString(v)) {
+        string message = "invalid_argument: `" + name + "` must be a string";
+        throw message;
+    }
+    return v.valuestring;
+}
+
+bool optionalBool(Item args, string name, bool fallback) {
+    Item v = getObjectItem(objectArg(args), name);
+    if (v == nullptr) {
+        return fallback;
+    }
+    if (!isBool(v)) {
+        string message = "invalid_argument: `" + name + "` must be true or false";
+        throw message;
+    }
+    return isTrue(v);
+}
+
+// The NUL-separated fields the shim returns, as a vector.
+std::vector<string> splitFields(string records) {
+    std::vector<string> parts;
+    string current = "";
+    int i = 0;
+    while (i < records.length()) {
+        if (records[i] == char(0)) {
+            parts.push_back(current);
+            current = "";
+        } else {
+            current.push_back(records[i]);
+        }
+        i = i + 1;
+    }
+    return parts;
+}
+
+double decimalValue(string digits) {
+    double value = 0.0;
+    int i = 0;
+    while (i < digits.length()) {
+        char c = digits[i];
+        if (c >= '0' && c <= '9') {
+            value = value * 10.0 + double(int(c) - 48);
+        }
+        i = i + 1;
+    }
+    return value;
+}
+
+string kindName(string code) {
+    if (code == "d") { return "dir"; }
+    if (code == "l") { return "link"; }
+    return "file";
+}
+
+// {name, kind: "file" | "dir" | "link", size, modified (seconds since 1970)}
+Item entryItem(string kind, string size, string modified, string name) {
+    Item e = createObject();
+    addStringToObject(e, "name", name);
+    addStringToObject(e, "kind", kindName(kind));
+    addNumberToObject(e, "size", decimalValue(size));
+    addNumberToObject(e, "modified", decimalValue(modified));
+    return e;
+}
 
 // A running application: a window plus a command table.
 class App {
@@ -330,6 +489,98 @@ public:
     // worker jobs use emitEvent with a captured handle.
     bool emit(string name, string payloadJson) {
         return emitEvent(handle, name, payloadJson);
+    }
+
+    // Adds a folder the page may reach through the file commands. Nothing is reachable until at least one is added;
+    // a relative path from the page means "inside the first folder added". false if the folder does not exist.
+    bool allowFolder(string dir) {
+        return app_fs_allow(dir) == 0;
+    }
+
+    // Registers fs.read, fs.write, fs.list, fs.stat, fs.exists, fs.mkdir and fs.remove. Every path is checked by the
+    // shim against the folders added with allowFolder. fs.read refuses files larger than maxReadBytes and files that
+    // are not valid UTF-8 (text only; binary needs its own command).
+    void enableFileCommands(int maxReadBytes) {
+        command("fs.read", closure Command [maxReadBytes] (Item args) {
+            string path = requiredString(args, "path");
+            string content = "";
+            fsCheck(app_fs_read(path, maxReadBytes, content), "cannot read " + path);
+            if (app_fs_is_utf8(content) == 0) {
+                throw "not_text: the file is not valid UTF-8";
+            }
+            Item result = createObject();
+            addStringToObject(result, "text", content);
+            return result;
+        });
+        command("fs.write", closure Command [] (Item args) {
+            string path = requiredString(args, "path");
+            string text = requiredString(args, "text");
+            string mode = optionalString(args, "mode", "replace");
+            int code = 0;
+            if (mode == "append") {
+                code = 1;
+            } else if (mode == "create") {
+                code = 2;
+            } else if (mode != "replace") {
+                throw "invalid_argument: `mode` must be \"replace\", \"append\" or \"create\"";
+            }
+            fsCheck(app_fs_write(path, text, code), "cannot write " + path);
+            return createNull();
+        });
+        command("fs.list", closure Command [] (Item args) {
+            string path = requiredString(args, "path");
+            string records = "";
+            fsCheck(app_fs_list(path, records), "cannot list " + path);
+            std::vector<string> parts = splitFields(records);
+            Item listing = createArray();
+            int i = 0;
+            while (i + 3 < parts.size()) {
+                string name = parts[i + 3];
+                if (app_fs_is_utf8(name) == 1) {
+                    addItemToArray(listing, entryItem(parts[i], parts[i + 1], parts[i + 2], name));
+                }
+                i = i + 4;
+            }
+            return listing;
+        });
+        command("fs.stat", closure Command [] (Item args) {
+            string path = requiredString(args, "path");
+            string record = "";
+            fsCheck(app_fs_stat(path, record), "cannot stat " + path);
+            std::vector<string> parts = splitFields(record);
+            if (parts.size() < 4 || app_fs_is_utf8(parts[3]) == 0) {
+                throw "io_error: unreadable file entry";
+            }
+            return entryItem(parts[0], parts[1], parts[2], parts[3]);
+        });
+        command("fs.exists", closure Command [] (Item args) {
+            string path = requiredString(args, "path");
+            string record = "";
+            int status = app_fs_stat(path, record);
+            if (status == 2) {
+                return createBool(false);
+            }
+            fsCheck(status, "cannot stat " + path);
+            return createBool(true);
+        });
+        command("fs.mkdir", closure Command [] (Item args) {
+            string path = requiredString(args, "path");
+            bool parents = optionalBool(args, "parents", false);
+            int flag = 0;
+            if (parents) {
+                flag = 1;
+            }
+            int status = app_fs_mkdir(path, flag);
+            if (!(parents && status == 6)) {
+                fsCheck(status, "cannot create " + path);
+            }
+            return createNull();
+        });
+        command("fs.remove", closure Command [] (Item args) {
+            string path = requiredString(args, "path");
+            fsCheck(app_fs_remove(path), "cannot remove " + path);
+            return createNull();
+        });
     }
 
     // At most n async jobs run at the same time (the rest wait in a queue, oldest first); 0 = the default,
