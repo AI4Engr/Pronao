@@ -44,6 +44,13 @@
     open: call('dialog.open'), save: call('dialog.save'), folder: call('dialog.folder'), message: call('dialog.message')
   };
   window.cling.proc = { run: call('proc.run') };
+  window.cling.window = {
+    setTitle: call('window.setTitle'), setSize: call('window.setSize'), minimize: call('window.minimize'),
+    maximize: call('window.maximize'), restore: call('window.restore'), focus: call('window.focus'),
+    close: call('window.close'), setDirty: call('window.setDirty'),
+    // fires when the user tried to close the window with unsaved work and chose to stay (see app.confirmClose)
+    onCloseDeclined: function (fn) { return window.cling.on('window.closeDeclined', fn); }
+  };
   // Called by the shim (app_eval) with ONE argument: the JSON array [name, payload] that CeeLing's JSON printer built.
   // The page never needs to call this itself.
   window.__cling_emit = function (message) {

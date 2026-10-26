@@ -1,6 +1,8 @@
 // A real window, a real page: the page calls every kind of command (ok, rejected by the handler, unknown),
 // collects what it saw and reports it through `selftest`; CeeLing compares it with the expected JSON text and
 // closes the window. Exit code 0 and "selftest ok" only if everything matched.
+#include "text.clh"
+#include "files.clh"
 #include "app.clh"
 
 class Verdict {
@@ -36,6 +38,8 @@ int main() {
     app.enableFileCommands(1000);
     app.enableDialogCommands();
     app.enableWatchCommands();
+    app.enableWindowCommands();
+    app.confirmClose("app-cling selftest close", "Close without saving?");
     std::vector<string> hostArgs;
     if (!app.allowProgram("host", "hostname", hostArgs, 5000, 10000)) {
         std::cout << "selftest FAILED: hostname not found" << std::endl;
@@ -59,7 +63,7 @@ int main() {
         return createNull();
     });
     app.command("selftest", closure Command [verdict, handle] (Item args) {
-        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"file\":{\"text\":\"hi é\"},\"escape\":\"forbidden\",\"missing\":\"not_found\",\"msg\":{\"button\":\"ok\"},\"open\":null,\"watch\":[true,true],\"proc\":[0,true,false],\"noShell\":\"unknown_program\",\"event\":{\"x\":[1,\"two\"]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
+        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"file\":{\"text\":\"hi é\"},\"escape\":\"forbidden\",\"missing\":\"not_found\",\"window\":true,\"guard\":true,\"msg\":{\"button\":\"ok\"},\"open\":null,\"watch\":[true,true],\"proc\":[0,true,false],\"noShell\":\"unknown_program\",\"event\":{\"x\":[1,\"two\"]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
         string got = printUnformatted(args);
         verdict.set(got == expected);
         if (got != expected) {

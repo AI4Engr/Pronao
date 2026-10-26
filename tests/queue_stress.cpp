@@ -1,9 +1,10 @@
-// Stress test for the shim's call queue, headless build, no CeeLing. Several "UI threads" inject calls at once
+// Stress test for the shim's call queue (shim/queue.h, through the headless test double), no CeeLing. Several "UI threads" inject calls at once
 // (what the webview's bind callback does), one consumer drains them with app_next_call, and several responder
 // threads answer with app_return -- the shapes the real program has, plus more contention than it will see.
 // Checks: every call is answered exactly once, with its own payload, and each producer's calls come out in the
 // order that producer sent them. Built under ThreadSanitizer by tests/run_sanitizers.sh.
-#include "app_shim.h"
+#include "../shim/app_native.h"
+#include "doubles/test_support.h"
 #include <atomic>
 #include <cstdio>
 #include <map>

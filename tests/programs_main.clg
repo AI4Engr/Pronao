@@ -1,0 +1,70 @@
+// How a program is found (resolveProgram in src/app.clg): an absolute path, or a bare name searched for on PATH only. The native
+// layer under it (app_os_env, app_os_path_kind) is shim/{win,posix}/proc.cpp.
+#include "text.clh"
+#include "files.clh"
+#include "app.clh"
+
+ext_fn int app_os_windows();
+
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_helper(ref string path);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+int main() {
+    bool windows = app_os_windows() == 1;
+    string helper = "";
+    app_test_helper(helper);
+    string dir = "";
+    app_test_make_temp_dir(dir);
+
+    FsResult r = resolveProgram(helper);
+    check("resolve the helper by absolute path", r.status == 0 && r.text.length() > 0);
+    check("a missing absolute program", resolveProgram(dir + "/nothing-here.exe").status == 2);
+    check("a relative path with a separator", resolveProgram("./helper.exe").status == 5);
+    check("a relative path with a folder", resolveProgram("bin/tool").status == 5);
+    check("dot-dot", resolveProgram("..").status == 5);
+    check("a dot-dot component in an absolute path", resolveProgram(dir + "/../x.exe").status == 5);
+    check("a name with a space", resolveProgram("git status").status == 5);
+    check("a name with shell characters", resolveProgram("git&calc").status == 5);
+    check("a name with a semicolon", resolveProgram("a;b").status == 5);
+    check("an empty name", resolveProgram("").status == 5);
+    string bad = "";
+    bad.push_back(char(255));
+    bad.push_back(char(254));
+    check("invalid UTF-8", resolveProgram(bad).status == 5);
+    check("an unknown bare name", resolveProgram("surely-not-installed-xyz").status == 2);
+
+    // a program that sits in the CURRENT folder, but not on PATH, must not be found by name
+    string ghost = "ghost-program-for-the-test";
+    if (windows) {
+        app_test_write_raw(ghost + ".exe", "x");
+    } else {
+        app_test_write_raw(ghost, "x");
+    }
+    check("the current folder is not searched", resolveProgram(ghost).status == 2);
+
+    if (windows) {
+        check("a .bat is refused", resolveProgram("C:\\Windows\\System32\\whatever.bat").status == 5);
+        check("a .cmd is refused", resolveProgram("C:\\x\\y.cmd").status == 5);
+        check("a stream name is refused", resolveProgram("C:\\Windows\\System32\\cmd.exe:s").status == 5);
+        check("a device path is refused", resolveProgram("\\\\.\\C:\\x.exe").status == 5);
+        FsResult found = resolveProgram("where");
+        check("a bare name is found on PATH", found.status == 0 && found.text.length() > 4);
+    } else {
+        FsResult found = resolveProgram("ls");
+        check("a bare name is found on PATH", found.status == 0 && found.text[0] == '/');
+        app_test_write_raw(dir + "/not-executable", "x");
+        check("a file without the execute bit is not a program", resolveProgram(dir + "/not-executable").status == 2);
+    }
+    app_test_remove_tree(dir);
+    return 0;
+}

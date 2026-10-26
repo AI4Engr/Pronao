@@ -1,17 +1,26 @@
+#include "text.clh"
+#include "files.clh"
 #include "app.clh"
 
 ext_fn int app_test_inject(int handle, string id, string request);
 ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
 ext_fn int app_test_close_window(int handle);
 ext_fn int app_test_take_eval(int handle, ref string js);
-ext_fn int app_fs_test_make_temp_dir(ref string out);
-ext_fn int app_fs_test_remove_tree(string path);
-ext_fn int app_fs_test_write_raw(string path, string data);
-ext_fn int app_fs_test_make_dir_link(string link, string target);
-ext_fn int app_fs_allow(string dir);
-ext_fn int app_dialog_test_push(string answer);
-ext_fn int app_dialog_test_take_request(ref string request);
-ext_fn int app_proc_test_helper(ref string path);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_test_push_internal(int handle, string request);
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_mkdir_raw(string path);
+ext_fn int app_test_make_dir_link(string link, string target);
+ext_fn int app_test_dialog_push(string answer);
+ext_fn int app_test_dialog_take_request(ref string request);
+ext_fn int app_test_helper(ref string path);
+ext_fn int app_test_sleep_ms(int ms);
+ext_fn int app_test_gauge_enter();
+ext_fn int app_test_gauge_leave();
+ext_fn int app_test_gauge_peak();
 
 void check(string name, bool ok) {
     if (ok) {
@@ -46,7 +55,7 @@ string repeated(string unit, int times) {
 string latestRequest() {
     string last = "";
     string one = "";
-    while (app_dialog_test_take_request(one) == 1) {
+    while (app_test_dialog_take_request(one) == 1) {
         last = one;
     }
     return last;
@@ -57,6 +66,35 @@ Item watchIdArgs(int n) {
     Item o = createObject();
     addNumberToObject(o, "id", double(n));
     return o;
+}
+
+// the record a watcher thread queues: "watch" id kind path from, each field followed by a NUL
+string watchRecord(int id, string kind, string path, string from) {
+    string r = "watch";
+    r.push_back(char(0));
+    r = r + intToString(id);
+    r.push_back(char(0));
+    r = r + kind;
+    r.push_back(char(0));
+    r = r + path;
+    r.push_back(char(0));
+    r = r + from;
+    r.push_back(char(0));
+    return r;
+}
+
+int countText(string text, string needle) {
+    int n = 0;
+    int i = 0;
+    while (i + needle.length() <= text.length()) {
+        if (text.substr(i, needle.length()) == needle) {
+            n = n + 1;
+            i = i + needle.length();
+        } else {
+            i = i + 1;
+        }
+    }
+    return n;
 }
 
 bool startsWith(string text, string prefix) {
@@ -78,11 +116,23 @@ string requestText(string command, Item args) {
     return printUnformatted(arr);
 }
 
-// Sends one request through the whole pipeline and returns "<status> <json>".
+// serves the loop until nothing has arrived for quietMs
+void drain(App app, int quietMs) {
+    int r = 1;
+    while (r == 1) {
+        r = app.serveOne(quietMs);
+    }
+}
+
+// Sends one request through the whole pipeline and returns "<status> <json>". The loop keeps serving until the answer is
+// there, because some answers need the main loop to run again after a worker has finished (a dialog's grant).
 string roundTrip(App app, string id, string request) {
     app_test_inject(app.handle, id, request);
-    app_test_close_window(app.handle);
-    app.run();
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
     string gotId = "";
     int status = 0;
     string json = "";
@@ -155,7 +205,7 @@ int main() {
         int ms = int(numberAt(args, 0));
         string tag = stringAt(args, 1);
         spawn(closure Job [ms, tag, id, handle] () {
-            app_sleep_ms(ms);
+            app_test_sleep_ms(ms);
             replyOk(handle, id, "\"" + tag + "\"");
         });
     });
@@ -202,9 +252,9 @@ int main() {
     app.asyncCommand("agauge", closure AsyncCommand [] (Item args, string id, int handle) {
         int ms = int(numberAt(args, 0));
         spawn(closure Job [ms, id, handle] () {
-            app_gauge_enter();
-            app_sleep_ms(ms);
-            app_gauge_leave();
+            app_test_gauge_enter();
+            app_test_sleep_ms(ms);
+            app_test_gauge_leave();
             replyOk(handle, id, "1");
         });
     });
@@ -251,8 +301,7 @@ int main() {
     // two requests queued together are answered in order
     app_test_inject(app.handle, "a", "[\"add\",[1,1]]");
     app_test_inject(app.handle, "b", "[\"add\",[2,2]]");
-    app_test_close_window(app.handle);
-    app.run();
+    drain(app, 100);
     string id1 = "";
     string id2 = "";
     int s1 = 0;
@@ -277,8 +326,7 @@ int main() {
     // a slow job started first answers LAST; replies are matched by id, not by order
     app_test_inject(app.handle, "slow", "[\"aslow\",[400,\"slow\"]]");
     app_test_inject(app.handle, "fast", "[\"aslow\",[5,\"fast\"]]");
-    app_test_close_window(app.handle);
-    app.run();
+    drain(app, 100);
     string firstId = "";
     string secondId = "";
     int st1 = 0;
@@ -292,8 +340,7 @@ int main() {
     // a sync and an async call queued together are both answered, whichever comes first
     app_test_inject(app.handle, "m1", "[\"add\",[1,2]]");
     app_test_inject(app.handle, "m2", "[\"aecho\",[\"x\"]]");
-    app_test_close_window(app.handle);
-    app.run();
+    drain(app, 100);
     string mixA = "";
     string mixB = "";
     int ms1 = 0;
@@ -317,8 +364,7 @@ int main() {
         app_test_inject(app.handle, "c" + intToString(n), "[\"aecho\",[" + intToString(n) + "]]");
         n = n + 1;
     }
-    app_test_close_window(app.handle);
-    app.run();
+    drain(app, 100);
     std::vector<int> seen;
     int k = 0;
     while (k < total) {
@@ -362,8 +408,7 @@ int main() {
         app_test_inject(app.handle, "g" + intToString(a), "[\"agauge\",[80]]");
         a = a + 1;
     }
-    app_test_close_window(app.handle);
-    app.run();
+    drain(app, 100);
     int answered = 0;
     a = 0;
     while (a < 6) {
@@ -376,7 +421,7 @@ int main() {
         a = a + 1;
     }
     check("limit 2: all 6 jobs answered", answered == 6);
-    check("limit 2: never more than 2 at once", app_gauge_peak() <= 2 && app_gauge_peak() >= 1);
+    check("limit 2: never more than 2 at once", app_test_gauge_peak() <= 2 && app_test_gauge_peak() >= 1);
 
     // control: without the cap the same jobs overlap more, so the check above could have failed
     app.setWorkerLimit(0);
@@ -385,8 +430,7 @@ int main() {
         app_test_inject(app.handle, "h" + intToString(a), "[\"agauge\",[80]]");
         a = a + 1;
     }
-    app_test_close_window(app.handle);
-    app.run();
+    drain(app, 100);
     a = 0;
     while (a < 6) {
         string hid = "";
@@ -395,7 +439,7 @@ int main() {
         app_test_take_response(app.handle, hid, hst, hbody);
         a = a + 1;
     }
-    check("control: default limit lets more than 2 overlap", app_gauge_peak() > 2);
+    check("control: default limit lets more than 2 overlap", app_test_gauge_peak() > 2);
     // ---- events: CeeLing -> page ---------------------------------------------------------------
     string js = "";
     check("emit builds the call", app.emit("tick", "{\"n\":1}") && app_test_take_eval(app.handle, js) == 1 && js == "window.__cling_emit([\"tick\",{\"n\":1}]);");
@@ -417,7 +461,7 @@ int main() {
     string workerJs = "";
     check("worker emits then replies", roundTrip(app, "x7", "[\"aemit\"]") == "0 true");
     while (app_test_take_eval(app.handle, workerJs) == 0 && waited < 100) {
-        app_sleep_ms(20);
+        app_test_sleep_ms(20);
         waited = waited + 1;
     }
     check("worker's event arrived", workerJs == "window.__cling_emit([\"fromWorker\",{\"ok\":true}]);");
@@ -425,18 +469,16 @@ int main() {
     // ---- file commands ----------------------------------------------------------------------------
     app.enableFileCommands(16);
     string base = "";
-    app_fs_test_make_temp_dir(base);
+    app_test_make_temp_dir(base);
     string allowed = base + "/allowed";
     string outside = base + "/outside";
     check("a folder that does not exist cannot be allowed", !app.allowFolder(base + "/nope"));
-    app.allowFolder(base);
-    app_fs_mkdir(allowed, 0);
-    app_fs_mkdir(outside, 0);
-    app_fs_write(outside + "/secret.txt", "TOP SECRET", 0);
+    app_test_mkdir_raw(allowed);
+    app_test_mkdir_raw(outside);
+    app_test_write_raw(outside + "/secret.txt", "TOP SECRET");
     string badBytes = "";
     badBytes.push_back(char(255));
-    app_fs_write(allowed + "/binary.dat", badBytes, 0);
-    app_fs_clear();
+    app_test_write_raw(allowed + "/binary.dat", badBytes);
     check("allowFolder accepts a real folder", app.allowFolder(allowed));
 
     Item writeArgs = pathArgs("note.txt");
@@ -465,7 +507,7 @@ int main() {
     check("write outside with all arguments is forbidden", startsWith(roundTrip(app, "f14", requestText("fs.write", plant)), "1 {\"code\":\"forbidden\""));
 
     string link = allowed + "/linkout";
-    app_fs_test_make_dir_link(link, outside);
+    app_test_make_dir_link(link, outside);
     check("a link that leads out is forbidden", startsWith(roundTrip(app, "f15", requestText("fs.read", pathArgs("linkout/secret.txt"))), "1 {\"code\":\"forbidden\""));
     check("listing through that link is forbidden", startsWith(roundTrip(app, "f16", requestText("fs.list", pathArgs("linkout"))), "1 {\"code\":\"forbidden\""));
     check("removing the link leaves its target", startsWith(roundTrip(app, "f17", requestText("fs.remove", pathArgs("linkout"))), "0 null") &&
@@ -505,27 +547,25 @@ int main() {
     check("removing an empty folder", roundTrip(app, "f33", requestText("fs.remove", pathArgs("a/b/c"))) == "0 null");
     check("the allowed folder itself cannot be removed", startsWith(roundTrip(app, "f34", requestText("fs.remove", pathArgs(allowed))), "1 {\"code\":\"forbidden\""));
     check("reading a folder is is_directory", startsWith(roundTrip(app, "f35", requestText("fs.read", pathArgs("a"))), "1 {\"code\":\"is_directory\""));
-    check("the secret outside was never touched", app_fs_allow(outside) == 0 && app_fs_read(outside + "/secret.txt", 100, badBytes) == 0 && badBytes == "TOP SECRET" &&
-          app_fs_stat(outside + "/planted.txt", badBytes) == 2);
-    app_fs_clear();
-    app_fs_allow(base);
-    app_fs_remove(outside + "/secret.txt");
-    app_fs_clear();
-    app_fs_test_remove_tree(base);
+    app.gate.allow(outside);
+    FsResult secret = app.gate.read(outside + "/secret.txt", 100);
+    FsResult planted = app.gate.stat(outside + "/planted.txt");
+    check("the secret outside was never touched", secret.status == 0 && secret.text == "TOP SECRET" && planted.status == 2);
+    app.gate.clear();
+    app_test_remove_tree(base);
 
     // ---- dialog commands: a pick is a grant of exactly what was picked ---------------------------------
     app.enableDialogCommands();
     string dbase = "";
-    app_fs_test_make_temp_dir(dbase);
-    app_fs_allow(dbase);
-    app_fs_write(dbase + "/picked.txt", "chosen", 0);
-    app_fs_write(dbase + "/neighbour.txt", "other", 0);
-    app_fs_mkdir(dbase + "/chosen_folder", 0);
-    app_fs_write(dbase + "/chosen_folder/inside.txt", "inside", 0);
-    app_fs_clear();
+    app_test_make_temp_dir(dbase);
+    app_test_write_raw(dbase + "/picked.txt", "chosen");
+    app_test_write_raw(dbase + "/neighbour.txt", "other");
+    app_test_mkdir_raw(dbase + "/chosen_folder");
+    app_test_write_raw(dbase + "/chosen_folder/inside.txt", "inside");
+    app.gate.clear();
 
     check("nothing is reachable before the user picks", startsWith(roundTrip(app, "d1", requestText("fs.read", pathArgs(dbase + "/picked.txt"))), "1 {\"code\":\"forbidden\""));
-    app_dialog_test_push("cancel");
+    app_test_dialog_push("cancel");
     check("cancel answers null and grants nothing", roundTrip(app, "d2", requestText("dialog.open", createObject())) == "0 null" &&
           startsWith(roundTrip(app, "d3", requestText("fs.read", pathArgs(dbase + "/picked.txt"))), "1 {\"code\":\"forbidden\""));
 
@@ -541,19 +581,19 @@ int main() {
     Item allFilter = createObject();
     addStringToObject(allFilter, "name", "Everything");
     addItemToArray(filterList, allFilter);
-    app_dialog_test_push("path:" + dbase + "/picked.txt");
+    app_test_dialog_push("path:" + dbase + "/picked.txt");
     string pickReply = roundTrip(app, "d4", requestText("dialog.open", openArgs));
     check("a pick answers the path", startsWith(pickReply, "0 {\"path\":\"") && containsText(pickReply, "picked.txt"));
-    check("the dialog was asked with the title and two filters", latestRequest() == "open|Open a note|2");
+    check("the dialog was asked with the title and two filters", latestRequest() == "pick|0|Open a note|||Text|*.txt;*.md|Everything|*.*");
     check("the picked file is now readable", roundTrip(app, "d5", requestText("fs.read", pathArgs(dbase + "/picked.txt"))) == "0 {\"text\":\"chosen\"}");
     check("its neighbour is not", startsWith(roundTrip(app, "d6", requestText("fs.read", pathArgs(dbase + "/neighbour.txt"))), "1 {\"code\":\"forbidden\""));
     check("neither is the folder listing", startsWith(roundTrip(app, "d7", requestText("fs.list", pathArgs(dbase))), "1 {\"code\":\"forbidden\""));
 
     Item saveArgs = createObject();
     addStringToObject(saveArgs, "defaultName", "export.txt");
-    app_dialog_test_push("path:" + dbase + "/export.txt");
+    app_test_dialog_push("path:" + dbase + "/export.txt");
     check("save as grants a file that does not exist yet", startsWith(roundTrip(app, "d8", requestText("dialog.save", saveArgs)), "0 {\"path\":\"") &&
-          latestRequest() == "save||export.txt|0");
+          latestRequest() == "pick|1||export.txt|");
     Item exportWrite = pathArgs(dbase + "/export.txt");
     addStringToObject(exportWrite, "text", "exported");
     addStringToObject(exportWrite, "mode", "create");
@@ -562,7 +602,7 @@ int main() {
     addStringToObject(otherWrite, "text", "x");
     check("but not a second file beside it", startsWith(roundTrip(app, "d10", requestText("fs.write", otherWrite)), "1 {\"code\":\"forbidden\""));
 
-    app_dialog_test_push("path:" + dbase + "/chosen_folder");
+    app_test_dialog_push("path:" + dbase + "/chosen_folder");
     check("a folder pick grants the folder", startsWith(roundTrip(app, "d11", requestText("dialog.folder", createObject())), "0 {\"path\":\"") &&
           roundTrip(app, "d12", requestText("fs.read", pathArgs(dbase + "/chosen_folder/inside.txt"))) == "0 {\"text\":\"inside\"}");
 
@@ -575,10 +615,10 @@ int main() {
     addStringToObject(msgArgs, "message", "Really delete the note?");
     addStringToObject(msgArgs, "kind", "question");
     addStringToObject(msgArgs, "buttons", "yesno");
-    app_dialog_test_push("button:3");
+    app_test_dialog_push("button:3");
     check("a message box answers the button", roundTrip(app, "d15", requestText("dialog.message", msgArgs)) == "0 {\"button\":\"yes\"}" &&
-          latestRequest() == "message|Delete?|question|yesno");
-    app_dialog_test_push("button:4");
+          latestRequest() == "message|Delete?|Really delete the note?|3|2");
+    app_test_dialog_push("button:4");
     check("and the other button", roundTrip(app, "d16", requestText("dialog.message", msgArgs)) == "0 {\"button\":\"no\"}");
 
     Item badKind = createObject();
@@ -605,19 +645,19 @@ int main() {
     addStringToObject(badName, "defaultName", "../escape.txt");
     check("a default name with a folder in it is refused", startsWith(roundTrip(app, "d22", requestText("dialog.save", badName)), "1 {\"code\":\"invalid_argument\""));
     check("with nothing scripted the dialog is unsupported", startsWith(roundTrip(app, "d23", requestText("dialog.folder", createObject())), "1 {\"code\":\"unsupported\""));
-    app_fs_clear();
-    app_fs_test_remove_tree(dbase);
+    app.gate.clear();
+    app_test_remove_tree(dbase);
 
     // ---- program commands: the page names an entry of a table, never a command line ---------------------
     string helper = "";
-    app_proc_test_helper(helper);
+    app_test_helper(helper);
     string pbase = "";
-    app_fs_test_make_temp_dir(pbase);
-    app_fs_allow(pbase);
-    app_fs_write(pbase + "/f.txt", "file", 0);
-    app_fs_mkdir(pbase + "/sub", 0);
+    app_test_make_temp_dir(pbase);
+    app.allowFolder(pbase);
+    app_test_write_raw(pbase + "/f.txt", "file");
+    app_test_mkdir_raw(pbase + "/sub");
     string pout = "";
-    app_fs_test_make_temp_dir(pout);
+    app_test_make_temp_dir(pout);
 
     std::vector<string> pEcho;
     pEcho.push_back("fixed");
@@ -910,7 +950,7 @@ int main() {
     check("a file is not a working folder", startsWith(roundTrip(app, "p25", requestText("proc.run", cwReq3)), "1 {\"code\":\"not_directory\""));
     Item whereReq = createObject();
     addStringToObject(whereReq, "program", "where");
-    check("without a working folder it is the first allowed folder", containsText(roundTrip(app, "p26", requestText("proc.run", whereReq)), "app-cling-fs-"));
+    check("without a working folder it is the first allowed folder", containsText(roundTrip(app, "p26", requestText("proc.run", whereReq)), "app-cling-"));
 
     // many at once: the pool serves them, every one is answered with its own result
     int pn = 0;
@@ -924,8 +964,7 @@ int main() {
         app_test_inject(app.handle, "q" + intToString(pn), requestText("proc.run", eachReq));
         pn = pn + 1;
     }
-    app_test_close_window(app.handle);
-    app.run();
+    drain(app, 100);
     int pmatched = 0;
     pn = 0;
     while (pn < 24) {
@@ -946,19 +985,18 @@ int main() {
         pn = pn + 1;
     }
     check("24 programs at once, each answered with its own exit code", pmatched == 24);
-    app_fs_clear();
-    app_fs_test_remove_tree(pbase);
-    app_fs_test_remove_tree(pout);
+    app.gate.clear();
+    app_test_remove_tree(pbase);
+    app_test_remove_tree(pout);
 
     // ---- watching folders: a watcher thread -> the call queue -> the main loop -> an event on the page -----
     app.enableWatchCommands();
     string wbase = "";
-    app_fs_test_make_temp_dir(wbase);
-    app_fs_allow(wbase);
-    app_fs_mkdir(wbase + "/outside", 0);
-    app_fs_mkdir(wbase + "/outside/watched", 0);
-    app_fs_mkdir(wbase + "/outside/granted", 0);
-    app_fs_clear();
+    app_test_make_temp_dir(wbase);
+    app_test_mkdir_raw(wbase + "/outside");
+    app_test_mkdir_raw(wbase + "/outside/watched");
+    app_test_mkdir_raw(wbase + "/outside/granted");
+    app.gate.clear();
     app.allowFolder(wbase + "/outside/watched");
     string trash = "";
     while (app_test_take_eval(app.handle, trash) == 1) { }
@@ -970,10 +1008,9 @@ int main() {
     check("a missing folder is not_found", startsWith(roundTrip(app, "w3", requestText("fs.watch", pathArgs(wbase + "/outside/watched/missing"))), "1 {\"code\":\"not_found\""));
     check("a dot-dot path is forbidden", startsWith(roundTrip(app, "w4", requestText("fs.watch", pathArgs("../"))), "1 {\"code\":\"forbidden\""));
 
-    app_fs_write(wbase + "/outside/watched/made.txt", "hi", 0);
-    app_sleep_ms(400);
-    app_test_close_window(app.handle);
-    app.run();
+    app_test_write_raw(wbase + "/outside/watched/made.txt", "hi");
+    app_test_sleep_ms(400);
+    drain(app, 100);
     string allEvals = "";
     string oneEval = "";
     while (app_test_take_eval(app.handle, oneEval) == 1) {
@@ -981,13 +1018,12 @@ int main() {
     }
     check("a new file reaches the page as an event", containsText(allEvals, "window.__cling_emit([\"fs.change\",{\"watch\":") &&
           containsText(allEvals, "\"kind\":\"created\",\"path\":\"made.txt\""));
-    check("the event carries a relative path only", !containsText(allEvals, wbase) && !containsText(allEvals, "app-cling-fs-"));
+    check("the event carries a relative path only", !containsText(allEvals, wbase) && !containsText(allEvals, "app-cling-"));
 
     // a name that tries to break out of the script stays a string
-    app_fs_write(wbase + "/outside/watched/a'b);alert(1);(.txt", "x", 0);
-    app_sleep_ms(400);
-    app_test_close_window(app.handle);
-    app.run();
+    app_test_write_raw(wbase + "/outside/watched/a'b);alert(1);(.txt", "x");
+    app_test_sleep_ms(400);
+    drain(app, 100);
     allEvals = "";
     while (app_test_take_eval(app.handle, oneEval) == 1) {
         allEvals = allEvals + oneEval;
@@ -1001,10 +1037,9 @@ int main() {
     string idText = watchReply.substr(6, watchReply.length() - 7);
     int watchNumber = int(decimalValue(idText));
     check("unwatch stops the watch", roundTrip(app, "w7", requestText("fs.unwatch", watchIdArgs(watchNumber))) == "0 null");
-    app_fs_write(wbase + "/outside/watched/silent.txt", "x", 0);
-    app_sleep_ms(400);
-    app_test_close_window(app.handle);
-    app.run();
+    app_test_write_raw(wbase + "/outside/watched/silent.txt", "x");
+    app_test_sleep_ms(400);
+    drain(app, 100);
     allEvals = "";
     while (app_test_take_eval(app.handle, oneEval) == 1) {
         allEvals = allEvals + oneEval;
@@ -1012,15 +1047,13 @@ int main() {
     check("after unwatch nothing arrives", !containsText(allEvals, "silent.txt"));
 
     // a pick is a grant, and a watch on it ends when the grant is withdrawn
-    string pickedCanonical = "";
-    app_fs_grant_folder(wbase + "/outside/granted", pickedCanonical);
-    string revokedReply = roundTrip(app, "w8", requestText("fs.watch", pathArgs(pickedCanonical)));
+    FsResult pickedFolder = app.gate.grantFolder(wbase + "/outside/granted");
+    string revokedReply = roundTrip(app, "w8", requestText("fs.watch", pathArgs(pickedFolder.text)));
     check("the page can watch the folder the user granted", startsWith(revokedReply, "0 {\"id\":"));
     app.revokeGrants();
-    app_fs_test_write_raw(wbase + "/outside/granted/late.txt", "x");
-    app_sleep_ms(400);
-    app_test_close_window(app.handle);
-    app.run();
+    app_test_write_raw(wbase + "/outside/granted/late.txt", "x");
+    app_test_sleep_ms(400);
+    drain(app, 100);
     allEvals = "";
     while (app_test_take_eval(app.handle, oneEval) == 1) {
         allEvals = allEvals + oneEval;
@@ -1030,7 +1063,141 @@ int main() {
     // the queue entry that signals a watch has an empty id: a page cannot produce one
     check("an injected call with an empty id is dropped", app_test_inject(app.handle, "", "[\"fs.list\",{\"path\":\".\"}]") == 0);
 
-    app_fs_clear();
-    app_fs_test_remove_tree(wbase);
+    app.gate.clear();
+    app_test_remove_tree(wbase);
+
+    // ---- watch records are merged and checked on the CeeLing side: records pushed by hand, no file system involved ----
+    string mbase = "";
+    app_test_make_temp_dir(mbase);
+    app.allowFolder(mbase);
+    FsResult mroot = app.gate.resolve(mbase, 2);
+    app.watches.states.push_back(new WatchState(901, mroot.text));
+    while (app_test_take_eval(app.handle, trash) == 1) { }
+    int mk = 0;
+    while (mk < 10) {
+        app_test_push_internal(app.handle, watchRecord(901, "modified", "a.txt", ""));
+        mk = mk + 1;
+    }
+    app_test_push_internal(app.handle, watchRecord(901, "created", "b.txt", ""));
+    app_test_push_internal(app.handle, watchRecord(901, "modified", "a.txt", ""));
+    app_test_push_internal(app.handle, watchRecord(901, "renamed", "c.txt", "d.txt"));
+    app_test_push_internal(app.handle, watchRecord(901, "renamed", "c.txt", "d.txt"));
+    app_test_push_internal(app.handle, watchRecord(902, "created", "nobody-watches-this.txt", ""));
+    drain(app, 100);
+    string merged = "";
+    while (app_test_take_eval(app.handle, oneEval) == 1) {
+        merged = merged + oneEval;
+    }
+    check("eleven modified records for one file are one event", countText(merged, "\"kind\":\"modified\",\"path\":\"a.txt\"") == 1);
+    check("a created file is passed on", countText(merged, "\"kind\":\"created\",\"path\":\"b.txt\"") == 1);
+    check("the same rename twice in a row is one event", countText(merged, "\"kind\":\"renamed\",\"path\":\"c.txt\",\"from\":\"d.txt\"") == 1);
+    check("a record for a watch nobody started is dropped", !containsText(merged, "nobody-watches-this"));
+    app_test_push_internal(app.handle, watchRecord(901, "overflow", "", ""));
+    drain(app, 100);
+    merged = "";
+    while (app_test_take_eval(app.handle, oneEval) == 1) {
+        merged = merged + oneEval;
+    }
+    check("an overflow record becomes an overflow event", containsText(merged, "\"watch\":901,\"kind\":\"overflow\"}"));
+    app_test_push_internal(app.handle, watchRecord(901, "stopped", "folder_gone", ""));
+    drain(app, 100);
+    merged = "";
+    while (app_test_take_eval(app.handle, oneEval) == 1) {
+        merged = merged + oneEval;
+    }
+    check("a stopped record ends the watch with its reason", containsText(merged, "\"kind\":\"stopped\",\"reason\":\"folder_gone\"") && app.watches.indexOf(901) < 0);
+    app_test_push_internal(app.handle, watchRecord(901, "created", "after.txt", ""));
+    drain(app, 100);
+    check("nothing arrives for a watch that has ended", app_test_take_eval(app.handle, oneEval) == 0);
+    string hostile = "x";
+    hostile.push_back(char(255));
+    app.watches.states.push_back(new WatchState(903, mroot.text));
+    app_test_push_internal(app.handle, watchRecord(903, "created", hostile, ""));
+    drain(app, 100);
+    check("a name that is not UTF-8 is not passed to the page", app_test_take_eval(app.handle, oneEval) == 0);
+    app.watches.drop(app.watches.indexOf(903));
+
+    // at most 32 folder watches at a time
+    int wn = 0;
+    int accepted = 0;
+    string lastReply = "";
+    while (wn < 34) {
+        string reply = roundTrip(app, "lim" + intToString(wn), requestText("fs.watch", pathArgs(mbase)));
+        if (startsWith(reply, "0 {\"id\":")) {
+            accepted = accepted + 1;
+        } else {
+            lastReply = reply;
+        }
+        wn = wn + 1;
+    }
+    check("at most 32 folders can be watched", accepted >= 28 && accepted <= 32 && startsWith(lastReply, "1 {\"code\":\"too_many\""));
+    app.gate.clear();
+    app_test_remove_tree(mbase);
+
+    // ---- window control -------------------------------------------------------------------------------
+    app.enableWindowCommands();
+    string wl = "";
+    while (app_test_take_window_log(app.handle, wl) == 1) { }
+    Item titleArgs = createObject();
+    addStringToObject(titleArgs, "title", "Report - draft");
+    check("window.setTitle", roundTrip(app, "k1", requestText("window.setTitle", titleArgs)) == "0 null" && app_test_take_window_log(app.handle, wl) == 1 && wl == "title|Report - draft");
+    Item emptyTitle = createObject();
+    addStringToObject(emptyTitle, "title", "");
+    check("an empty title is refused", startsWith(roundTrip(app, "k2", requestText("window.setTitle", emptyTitle)), "1 {\"code\":\"invalid_argument\"") && app_test_take_window_log(app.handle, wl) == 0);
+    Item longWindowTitle = createObject();
+    addStringToObject(longWindowTitle, "title", repeated("t", 201));
+    check("an over-long title is refused", startsWith(roundTrip(app, "k3", requestText("window.setTitle", longWindowTitle)), "1 {\"code\":\"invalid_argument\""));
+    check("a title must be a string", startsWith(roundTrip(app, "k4", requestText("window.setTitle", createObject())), "1 {\"code\":\"invalid_argument\""));
+    Item sizeArgs = createObject();
+    addNumberToObject(sizeArgs, "width", 800.0);
+    addNumberToObject(sizeArgs, "height", 600.0);
+    check("window.setSize", roundTrip(app, "k5", requestText("window.setSize", sizeArgs)) == "0 null" && app_test_take_window_log(app.handle, wl) == 1 && wl == "size|800|600");
+    Item tiny = createObject();
+    addNumberToObject(tiny, "width", 10.0);
+    addNumberToObject(tiny, "height", 600.0);
+    check("a tiny window is refused", startsWith(roundTrip(app, "k6", requestText("window.setSize", tiny)), "1 {\"code\":\"invalid_argument\""));
+    Item huge = createObject();
+    addNumberToObject(huge, "width", 800.0);
+    addNumberToObject(huge, "height", 100000.0);
+    check("a huge window is refused", startsWith(roundTrip(app, "k7", requestText("window.setSize", huge)), "1 {\"code\":\"invalid_argument\""));
+    Item textSize = createObject();
+    addStringToObject(textSize, "width", "800");
+    addNumberToObject(textSize, "height", 600.0);
+    check("a size must be numbers", startsWith(roundTrip(app, "k8", requestText("window.setSize", textSize)), "1 {\"code\":\"invalid_argument\""));
+    check("nothing reached the window for the refused ones", app_test_take_window_log(app.handle, wl) == 0);
+    check("window.minimize", roundTrip(app, "k9", requestText("window.minimize", createObject())) == "0 null" && app_test_take_window_log(app.handle, wl) == 1 && wl == "state|1");
+    check("window.maximize", roundTrip(app, "k10", requestText("window.maximize", createObject())) == "0 null" && app_test_take_window_log(app.handle, wl) == 1 && wl == "state|2");
+    check("window.restore", roundTrip(app, "k11", requestText("window.restore", createObject())) == "0 null" && app_test_take_window_log(app.handle, wl) == 1 && wl == "state|0");
+    check("window.focus", roundTrip(app, "k12", requestText("window.focus", createObject())) == "0 null" && app_test_take_window_log(app.handle, wl) == 1 && wl == "state|3");
+
+    // closing with unsaved work asks first; the box is the application's, the page cannot change its text
+    App second = new App();
+    second.open("t2", 100, 100, "<html></html>", "", false);
+    second.enableWindowCommands();
+    Item dirtyArgs = createObject();
+    addBoolToObject(dirtyArgs, "dirty", true);
+    check("window.setDirty", roundTrip(second, "k13", requestText("window.setDirty", dirtyArgs)) == "0 null");
+    check("confirmClose turns the guard on", second.confirmClose("Unsaved work", "Close without saving?") && app_test_take_window_log(second.handle, wl) == 1 && wl == "guard|1");
+    app_test_dialog_push("button:4");
+    app_test_close_window(second.handle);
+    drain(second, 150);
+    check("the box asks the application's question", latestRequest() == "message|Unsaved work|Close without saving?|3|2");
+    check("answering no keeps the window open", second.serveOne(20) == 2);
+    app_test_dialog_push("button:3");
+    app_test_close_window(second.handle);
+    drain(second, 150);
+    check("answering yes closes it", second.serveOne(20) == 0);
+
+    App third = new App();
+    third.open("t3", 100, 100, "<html></html>", "", false);
+    third.confirmClose("Unsaved work", "Close without saving?");
+    latestRequest();
+    app_test_close_window(third.handle);
+    drain(third, 150);
+    check("with nothing unsaved the close button closes at once, without asking", latestRequest() == "" && third.serveOne(20) == 0);
+
+    drain(app, 300);          // (the watches above end now that their folder is gone; their records come first)
+    check("without confirmClose the close button just closes", app_test_close_window(app.handle) == 1 && app.serveOne(20) == 0);
+    app.window.handle = 0;
     return 0;
 }

@@ -1,75 +1,68 @@
-#include "app_shim.h"
+// The window and the queue between the page and CeeLing (see app_native.h): a UI thread that creates the window and pumps its
+// messages (WebView2 requires the creating thread to pump), a queue of calls from JavaScript, and a handle table so CeeLing sees
+// small integers. CeeLing runs the loop (app_next_call, then app_return), so no callback ever crosses into CeeLing.
+#include "app_native.h"
 #include "app_shim_internal.h"
-#include "app_watch.h"
+#include "queue.h"
 
 #include <atomic>
-#include <chrono>
 #include <cstdio>
 #include <exception>
-#include <functional>
-#include <condition_variable>
-#include <deque>
+#include <typeinfo>
 #include <memory>
-#include <mutex>
 #include <thread>
-#include <utility>
 #include <vector>
 
-#ifndef APP_HEADLESS
 #include "webview/webview.h"
+#ifdef _WIN32
+#include <windows.h>
 #endif
 
 namespace {
-
-struct Call {
-    std::string id;
-    std::string request;
-};
-
-struct Reply {
-    std::string id;
-    int status;
-    std::string json;
-};
-
 struct App {
-    std::mutex m;
-    std::condition_variable cv;        // signalled on: a call queued, the window closed, creation finished
-    std::deque<Call> calls;
-    bool ready = false;                // creation finished (successfully or not)
-    bool created = false;
-    bool closed = false;               // the message loop has ended
+    CallQueue calls;                   // closed when the message loop has ended
+    std::mutex m;                      // guards `w`, `ready` and `created`
+    std::condition_variable cv;
+    bool ready = false, created = false;
+    webview::webview* w = nullptr;     // valid only while the loop runs, and only touched under `m`
     std::thread ui;
-#ifndef APP_HEADLESS
-    webview::webview* w = nullptr;     // valid only while !closed && created, and only touched under `m`
-#else
-    std::deque<Reply> replies;         // what CeeLing answered, for the tests to inspect
-    std::deque<std::string> evals;     // every script passed to app_eval, in order
-#endif
+    std::atomic<bool> guard{false};    // closing the window asks CeeLing instead of closing
+    void* oldProc = nullptr;
 };
-
-// A timed wait on `cv`. Under ThreadSanitizer only, the deadline is a system_clock one: GCC 11's TSan does not
-// intercept pthread_cond_clockwait (what a steady_clock wait compiles to), so it misses the unlock/relock inside
-// the wait and reports a "double lock" and races that are not there. Normal builds use wait_for unchanged.
-template <typename Pred>
-bool timedWait(std::condition_variable& cv, std::unique_lock<std::mutex>& lock,
-               std::chrono::milliseconds timeout, Pred pred) {
-#if defined(__SANITIZE_THREAD__)
-    return cv.wait_until(lock, std::chrono::system_clock::now() + timeout, pred);
-#else
-    return cv.wait_for(lock, timeout, pred);
-#endif
-}
 
 std::mutex g_tableMutex;
 std::vector<std::shared_ptr<App>> g_table;   // handle - 1 = index; a closed slot is reset, not reused
 
 std::shared_ptr<App> lookup(int handle) {
     std::lock_guard<std::mutex> lock(g_tableMutex);
-    if (handle < 1 || static_cast<size_t>(handle) > g_table.size()) return nullptr;
-    return g_table[static_cast<size_t>(handle) - 1];
+    return (handle < 1 || static_cast<size_t>(handle) > g_table.size()) ? nullptr : g_table[static_cast<size_t>(handle) - 1];
 }
 
+void ended(App* a, bool created) {
+    { std::lock_guard<std::mutex> lock(a->m); a->w = nullptr; a->ready = true; a->created = created; }
+    a->calls.close();
+    a->cv.notify_all();
+}
+
+#ifdef _WIN32
+LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    App* a = static_cast<App*>(GetPropW(h, L"app_cling"));
+    if (msg == WM_CLOSE && a->guard.load()) {
+        a->calls.push(std::string(), std::string("window\0close_requested\0", 23), 100);
+        return 0;
+    }
+    return CallWindowProcW(reinterpret_cast<WNDPROC>(a->oldProc), h, msg, wp, lp);
+}
+#endif
+
+// runs `op` on the UI thread (without waiting); 0 if the window is gone
+int onUi(int handle, std::function<void(webview::webview&)> op) {
+    auto app = lookup(handle);
+    if (!app) return 0;
+    std::lock_guard<std::mutex> lock(app->m);
+    webview::webview* w = app->w;
+    return w != nullptr && w->dispatch([w, op] { op(*w); }).ok() ? 1 : 0;
+}
 }  // namespace
 
 int app_open(std::string title, int width, int height, std::string html, std::string init_js, int debug) {
@@ -80,66 +73,35 @@ int app_open(std::string title, int width, int height, std::string html, std::st
         g_table.push_back(app);
         handle = static_cast<int>(g_table.size());
     }
-#ifdef APP_HEADLESS
-    (void)title; (void)width; (void)height; (void)html; (void)init_js; (void)debug;
-    {
-        std::lock_guard<std::mutex> lock(app->m);
-        app->created = true;
-        app->ready = true;
-    }
-    return handle;
-#else
     App* raw = app.get();
     app->ui = std::thread([raw, title, width, height, html, init_js, debug] {
         try {
             webview::webview w(debug != 0, nullptr);
             w.set_title(title);
             w.set_size(width, height, WEBVIEW_HINT_NONE);
-            w.bind("__cling_invoke",
-                   [raw](const std::string& id, const std::string& req, void* /*unused*/) {
-                       if (id.empty()) return;   // an empty id marks the shim's own records (file watchers): never from a page
-                       {
-                           std::lock_guard<std::mutex> lock(raw->m);
-                           raw->calls.push_back(Call{id, req});
-                       }
-                       raw->cv.notify_all();
-                   },
-                   nullptr);
+            w.bind("__cling_invoke", [raw](const std::string& id, const std::string& req, void*) {
+                if (!id.empty()) raw->calls.push(id, req, 1 << 30);   // an empty id marks the shim's own records: never from a page
+            }, nullptr);
             if (!init_js.empty()) w.init(init_js);
             w.set_html(html);
-            {
-                std::lock_guard<std::mutex> lock(raw->m);
-                raw->w = &w;
-                raw->created = true;
-                raw->ready = true;
-            }
+#ifdef _WIN32
+            HWND hwnd = static_cast<HWND>(w.window().value());
+            SetPropW(hwnd, L"app_cling", raw);
+            raw->oldProc = reinterpret_cast<void*>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(guardProc)));
+#endif
+            { std::lock_guard<std::mutex> lock(raw->m); raw->w = &w; raw->created = raw->ready = true; }
             raw->cv.notify_all();
             w.run();
-            {
-                // Forget the pointer BEFORE `w` is destroyed at the end of this scope.
-                std::lock_guard<std::mutex> lock(raw->m);
-                raw->w = nullptr;
-                raw->closed = true;
-            }
-            raw->cv.notify_all();
+            ended(raw, true);              // forget the pointer BEFORE `w` is destroyed at the end of this scope
+        } catch (const webview::exception& e) {
+            std::fprintf(stderr, "app_shim: webview error code %d\n", static_cast<int>(e.error().code()));
+            ended(raw, false);
         } catch (const std::exception& e) {
             std::fprintf(stderr, "app_shim: window creation failed: %s\n", e.what());
-            {
-                std::lock_guard<std::mutex> lock(raw->m);
-                raw->w = nullptr;
-                raw->closed = true;
-                raw->ready = true;
-            }
-            raw->cv.notify_all();
+            ended(raw, false);
         } catch (...) {
             std::fprintf(stderr, "app_shim: window creation failed (unknown error)\n");
-            {
-                std::lock_guard<std::mutex> lock(raw->m);
-                raw->w = nullptr;
-                raw->closed = true;
-                raw->ready = true;
-            }
-            raw->cv.notify_all();
+            ended(raw, false);
         }
     });
     std::unique_lock<std::mutex> lock(app->m);
@@ -152,139 +114,94 @@ int app_open(std::string title, int width, int height, std::string html, std::st
         return 0;
     }
     return handle;
-#endif
 }
 
 int app_next_call(int handle, int timeout_ms, std::string& id, std::string& request) {
     auto app = lookup(handle);
-    if (!app) return 0;
-    std::unique_lock<std::mutex> lock(app->m);
-    auto ready = [&] { return !app->calls.empty() || app->closed; };
-    if (timeout_ms < 0) {
-        app->cv.wait(lock, ready);
-    } else if (!timedWait(app->cv, lock, std::chrono::milliseconds(timeout_ms), ready)) {
-        return 2;
-    }
-    if (app->calls.empty()) return 0;   // closed and drained
-    Call c = std::move(app->calls.front());
-    app->calls.pop_front();
-    id = std::move(c.id);
-    request = std::move(c.request);
-    return 1;
+    return app ? app->calls.pop(timeout_ms, id, request) : 0;
+}
+
+int app_push(int handle, std::string id, std::string request, int max_queued) {
+    auto app = lookup(handle);
+    return app ? app->calls.push(std::move(id), std::move(request), max_queued) : -1;
 }
 
 int app_return(int handle, std::string id, int status, std::string json) {
     auto app = lookup(handle);
     if (!app) return 0;
     std::lock_guard<std::mutex> lock(app->m);
-#ifdef APP_HEADLESS
-    app->replies.push_back(Reply{std::move(id), status, std::move(json)});
-    app->cv.notify_all();
-    return 1;
-#else
-    if (app->w == nullptr) return 0;   // the window is gone; the answer has nowhere to go
-    // resolve() posts to the UI thread itself, so calling it from this thread is safe.
-    return app->w->resolve(id, status, json).ok() ? 1 : 0;
-#endif
+    // resolve() posts to the UI thread itself, so calling it from this thread is safe
+    return app->w != nullptr && app->w->resolve(id, status, json).ok() ? 1 : 0;
 }
 
 int app_eval(int handle, std::string js) {
-    auto app = lookup(handle);
-    if (!app) return 0;
-#ifdef APP_HEADLESS
-    std::lock_guard<std::mutex> lock(app->m);
-    app->evals.push_back(std::move(js));
-    return 1;
-#else
-    std::lock_guard<std::mutex> lock(app->m);
-    if (app->w == nullptr) return 0;
-    webview::webview* w = app->w;
-    return w->dispatch([w, js] { w->eval(js); }).ok() ? 1 : 0;
-#endif
+    return onUi(handle, [js](webview::webview& w) { w.eval(js); });
 }
 
 int app_terminate(int handle) {
-    auto app = lookup(handle);
-    if (!app) return 0;
-#ifdef APP_HEADLESS
-    {
-        std::lock_guard<std::mutex> lock(app->m);
-        app->closed = true;
-    }
-    app->cv.notify_all();
-    return 1;
+    // NOT terminate() from this thread: on Windows that is PostQuitMessage(0), which posts WM_QUIT to the CALLING thread's queue
+    // (the wrong one from here), so the UI loop would never stop. onUi runs it on the UI thread.
+    return onUi(handle, [](webview::webview& w) { w.terminate(); });
+}
+
+int app_window_title(int handle, std::string title) {
+    return onUi(handle, [title](webview::webview& w) { w.set_title(title); });
+}
+
+int app_window_size(int handle, int width, int height) {
+    return onUi(handle, [width, height](webview::webview& w) { w.set_size(width, height, WEBVIEW_HINT_NONE); });
+}
+
+int app_window_state(int handle, int state) {
+#ifdef _WIN32
+    return onUi(handle, [state](webview::webview& w) {
+        HWND hwnd = static_cast<HWND>(w.window().value());
+        if (state == 3) SetForegroundWindow(hwnd);
+        else ShowWindow(hwnd, state == 1 ? SW_MINIMIZE : state == 2 ? SW_MAXIMIZE : SW_RESTORE);
+    });
 #else
-    std::lock_guard<std::mutex> lock(app->m);
-    if (app->w == nullptr) return 0;
-    // NOT w->terminate() directly: on Windows that is PostQuitMessage(0), which posts WM_QUIT to the CALLING
-    // thread's queue -- from here, the wrong thread, so the UI loop would never stop (the library documents it as
-    // thread-safe; that holds on Linux, where it dispatches internally). Run it on the UI thread.
-    webview::webview* w = app->w;
-    return w->dispatch([w] { w->terminate(); }).ok() ? 1 : 0;
+    return (void)handle, (void)state, -1;
+#endif
+}
+
+int app_window_guard(int handle, int on) {
+    auto app = lookup(handle);
+    if (app) app->guard = on != 0;
+#ifdef _WIN32
+    return app ? 1 : 0;
+#else
+    return -1;
 #endif
 }
 
 int app_ui_call(int handle, const std::function<void(void*)>& fn) {
-#ifdef APP_HEADLESS
-    if (!lookup(handle)) return 0;
-    fn(nullptr);
-    return 1;
-#else
     auto app = lookup(handle);
     if (!app) return 0;
-    struct State {
-        std::mutex m;
-        std::condition_variable cv;
-        bool started = false, done = false, cancelled = false;
-    };
+    struct State { std::mutex m; std::condition_variable cv; bool started = false, done = false, cancelled = false; };
     auto st = std::make_shared<State>();
     {
         std::lock_guard<std::mutex> lock(app->m);
-        if (app->w == nullptr) return 0;
         webview::webview* w = app->w;
-        auto r = w->dispatch([st, fn, w] {
-            {
-                std::lock_guard<std::mutex> l(st->m);
-                if (st->cancelled) { st->done = true; st->cv.notify_all(); return; }
-                st->started = true;
-            }
-            void* native = nullptr;
+        if (w == nullptr) return 0;
+        const bool queued = w->dispatch([st, fn, w] {
+            { std::lock_guard<std::mutex> l(st->m); if (st->cancelled) { st->done = true; st->cv.notify_all(); return; } st->started = true; }
             auto win = w->window();
-            if (win.ok()) native = win.value();
-            fn(native);
+            fn(win.ok() ? win.value() : nullptr);
             { std::lock_guard<std::mutex> l(st->m); st->done = true; }
             st->cv.notify_all();
-        });
-        if (!r.ok()) return 0;
+        }).ok();
+        if (!queued) return 0;
     }
     std::unique_lock<std::mutex> lock(st->m);
     while (!st->done) {
-        timedWait(st->cv, lock, std::chrono::milliseconds(100), [&] { return st->done; });
+        st->cv.wait_for(lock, std::chrono::milliseconds(100), [&] { return st->done; });
         if (st->done || st->started) continue;   // running (a dialog may stay open as long as the user likes): wait for it
         lock.unlock();                           // not started: if the window has closed meanwhile it never will
-        bool closed;
-        { std::lock_guard<std::mutex> l(app->m); closed = app->closed; }
+        const bool closed = app->calls.closed();
         lock.lock();
         if (closed && !st->started) { st->cancelled = true; return 0; }
     }
     return 1;
-#endif
-}
-
-int app_internal_push_call(int handle, const std::string& id, const std::string& request, size_t max_queued) {
-    auto app = lookup(handle);
-    if (!app) return -1;
-    {
-        std::lock_guard<std::mutex> lock(app->m);
-        if (app->calls.size() >= max_queued) return 0;
-        app->calls.push_back(Call{id, request});
-    }
-    app->cv.notify_all();
-    return 1;
-}
-
-bool app_internal_exists(int handle) {
-    return lookup(handle) != nullptr;
 }
 
 int app_close(int handle) {
@@ -296,70 +213,4 @@ int app_close(int handle) {
     std::lock_guard<std::mutex> lock(g_tableMutex);
     g_table[static_cast<size_t>(handle) - 1].reset();
     return 1;
-}
-
-#ifdef APP_HEADLESS
-int app_test_inject(int handle, std::string id, std::string request) {
-    auto app = lookup(handle);
-    if (!app) return 0;
-    if (id.empty()) return 0;     // like the real bind callback: an empty id is the shim's own, never a page's
-    {
-        std::lock_guard<std::mutex> lock(app->m);
-        app->calls.push_back(Call{std::move(id), std::move(request)});
-    }
-    app->cv.notify_all();
-    return 1;
-}
-
-int app_test_take_response(int handle, std::string& id, int& status, std::string& json) {
-    auto app = lookup(handle);
-    if (!app) return 0;
-    std::unique_lock<std::mutex> lock(app->m);
-    if (!timedWait(app->cv, lock, std::chrono::seconds(10), [&] { return !app->replies.empty(); })) return 2;
-    Reply r = std::move(app->replies.front());
-    app->replies.pop_front();
-    id = std::move(r.id);
-    status = r.status;
-    json = std::move(r.json);
-    return 1;
-}
-
-int app_test_take_eval(int handle, std::string& js) {
-    auto app = lookup(handle);
-    if (!app) return 0;
-    std::lock_guard<std::mutex> lock(app->m);
-    if (app->evals.empty()) return 0;
-    js = std::move(app->evals.front());
-    app->evals.pop_front();
-    return 1;
-}
-
-int app_test_close_window(int handle) {
-    return app_terminate(handle);
-}
-#endif
-
-int app_sleep_ms(int ms) {
-    if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-    return 1;
-}
-
-namespace {
-std::atomic<int> g_gaugeNow{0};
-std::atomic<int> g_gaugePeak{0};
-}  // namespace
-
-int app_gauge_enter() {
-    const int now = g_gaugeNow.fetch_add(1) + 1;
-    int peak = g_gaugePeak.load();
-    while (now > peak && !g_gaugePeak.compare_exchange_weak(peak, now)) {}
-    return now;
-}
-
-int app_gauge_leave() {
-    return g_gaugeNow.fetch_sub(1) - 1;
-}
-
-int app_gauge_peak() {
-    return g_gaugePeak.load();
 }

@@ -1,0 +1,378 @@
+// The file policy (src/files.clg) against the real file system, with no window and no commands: the point of most checks is a path
+// that LOOKS allowed and is not (`..`, a folder whose name merely starts with an allowed one, a link or junction that leads out,
+// Windows device and stream names). The native layer under it is shim/{win,posix}/fs.cpp.
+#include "text.clh"
+#include "files.clh"
+
+ext_fn int app_os_windows();
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_exists(string path);
+ext_fn int app_test_mkdir_raw(string path);
+ext_fn int app_test_make_dir_link(string link, string target);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+string sep() {
+    if (app_os_windows() == 1) {
+        return "\\";
+    }
+    return "/";
+}
+
+string join(string a, string b) {
+    return a + sep() + b;
+}
+
+string slurp(string p) {
+    string out = "";
+    app_test_read_raw(p, out);
+    return out;
+}
+
+bool exists(string p) {
+    return app_test_exists(p) == 1;
+}
+
+void put(string p, string s) {
+    app_test_write_raw(p, s);
+}
+
+void mkd(string p) {
+    app_test_mkdir_raw(p);
+}
+
+// records: kind NUL size NUL mtime NUL name NUL
+bool listHas(string rec, string kind, string name) {
+    std::vector<string> f = splitFields(rec);
+    int i = 0;
+    while (i + 3 < f.size()) {
+        if (f[i] == kind && f[i + 3] == name) {
+            return true;
+        }
+        i = i + 4;
+    }
+    return false;
+}
+
+string firstField(string rec) {
+    std::vector<string> f = splitFields(rec);
+    return f[0];
+}
+
+string fieldAt(string rec, int index) {
+    std::vector<string> f = splitFields(rec);
+    return f[index];
+}
+
+int main() {
+    FileGate g = new FileGate();
+    bool windows = app_os_windows() == 1;
+    string base = "";
+    if (app_test_make_temp_dir(base) != 0) {
+        std::cout << "FAIL cannot make a temp dir" << std::endl;
+        return 2;
+    }
+    string allowed = join(base, "allowed");
+    string evil = join(base, "allowed_evil");       // starts with the allowed folder's name
+    string outside = join(base, "outside");
+    mkd(allowed);
+    mkd(evil);
+    mkd(outside);
+    put(join(outside, "secret.txt"), "TOP SECRET");
+    put(join(evil, "x.txt"), "evil");
+    put(join(allowed, "hello.txt"), "hello world");
+    mkd(join(allowed, "sub"));
+    put(join(join(allowed, "sub"), "inner.txt"), "inner");
+    string dd = ".." + sep();
+
+    // ---- nothing is allowed until a folder is added ----
+    check("no folder allowed: read is forbidden", g.read(join(allowed, "hello.txt"), 1000).status == 1);
+    check("allow a folder", g.allow(allowed) == 0);
+    check("allow a missing folder fails", g.allow(join(base, "nope")) == 2);
+    check("allow a file fails", g.allow(join(allowed, "hello.txt")) == 9);
+
+    // ---- reading ----
+    FsResult r = g.read(join(allowed, "hello.txt"), 1000);
+    check("read inside", r.status == 0 && r.text == "hello world");
+    r = g.read(join(join(allowed, "sub"), "inner.txt"), 1000);
+    check("read in a subfolder", r.status == 0 && r.text == "inner");
+    r = g.read("hello.txt", 1000);
+    check("relative path hangs off the first allowed folder", r.status == 0 && r.text == "hello world");
+    r = g.read("sub/inner.txt", 1000);
+    check("relative path with a subfolder", r.status == 0 && r.text == "inner");
+    check("read a missing file inside", g.read(join(allowed, "missing.txt"), 1000).status == 2);
+    check("read a folder", g.read(join(allowed, "sub"), 1000).status == 8);
+
+    // ---- text that looks inside and is not ----
+    check("dot-dot escape is forbidden", g.read(join(allowed, dd + "outside" + sep() + "secret.txt"), 1000).status == 1);
+    check("dot-dot after a subfolder", g.read(join(allowed, "sub" + sep() + dd + dd + "outside" + sep() + "secret.txt"), 1000).status == 1);
+    check("relative dot-dot escape", g.read("../outside/secret.txt", 1000).status == 1);
+    check("absolute path outside", g.read(join(outside, "secret.txt"), 1000).status == 1);
+    check("a sibling whose name starts with the allowed one", g.read(join(evil, "x.txt"), 1000).status == 1);
+    check("a missing file outside does not say 'not found'", g.read(join(outside, "nope.txt"), 1000).status == 1);
+    check("the allowed folder itself is not a file", g.read(allowed, 1000).status == 8);
+
+    // ---- a link or junction that leads out ----
+    string linkOut = join(allowed, "linkout");
+    check("make a link to the outside", app_test_make_dir_link(linkOut, outside) == 0);
+    check("read through a link that leads out", g.read(join(linkOut, "secret.txt"), 1000).status == 1);
+    check("list through a link that leads out", g.list(linkOut).status == 1);
+    check("write through a link that leads out", g.write(join(linkOut, "planted.txt"), "x", 0) == 1);
+    check("nothing was planted outside", !exists(join(outside, "planted.txt")));
+    check("mkdir through a link that leads out", g.mkdir(join(linkOut, "newdir"), false) == 1);
+    check("nothing was made outside", !exists(join(outside, "newdir")));
+    string linkIn = join(allowed, "linkin");
+    check("make a link that stays inside", app_test_make_dir_link(linkIn, join(allowed, "sub")) == 0);
+    r = g.read(join(linkIn, "inner.txt"), 1000);
+    check("read through a link that stays inside", r.status == 0 && r.text == "inner");
+    r = g.stat(linkOut);
+    check("stat describes a link as a link", r.status == 0 && firstField(r.text) == "l");
+
+    // ---- sizes ----
+    put(join(allowed, "big.txt"), "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz");
+    check("too large for the limit", g.read(join(allowed, "big.txt"), 50).status == 3);
+    r = g.read(join(allowed, "big.txt"), 108);
+    check("exactly the limit", r.status == 0 && r.text.length() == 108);
+    check("negative limit", g.read(join(allowed, "big.txt"), -1).status == 3);
+
+    // ---- invalid input ----
+    check("empty path", g.read("", 10).status == 5);
+    string withNul = "a";
+    withNul.push_back(char(0));
+    withNul = withNul + "b";
+    check("NUL in path", g.read(withNul, 10).status == 5);
+    string badBytes = "";
+    badBytes.push_back(char(255));
+    badBytes.push_back(char(254));
+    check("invalid UTF-8 in path", g.read(badBytes, 10).status == 5);
+
+    // ---- writing ----
+    string w = join(allowed, "w.txt");
+    check("create-only creates", g.write(w, "one", 2) == 0 && slurp(w) == "one");
+    check("create-only on an existing name", g.write(w, "two", 2) == 6 && slurp(w) == "one");
+    check("replace with something shorter truncates", g.write(w, "x", 0) == 0 && slurp(w) == "x");
+    check("append", g.write(w, "yz", 1) == 0 && slurp(w) == "xyz");
+    check("append creates a missing file", g.write(join(allowed, "appended.txt"), "a", 1) == 0 && slurp(join(allowed, "appended.txt")) == "a");
+    check("write with a missing parent", g.write(join(join(allowed, "nodir"), "f.txt"), "x", 0) == 2);
+    check("write over a folder", g.write(join(allowed, "sub"), "x", 0) == 8);
+    check("write outside", g.write(join(outside, "w.txt"), "x", 0) == 1 && !exists(join(outside, "w.txt")));
+    check("write via dot-dot", g.write(join(allowed, dd + "outside" + sep() + "w2.txt"), "x", 0) == 1 && !exists(join(outside, "w2.txt")));
+    int wroteEmpty = g.write(join(allowed, "empty.txt"), "", 0);
+    check("empty file", wroteEmpty == 0 && slurp(join(allowed, "empty.txt")) == "");
+    string binary = "a";
+    binary.push_back(char(0));
+    binary.push_back('b');
+    binary.push_back(char(255));
+    r = g.read(join(allowed, "bin.dat"), 100);
+    check("binary data survives", g.write(join(allowed, "bin.dat"), binary, 0) == 0 && g.read(join(allowed, "bin.dat"), 100).text == binary);
+    string uni = "caf";
+    uni.push_back(char(195));
+    uni.push_back(char(169));
+    uni = uni + ".txt";
+    check("unicode file name round trip", g.write(join(allowed, uni), "u", 0) == 0 && g.read(join(allowed, uni), 100).text == "u");
+
+    // ---- listing and stat ----
+    r = g.list(allowed);
+    check("list the allowed folder", r.status == 0 && listHas(r.text, "f", "hello.txt") && listHas(r.text, "d", "sub") && listHas(r.text, "l", "linkout"));
+    check("list has no dot entries", !listHas(r.text, "d", ".") && !listHas(r.text, "d", ".."));
+    check("list a file", g.list(join(allowed, "hello.txt")).status == 9);
+    check("list outside", g.list(outside).status == 1);
+    int madeEmpty = g.mkdir(join(allowed, "emptydir"), false);
+    FsResult emptyList = g.list(join(allowed, "emptydir"));
+    check("list an empty folder", madeEmpty == 0 && emptyList.status == 0 && emptyList.text.length() == 0);
+    r = g.stat(join(allowed, "hello.txt"));
+    check("stat a file", r.status == 0 && fieldAt(r.text, 0) == "f" && fieldAt(r.text, 1) == "11" && fieldAt(r.text, 3) == "hello.txt");
+    r = g.stat(join(allowed, "sub"));
+    check("stat a folder", r.status == 0 && firstField(r.text) == "d");
+    r = g.stat(allowed);
+    check("stat the allowed folder itself", r.status == 0 && firstField(r.text) == "d");
+    check("stat missing", g.stat(join(allowed, "missing")).status == 2);
+    check("stat outside", g.stat(join(outside, "secret.txt")).status == 1);
+
+    // ---- mkdir ----
+    check("mkdir", g.mkdir(join(allowed, "m1"), false) == 0);
+    check("mkdir twice", g.mkdir(join(allowed, "m1"), false) == 6);
+    string deep = join(join(join(allowed, "p"), "q"), "r");
+    check("mkdir with a missing parent", g.mkdir(deep, false) == 2);
+    check("mkdir with parents", g.mkdir(deep, true) == 0 && g.stat(deep).status == 0);
+    check("mkdir outside", g.mkdir(join(outside, "d"), false) == 1);
+    check("mkdir with parents outside", g.mkdir(join(allowed, dd + "outside" + sep() + "d" + sep() + "e"), true) == 1);
+    check("nothing was created outside", !exists(join(outside, "d")));
+
+    // ---- remove ----
+    check("remove a file", g.remove(join(allowed, "appended.txt")) == 0 && !exists(join(allowed, "appended.txt")));
+    check("remove a missing file", g.remove(join(allowed, "appended.txt")) == 2);
+    check("remove a folder that is not empty", g.remove(join(allowed, "sub")) == 7);
+    check("remove an empty folder", g.remove(join(allowed, "emptydir")) == 0);
+    check("remove outside", g.remove(join(outside, "secret.txt")) == 1 && exists(join(outside, "secret.txt")));
+    check("remove the allowed folder itself", g.remove(allowed) == 1);
+    check("removing a link removes the link, not its target", g.remove(linkOut) == 0 && exists(join(outside, "secret.txt")));
+    check("the link is gone", g.stat(linkOut).status == 2);
+
+    if (windows) {
+        // ---- Windows-only ways to name something else ----
+        string upper = "";
+        int u = 0;
+        while (u < allowed.length()) {
+            char c = allowed[u];
+            if (c >= 'a' && c <= 'z') {
+                c = char(int(c) - 32);
+            }
+            upper.push_back(c);
+            u = u + 1;
+        }
+        check("upper-case spelling of the folder is the same folder", g.read(join(upper, "hello.txt"), 1000).status == 0);
+        string fwd = "";
+        u = 0;
+        while (u < allowed.length()) {
+            char c = allowed[u];
+            if (c == '\\') {
+                c = '/';
+            }
+            fwd.push_back(c);
+            u = u + 1;
+        }
+        check("forward slashes", g.read(fwd + "/hello.txt", 1000).status == 0);
+        check("alternate data stream name", g.read(join(allowed, "hello.txt:stream"), 1000).status == 1);
+        check("write an alternate data stream", g.write(join(allowed, "hello.txt:s"), "x", 0) == 1);
+        check("device name NUL", g.write(join(allowed, "NUL"), "x", 0) == 1);
+        check("device name with an extension", g.write(join(allowed, "aux.txt"), "x", 0) == 1);
+        check("device name COM1", g.write(join(allowed, "com1"), "x", 0) == 1);
+        check("reading a device name does not read a device", g.read(join(allowed, "CON"), 10).status != 0);
+        check("trailing dot", g.write(join(allowed, "dot."), "x", 0) == 1);
+        check("trailing space", g.write(join(allowed, "space "), "x", 0) == 1);
+        check("reserved characters", g.write(join(allowed, "a?b"), "x", 0) == 1);
+        check("\\\\?\\ prefix", g.read("\\\\?\\" + join(allowed, "hello.txt"), 1000).status == 1);
+        check("\\\\.\\ device prefix", g.read("\\\\.\\" + join(allowed, "hello.txt"), 1000).status == 1);
+        check("drive-relative path", g.read("C:hello.txt", 1000).status == 1);
+        check("root-relative path", g.read("\\Windows\\win.ini", 1000).status == 1);
+        check("a UNC path outside", g.read("\\\\localhost\\c$\\Windows\\win.ini", 1000).status == 1);
+    }
+
+    // ---- two allowed folders ----
+    check("allow a second folder", g.allow(outside) == 0);
+    r = g.read(join(outside, "secret.txt"), 1000);
+    check("the second folder is now readable", r.status == 0 && r.text == "TOP SECRET");
+    check("the sibling that only shares a prefix still is not", g.read(join(evil, "x.txt"), 1000).status == 1);
+    g.clear();
+    check("clear removes every folder", g.read(join(allowed, "hello.txt"), 1000).status == 1);
+
+    // ---- grants: what the user picked in a dialog is exactly that, no more ----
+    string g1 = join(base, "g1");
+    mkd(g1);
+    put(join(g1, "a.txt"), "picked");
+    put(join(g1, "b.txt"), "neighbour");
+    mkd(join(g1, "dir"));
+    put(join(join(g1, "dir"), "deep.txt"), "deep");
+    FsResult granted = g.grantFile(join(g1, "a.txt"));
+    check("grant a file", granted.status == 0);
+    r = g.read(granted.text, 100);
+    check("the canonical form is a path the file commands accept", r.status == 0 && r.text == "picked");
+    r = g.read(join(g1, "a.txt"), 100);
+    check("the granted file is readable", r.status == 0 && r.text == "picked");
+    check("its neighbour is not", g.read(join(g1, "b.txt"), 100).status == 1);
+    check("its folder is not listable", g.list(g1).status == 1);
+    check("a path that goes up and comes back to the neighbour", g.read(join(join(g1, "dir"), dd + "b.txt"), 100).status == 1);
+    check("a path that goes up and comes back to the granted file", g.read(join(join(g1, "dir"), dd + "a.txt"), 100).status == 0);
+    check("the granted file is writable", g.write(join(g1, "a.txt"), "changed", 0) == 0 && slurp(join(g1, "a.txt")) == "changed");
+    check("a new file next to it is not", g.write(join(g1, "c.txt"), "x", 2) == 1 && !exists(join(g1, "c.txt")));
+    check("a relative path has no base when only grants exist", g.read("a.txt", 100).status == 1);
+    check("a relative path cannot be granted", g.grantFile("a.txt").status == 5);
+    check("a folder cannot be granted as a file", g.grantFile(g1).status == 8);
+    check("grant a file that does not exist yet (save as)", g.grantFile(join(g1, "new.txt")).status == 0);
+    check("the new name can be created", g.write(join(g1, "new.txt"), "n", 2) == 0 && slurp(join(g1, "new.txt")) == "n");
+    check("and read back", g.read(join(g1, "new.txt"), 100).text == "n");
+    check("a save-as target in a missing folder", g.grantFile(join(join(g1, "nofolder"), "x.txt")).status == 2);
+    check("a granted file may be removed", g.remove(join(g1, "new.txt")) == 0 && !exists(join(g1, "new.txt")));
+    check("grant a folder", g.grantFolder(join(g1, "dir")).status == 0);
+    r = g.read(join(join(g1, "dir"), "deep.txt"), 100);
+    check("the granted folder's contents are readable", r.status == 0 && r.text == "deep");
+    check("the granted folder itself cannot be removed", g.remove(join(g1, "dir")) == 1);
+    check("granting a file as a folder", g.grantFolder(join(g1, "b.txt")).status == 9);
+    check("grants do not widen to the parent", g.read(join(g1, "b.txt"), 100).status == 1);
+    check("an application folder and a grant coexist", g.allow(allowed) == 0 && g.read("hello.txt", 100).status == 0);
+    check("a relative path still means the application's folder", g.read("a.txt", 100).status == 2);
+    g.revokeGrants();
+    check("revoking grants keeps the application's folders", g.read("hello.txt", 100).status == 0 && g.read(join(g1, "a.txt"), 100).status == 1 &&
+          g.read(join(join(g1, "dir"), "deep.txt"), 100).status == 1);
+    int lastGrant = 0;
+    int count = 0;
+    int i = 0;
+    while (i < 300 && lastGrant == 0) {
+        lastGrant = g.grantFile(join(g1, "limit" + intToString(i) + ".txt")).status;
+        if (lastGrant == 0) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    check("at most 256 grants at a time", count == 256 && lastGrant == 11);
+    g.revokeGrants();
+    check("revoke frees them", g.grantFile(join(g1, "again.txt")).status == 0);
+    g.clear();
+
+    // ---- text helpers ----
+    check("utf8: ascii", isUtf8("hello"));
+    string multi = "";
+    multi.push_back(char(195));
+    multi.push_back(char(169));
+    multi = multi + " ";
+    multi.push_back(char(226));
+    multi.push_back(char(130));
+    multi.push_back(char(172));
+    multi = multi + " ";
+    multi.push_back(char(240));
+    multi.push_back(char(159));
+    multi.push_back(char(152));
+    multi.push_back(char(128));
+    check("utf8: two, three and four byte sequences", isUtf8(multi));
+    string bad = "";
+    bad.push_back(char(192));
+    bad.push_back(char(175));
+    check("utf8: overlong", !isUtf8(bad));
+    bad = "";
+    bad.push_back(char(237));
+    bad.push_back(char(160));
+    bad.push_back(char(128));
+    check("utf8: surrogate", !isUtf8(bad));
+    bad = "";
+    bad.push_back(char(244));
+    bad.push_back(char(144));
+    bad.push_back(char(128));
+    bad.push_back(char(128));
+    check("utf8: above U+10FFFF", !isUtf8(bad));
+    bad = "";
+    bad.push_back(char(226));
+    bad.push_back(char(130));
+    check("utf8: truncated", !isUtf8(bad));
+    bad = "";
+    bad.push_back(char(128));
+    check("utf8: lone continuation byte", !isUtf8(bad));
+    string ill = "A";
+    ill.push_back(char(255));
+    ill = ill + "B";
+    string fixed = cleanUtf8(ill);
+    string replacement = "A";
+    replacement.push_back(char(239));
+    replacement.push_back(char(191));
+    replacement.push_back(char(189));
+    replacement = replacement + "B";
+    check("ill-formed bytes become U+FFFD", fixed == replacement && isUtf8(fixed));
+    check("clean text is left alone", cleanUtf8(multi) == multi);
+    string tail = "x";
+    tail.push_back(char(226));
+    tail.push_back(char(130));
+    check("a truncated sequence is repaired", isUtf8(cleanUtf8(tail)));
+    check("an overlong encoding is repaired", isUtf8(cleanUtf8(bad)) && isUtf8(cleanUtf8("À")));
+
+    app_test_remove_tree(base);
+    return 0;
+}

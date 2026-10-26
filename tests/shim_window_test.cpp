@@ -2,7 +2,7 @@
 // stand-in for CeeLing's loop) answers from a thread that is NOT the UI thread, the page checks the answers and
 // reports back through a third call, and the main thread then closes the window. Proves the threading model:
 // bind callback on the UI thread -> queue -> any thread answers via app_return.
-#include "app_shim.h"
+#include "../shim/app_native.h"
 #include <cstdio>
 #include <fstream>
 #include <sstream>

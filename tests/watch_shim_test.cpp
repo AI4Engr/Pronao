@@ -1,10 +1,11 @@
-// Tests for shim/app_watch.cpp against the real file system: the watcher puts records in the window's call queue (with an
-// empty id) and this reads them back through app_next_call the way the CeeLing main loop does.
-#include "app_fs.h"
-#include "app_shim.h"
-#include "app_watch.h"
+// Tests for the native folder watcher (shim/watch.cpp and the loop of the platform) against the real file system. It puts raw records
+// in the window's call queue (with an empty id) and this reads them back through app_next_call the way the CeeLing main loop does.
+// What a record means for the page, merging, the permission re-check and the limit of 32 are CeeLing's (headless_main.clg).
+#include "../shim/app_native.h"
+#include "doubles/test_support.h"
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <thread>
@@ -44,8 +45,7 @@ static std::vector<Rec> gather(int h, int quietMs, int maxMs = 6000) {
     auto start = std::chrono::steady_clock::now();
     for (;;) {
         std::string id, req;
-        int r = app_next_call(h, quietMs, id, req);
-        if (r != 1) break;
+        if (app_next_call(h, quietMs, id, req) != 1) break;
         auto f = fields(req);
         Rec rec;
         rec.internal = id.empty();
@@ -70,35 +70,30 @@ static void put(const std::string& p, const std::string& s, bool append = false)
     std::ofstream f(p, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
     f << s;
 }
-static void mkd(const std::string& p) {
-#ifdef _WIN32
-    _mkdir(p.c_str());
-#else
-    mkdir(p.c_str(), 0755);
-#endif
-}
+static void mkd(const std::string& p) { app_test_mkdir_raw(p); }
 static std::string join(const std::string& a, const std::string& b) { return a + PATHSEP + b; }
 
 int main() {
     int h = app_open("watch test", 10, 10, "", "", 0);
     if (h == 0) { std::printf("FAIL cannot open a headless window\n"); return 2; }
     std::string base;
-    if (app_fs_test_make_temp_dir(base) != APP_FS_OK) { std::printf("FAIL no temp dir\n"); return 2; }
+    if (app_test_make_temp_dir(base) != 0) { std::printf("FAIL no temp dir\n"); return 2; }
     const std::string dir = join(base, "watched");
     mkd(dir);
-    app_fs_allow(dir);
     int w1 = 0;
 
     // ---- starting ----
-    check("start a watch", app_watch_start(h, dir, 0, w1) == APP_FS_OK && w1 > 0);
+    check("start a watch", app_watch_start(h, dir, 0, w1) == 0 && w1 > 0);
     int junk = 0;
-    check("a folder outside the allowed ones", app_watch_start(h, base, 0, junk) == APP_FS_FORBIDDEN && junk == 0);
-    check("a folder that does not exist", app_watch_start(h, join(dir, "nope"), 0, junk) == APP_FS_NOT_FOUND);
-    put(join(dir, "plain.txt"), "x");
-    check("a file is not a folder", app_watch_start(h, join(dir, "plain.txt"), 0, junk) == APP_FS_NOT_DIR);
-    check("a dot-dot path", app_watch_start(h, join(dir, ".." PATHSEP "watched" PATHSEP ".." PATHSEP "outside"), 0, junk) == APP_FS_FORBIDDEN);
-    check("no such window", app_watch_start(h + 50, dir, 0, junk) == APP_FS_NOT_FOUND);
-    gather(h, 300);                                           // plain.txt was created before... or just after the watch began
+    check("a folder that does not exist ends the watch at once", [&] {
+        int w = 0;
+        if (app_watch_start(h, join(dir, "nope"), 0, w) != 0) return false;
+        auto r = gather(h, 500);
+        for (const auto& x : r) if (x.watch == w && x.kind == "stopped" && x.path == "failed") return true;
+        return false;
+    }());
+    (void)junk;
+    gather(h, 300);
 
     // ---- the basic changes ----
     put(join(dir, "a.txt"), "one");
@@ -121,8 +116,7 @@ int main() {
     r = gather(h, 400);
     check("a removed file is reported", has(r, "removed", "renamed.txt"));
 
-    // created through the shim, which speaks UTF-8 (a narrow std::ofstream would use the ANSI code page on Windows)
-    app_fs_write(join(dir, "caf\xc3\xa9-\xe2\x82\xac.txt"), "u", 0);
+    app_test_write_raw(join(dir, "caf\xc3\xa9-\xe2\x82\xac.txt"), "u");
     r = gather(h, 400);
     check("a Unicode name arrives as UTF-8", has(r, "created", "caf\xc3\xa9-\xe2\x82\xac.txt"));
 
@@ -135,7 +129,7 @@ int main() {
     check("a non-recursive watch does not see inside a subfolder", !has(r, "created", "sub/inner.txt") && !has(r, "modified", "sub/inner.txt"));
 
     int w2 = 0;
-    check("start a recursive watch", app_watch_start(h, dir, 1, w2) == APP_FS_OK && w2 != w1);
+    check("start a recursive watch", app_watch_start(h, dir, 1, w2) == 0 && w2 != w1);
     gather(h, 300);
     put(join(dir, "sub" PATHSEP "inner.txt"), "more", true);
     r = gather(h, 400);
@@ -153,8 +147,8 @@ int main() {
         for (const auto& x : r) { if (x.path.find(':') != std::string::npos || (!x.path.empty() && x.path[0] == '/')) return false; }
         return true;
     }());
-    check("stop the recursive watch", app_watch_stop(h, w2) == APP_FS_OK);
-    check("stopping twice", app_watch_stop(h, w2) == APP_FS_NOT_FOUND);
+    check("stop the recursive watch", app_watch_stop(h, w2) == 0);
+    check("stopping twice", app_watch_stop(h, w2) == 2);
     gather(h, 200);
 
     // ---- bursts ----
@@ -162,61 +156,32 @@ int main() {
     gather(h, 300);
     for (int i = 0; i < 60; ++i) put(join(dir, "burst.txt"), "line\n", true);
     r = gather(h, 500);
-    check("sixty quick writes are merged into a few events", has(r, "modified", "burst.txt") && count(r, "modified", "burst.txt") <= 6);
+    check("sixty quick writes are reported (CeeLing merges them)", has(r, "modified", "burst.txt"));
     for (int i = 0; i < 200; ++i) put(join(dir, "many-" + std::to_string(i) + ".txt"), "x");
     r = gather(h, 600, 10000);
     int seen = 0;
     for (int i = 0; i < 200; ++i) if (has(r, "created", "many-" + std::to_string(i) + ".txt")) ++seen;
     check("two hundred new files are all reported", seen == 200);
 
-    // ---- the watch ends when its permission does ----
-    const std::string granted = join(base, "granted");
-    mkd(granted);
-    std::string canon;
-    app_fs_grant_folder(granted, canon);
-    int w3 = 0;
-    check("watch a folder the user granted", app_watch_start(h, granted, 0, w3) == APP_FS_OK);
-    gather(h, 300);
-    put(join(granted, "before.txt"), "x");
-    r = gather(h, 400);
-    check("it reports while the grant stands", has(r, "created", "before.txt"));
-    app_fs_revoke_grants();
-    put(join(granted, "after.txt"), "x");
-    r = gather(h, 500);
-    bool stopped = false, leaked = false;
-    for (const auto& x : r) {
-        if (x.watch == w3 && x.kind == "stopped" && x.path == "access_revoked") stopped = true;
-        if (x.watch == w3 && x.path == "after.txt") leaked = true;
-    }
-    check("revoking the grant ends the watch", stopped);
-    check("and the change that followed is not reported", !leaked);
-    put(join(granted, "later.txt"), "x");
-    r = gather(h, 300);
-    check("nothing more arrives from it", r.empty());
+    // ---- a consumer that does not keep up: records are dropped, and an overflow follows ----
+    for (int i = 0; i < 2500; ++i) app_test_write_raw(join(dir, "flood-" + std::to_string(i) + ".txt"), "x");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    r = gather(h, 800, 20000);
+    int overflows = count(r, "overflow", "");
+    check("a flood the consumer ignores ends in an overflow record", overflows >= 1);
+    check("and the queue stayed bounded", r.size() <= 2100);
 
     // ---- the watched folder goes away ----
     const std::string doomed = join(dir, "doomed");
     mkd(doomed);
     int w4 = 0;
-    check("watch a folder that will be deleted", app_watch_start(h, doomed, 0, w4) == APP_FS_OK);
+    check("watch a folder that will be deleted", app_watch_start(h, doomed, 0, w4) == 0);
     gather(h, 300);
-    app_fs_test_remove_tree(doomed);
+    app_test_remove_tree(doomed);
     r = gather(h, 800);
     bool gone = false;
     for (const auto& x : r) if (x.watch == w4 && x.kind == "stopped") gone = true;
     check("deleting the watched folder ends the watch", gone);
-
-    // ---- limits ----
-    int ids[40] = {};
-    int ok = 0, last = APP_FS_OK;
-    for (int i = 0; i < 40 && last == APP_FS_OK; ++i) {
-        last = app_watch_start(h, dir, 0, ids[i]);
-        if (last == APP_FS_OK) ++ok;
-    }
-    check("at most 32 watches in one window", ok >= 28 && ok <= 32 && last == APP_FS_TOO_MANY);
-    for (int i = 0; i < ok; ++i) app_watch_stop(h, ids[i]);
-    int again = 0;
-    check("stopping frees the slots", app_watch_start(h, dir, 0, again) == APP_FS_OK);
 
     // ---- stopping ----
     app_watch_stop(h, w1);
@@ -226,13 +191,17 @@ int main() {
     bool fromStopped = false;
     for (const auto& x : r) if (x.watch == w1) fromStopped = true;
     check("a stopped watch sends nothing", !fromStopped);
+    int many[40] = {};
+    int started = 0;
+    for (int i = 0; i < 40; ++i) if (app_watch_start(h, dir, 0, many[i]) == 0) ++started;
+    check("forty watches can run side by side", started == 40);
 
     // closing the window stops every watch and does not hang
     auto t0 = std::chrono::steady_clock::now();
     app_close(h);
     long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
     check("closing the window stops its watches promptly", ms < 3000);
-    check("and the folder can be deleted afterwards", app_fs_test_remove_tree(base) == APP_FS_OK);
+    check("and the folder can be deleted afterwards", app_test_remove_tree(base) == 0);
 
     std::printf("watch shim test: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

@@ -1,33 +1,37 @@
 #!/usr/bin/env bash
 # Sanitizer runs for the headless build, in WSL (the MinGW toolchain on the dev machine has no sanitizer runtime).
 #   tests/run_sanitizers.sh
-# 1. ASan + UBSan over the CeeLing end-to-end tests (built WITHOUT --pool-shared: the pool would hide a
-#    use-after-free) and over the queue stress test.
-# 2. ThreadSanitizer over the queue stress test AND over the CeeLing end-to-end tests, which now start real worker
-#    threads (spawn), both without and with --pool-shared.
-# 3. NEGATIVE CONTROLS: the same TSan runs against shims whose mutex is removed (producer side; reply side). Each
+# 1. ASan + UBSan over the CeeLing end-to-end tests (built WITHOUT --pool-shared: the pool would hide a use-after-free), the file
+#    policy tests, the program lookup tests, the native process runner, the folder watcher and the queue stress test.
+# 2. ThreadSanitizer over the queue stress test, the watcher AND the CeeLing end-to-end tests, which start real worker threads
+#    (spawn), both without and with --pool-shared.
+# 3. NEGATIVE CONTROLS: the same TSan runs against builds whose lock is removed (producer side of the queue; reply side). Each
 #    MUST report a data race; if one does not, the TSan run it controls proves nothing and this script fails.
-# Only the shim and the CeeLing layer are covered; webview and the browser engine are not built here.
+# Only the native layer, the test doubles and the CeeLing layer are covered; webview and the browser engine are not built here.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="/c/apps/msys64/mingw64/bin:$PATH"
 CLING="${CLING:-c:/project/CeeLing/build/cling.exe}"
 CJSON="${CJSON:-/c/project/cjson-cling}"
 BASE="${BASE:-/c/tmp/app-cling-san}"
-rm -rf "$BASE"; mkdir -p "$BASE/shim" "$BASE/shim_nolock" "$BASE/shim_nolock_ret"
-cp "$CJSON"/shim/cjson_num.h "$HERE"/shim/app_shim.h "$BASE/shim/"
+rm -rf "$BASE"; mkdir -p "$BASE/shim" "$BASE/tests"
+cp "$CJSON"/shim/cjson_num.h "$BASE/shim/"
+# the sources the WSL half compiles, laid out as in the repository (the files include each other by relative path)
+mkdir -p "$BASE/repo"
+cp -r "$HERE/shim" "$HERE/tests" "$BASE/repo/"
+rm -rf "$BASE/repo/shim_nolock"
 
 # transpile everything twice: plain (work) and with the pooled allocator (work_pool)
+MAINS="headless_main files_main programs_main"
 for variant in work work_pool; do
     flags=""; [ "$variant" = "work_pool" ] && flags="--pool-shared"
     mkdir -p "$BASE/$variant"
     for f in cjson_item cjson_api cjson_parse cjson_print; do cp "$CJSON/src/$f.clg" "$BASE/$variant/"; done
-    cp "$HERE/src/app.clg" "$HERE/tests/headless_main.clg" "$BASE/$variant/"
-    for f in cjson_item cjson_api cjson_parse cjson_print app headless_main; do
+    for f in text core files app; do cp "$HERE/src/$f.clg" "$BASE/$variant/"; done
+    for m in $MAINS; do cp "$HERE/tests/$m.clg" "$BASE/$variant/"; done
+    for f in cjson_item cjson_api cjson_parse cjson_print text core files app $MAINS; do
         "$CLING" $flags --cpp "$BASE/$variant/$f.cpp" "$BASE/$variant/$f.clg" > "$BASE/$variant/$f.log" 2>&1 || { grep -v Detected "$BASE/$variant/$f.log"; echo "TRANSPILE FAILED: $variant/$f"; exit 1; }
-        if [ "$f" != "headless_main" ]; then
-            "$CLING" $flags --cpp "$BASE/$variant/$f.h" "$BASE/$variant/$f.clg" >> "$BASE/$variant/$f.log" 2>&1 || { echo "TRANSPILE FAILED (header): $variant/$f"; exit 1; }
-        fi
+        case " $MAINS " in *" $f "*) ;; *) "$CLING" $flags --cpp "$BASE/$variant/$f.h" "$BASE/$variant/$f.clg" >> "$BASE/$variant/$f.log" 2>&1 || { echo "TRANSPILE FAILED (header): $variant/$f"; exit 1; } ;; esac
     done
     {
         echo '#include <string>'
@@ -35,17 +39,27 @@ for variant in work work_pool; do
         echo 'std::string app_page_html() { return ""; }'
     } > "$BASE/$variant/embedded.cpp"
 done
-cp "$HERE/shim/app_shim.cpp" "$HERE/shim/app_fs.cpp" "$HERE/shim/app_fs.h" "$HERE/shim/app_dialog.cpp" "$HERE/shim/app_dialog.h" "$HERE/shim/app_proc.cpp" "$HERE/shim/app_proc.h" "$HERE/shim/app_watch.cpp" "$HERE/shim/app_watch.h" "$HERE/shim/app_shim_internal.h" "$BASE/shim/"
-cp "$HERE/tests/queue_stress.cpp" "$HERE/tests/fs_shim_test.cpp" "$HERE/tests/proc_shim_test.cpp" "$HERE/tests/proc_helper.cpp" "$HERE/tests/watch_shim_test.cpp" "$HERE/tests/wsl_run.sh" "$BASE/"
-# negative controls: a shim with the lock removed in one function
-dropLock() { # <function name prefix> <out dir>
-    awk -v fn="$1" '$0 ~ "^int " fn {infn=1} infn && /std::lock_guard<std::mutex> lock\(app->m\);/ {infn=0; next} {print}' \
-        "$HERE/shim/app_shim.cpp" > "$2/app_shim.cpp"
-    cp "$HERE/shim/app_shim.h" "$HERE/shim/app_fs.h" "$HERE/shim/app_fs.cpp" "$HERE/shim/app_dialog.cpp" "$HERE/shim/app_dialog.h" "$HERE/shim/app_proc.cpp" "$HERE/shim/app_proc.h" "$HERE/shim/app_watch.cpp" "$HERE/shim/app_watch.h" "$HERE/shim/app_shim_internal.h" "$2/"
-    if cmp -s "$HERE/shim/app_shim.cpp" "$2/app_shim.cpp"; then echo "NEGATIVE CONTROL SETUP FAILED ($1: nothing removed)"; exit 1; fi
-}
-dropLock app_test_inject "$BASE/shim_nolock"
-dropLock app_return "$BASE/shim_nolock_ret"
+
+# negative controls: the same tree with one lock removed
+for c in nolock nolock_ret; do rm -rf "$BASE/$c"; cp -r "$BASE/repo" "$BASE/$c"; done
+# producer side: the queue's push (shared by the real window and the test double) without its mutex
+python3 - "$BASE/nolock/shim/queue.h" "$BASE/nolock_ret/tests/doubles/headless_shim.cpp" <<'PYEOF'
+import sys
+q, d = sys.argv[1], sys.argv[2]
+s = open(q, encoding='utf-8', newline='').read()
+a = s.index('int push(')
+b = s.index('std::lock_guard<std::mutex> lock(m_);', a)
+s2 = s[:b] + '/* lock removed */' + s[b + len('std::lock_guard<std::mutex> lock(m_);'):]
+assert s2 != s
+open(q, 'w', encoding='utf-8', newline='').write(s2)
+t = open(d, encoding='utf-8', newline='').read()
+key = '{ std::lock_guard<std::mutex> lock(app->m); app->replies.push_back('
+assert key in t
+t2 = t.replace(key, '{ app->replies.push_back(')
+open(d, 'w', encoding='utf-8', newline='').write(t2)
+PYEOF
+[ $? -eq 0 ] || { echo "NEGATIVE CONTROL SETUP FAILED"; exit 1; }
+cp "$HERE/tests/wsl_run.sh" "$BASE/"
 
 MSYS_NO_PATHCONV=1 wsl -d Ubuntu-22.04 -- bash /mnt/c/tmp/app-cling-san/wsl_run.sh /mnt/c/tmp/app-cling-san
 rc=$?

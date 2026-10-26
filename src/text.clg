@@ -1,0 +1,221 @@
+// app-cling -- text helpers shared by the other modules: UTF-8 checking and repair, splitting, small parsers.
+// Everything here is plain CeeLing (bounds-checked); none of it needs the operating system.
+
+// The byte at i as 0..255 (a char may be signed).
+int charCode(string s, int i) {
+    int b = int(s[i]);
+    if (b < 0) {
+        b = b + 256;
+    }
+    return b;
+}
+
+// Length of the well-formed UTF-8 sequence that starts at i (1 for ASCII), or 0 if there is none: no overlong forms, no
+// surrogates, nothing above U+10FFFF, no truncated tail.
+int utf8SequenceLength(string s, int i) {
+    int n = s.length();
+    int c = charCode(s, i);
+    if (c < 128) {
+        return 1;
+    }
+    int len = 0;
+    int cp = 0;
+    if (c >= 194 && c <= 223) {
+        len = 2;
+        cp = c & 31;
+    } else if (c >= 224 && c <= 239) {
+        len = 3;
+        cp = c & 15;
+    } else if (c >= 240 && c <= 244) {
+        len = 4;
+        cp = c & 7;
+    } else {
+        return 0;
+    }
+    if (i + len > n) {
+        return 0;
+    }
+    int k = 1;
+    while (k < len) {
+        int b = charCode(s, i + k);
+        if ((b & 192) != 128) {
+            return 0;
+        }
+        cp = (cp << 6) | (b & 63);
+        k = k + 1;
+    }
+    if (len == 3 && (cp < 2048 || (cp >= 55296 && cp <= 57343))) {
+        return 0;
+    }
+    if (len == 4 && (cp < 65536 || cp > 1114111)) {
+        return 0;
+    }
+    return len;
+}
+
+bool isUtf8(string s) {
+    int i = 0;
+    while (i < s.length()) {
+        int len = utf8SequenceLength(s, i);
+        if (len == 0) {
+            return false;
+        }
+        i = i + len;
+    }
+    return true;
+}
+
+// `s` with every ill-formed byte replaced by U+FFFD (a program's output is not always text, and it travels to the page
+// inside a JSON string). Well-formed input is returned unchanged.
+string cleanUtf8(string s) {
+    if (isUtf8(s)) {
+        return s;
+    }
+    string out = "";
+    int i = 0;
+    while (i < s.length()) {
+        int len = utf8SequenceLength(s, i);
+        if (len == 0) {
+            out.push_back(char(239));
+            out.push_back(char(191));
+            out.push_back(char(189));
+            i = i + 1;
+        } else {
+            out.append(s.substr(i, len));
+            i = i + len;
+        }
+    }
+    return out;
+}
+
+string intToString(int v) {
+    if (v == 0) {
+        return "0";
+    }
+    int n = v;
+    string digits = "";
+    bool negative = n < 0;
+    if (negative) {
+        n = 0 - n;
+    }
+    while (n > 0) {
+        digits.push_back(char(48 + n % 10));
+        n = n / 10;
+    }
+    string text = "";
+    if (negative) {
+        text.push_back('-');
+    }
+    int i = digits.length() - 1;
+    while (i >= 0) {
+        text.push_back(digits[i]);
+        i = i - 1;
+    }
+    return text;
+}
+
+// The digits of `digits` as a number (anything that is not a digit is skipped).
+double decimalValue(string digits) {
+    double value = 0.0;
+    int i = 0;
+    while (i < digits.length()) {
+        char c = digits[i];
+        if (c >= '0' && c <= '9') {
+            value = value * 10.0 + double(int(c) - 48);
+        }
+        i = i + 1;
+    }
+    return value;
+}
+
+bool isDigits(string s) {
+    if (s.length() == 0 || s.length() > 9) {
+        return false;
+    }
+    int i = 0;
+    while (i < s.length()) {
+        if (s[i] < '0' || s[i] > '9') {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The NUL-terminated fields of a packed record, as a vector (the form the native layer hands records over in).
+std::vector<string> splitFields(string records) {
+    std::vector<string> parts;
+    string current = "";
+    int i = 0;
+    while (i < records.length()) {
+        if (records[i] == char(0)) {
+            parts.push_back(current);
+            current = "";
+        } else {
+            current.push_back(records[i]);
+        }
+        i = i + 1;
+    }
+    return parts;
+}
+
+std::vector<string> splitOn(string s, char sep) {
+    std::vector<string> parts;
+    string current = "";
+    int i = 0;
+    while (i < s.length()) {
+        if (s[i] == sep) {
+            parts.push_back(current);
+            current = "";
+        } else {
+            current.push_back(s[i]);
+        }
+        i = i + 1;
+    }
+    parts.push_back(current);
+    return parts;
+}
+
+int indexOfChar(string s, char c) {
+    int i = 0;
+    while (i < s.length()) {
+        if (s[i] == c) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+bool startsWithText(string text, string prefix) {
+    return text.length() >= prefix.length() && text.substr(0, prefix.length()) == prefix;
+}
+
+// ASCII letters lower-cased (other bytes unchanged).
+string lowerAscii(string s) {
+    string out = "";
+    int i = 0;
+    while (i < s.length()) {
+        char c = s[i];
+        if (c >= 'A' && c <= 'Z') {
+            c = char(int(c) + 32);
+        }
+        out.push_back(c);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Plain text for a dialog title, a label or a path: at most maxBytes, no NUL, well-formed UTF-8.
+bool plainText(string s, int maxBytes) {
+    return s.length() <= maxBytes && indexOfChar(s, char(0)) < 0 && isUtf8(s);
+}
+
+// Two fields, each followed by a NUL: the form of a record the main loop gets from a worker or from the native layer.
+string packRecord(string first, string second) {
+    string record = first;
+    record.push_back(char(0));
+    record = record + second;
+    record.push_back(char(0));
+    return record;
+}

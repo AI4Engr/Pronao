@@ -10,6 +10,21 @@
     r.file = await cling.invoke('fs.read', { path: 'a.txt' });
     try { await cling.invoke('fs.read', { path: '../t.exe' }); } catch (e) { r.escape = e.code; }   // out of it
     try { await cling.invoke('fs.read', { path: 'nothing.txt' }); } catch (e) { r.missing = e.code; }
+    // window control on the real window, then a real press of the X while there is unsaved work: tests/close_dialogs.ps1
+    // posts WM_CLOSE to the main window once its title says "ready" and presses No in the box that asks
+    const until = async function (test) { for (let i = 0; i < 40 && !test(); i++) await new Promise(function (r) { setTimeout(r, 50); }); return test(); };
+    await cling.window.setSize({ width: 640, height: 400 });
+    const sized = await until(function () { return Math.abs(window.innerWidth * window.devicePixelRatio - 640) < 40; });
+    await cling.window.maximize();
+    const maximized = await until(function () { return window.outerWidth >= screen.availWidth - 20; });
+    await cling.window.restore();
+    const restored = await until(function () { return window.outerWidth < screen.availWidth - 20; });
+    await cling.window.setDirty({ dirty: true });
+    const declined = cling.once('window.closeDeclined');
+    await cling.window.setTitle({ title: 'app-cling selftest ready' });
+    r.window = sized && maximized && restored;
+    r.guard = (await declined) === null;
+    await cling.window.setDirty({ dirty: false });
     // real native dialogs; tests/close_dialogs.ps1 closes them like a user clicking the X
     r.msg = await cling.invoke('dialog.message', { title: 'app-cling selftest message', message: 'closing by itself', kind: 'info', buttons: 'ok' });
     r.open = await cling.invoke('dialog.open', { title: 'app-cling selftest open', filters: [{ name: 'Text', extensions: ['txt'] }] });

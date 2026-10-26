@@ -1,7 +1,8 @@
 // app-cling -- the CeeLing layer: command table, dispatch and the run loop.
 //
-// This is the only part of an app-cling program that CeeLing checks. Everything native (the window, the
-// browser engine, the queue between threads) is behind the six `ext_fn`s below and is trusted, not checked.
+// This is the part of an app-cling program that CeeLing checks, and it holds every decision: which files a page may reach
+// (files.clg), which programs it may start, what a dialog may say, what a folder watch reports. The native layer (shim/) only
+// opens, runs, shows and waits, behind the `ext_fn`s below, and is trusted, not checked.
 //
 // A command is a class with one virtual method, `call(Item args)`, that returns the JSON value to send back
 // (or throws a string, which becomes a rejected promise). Register one with a closure:
@@ -9,269 +10,35 @@
 //     app.command("add", closure Command [] (Item args) {
 //         return createNumber(getArrayItem(args, 0).valuedouble + getArrayItem(args, 1).valuedouble);
 //     });
-//
-// A request arrives as the JSON array ["command", args]; the reply is a status (0 = resolve, 1 = reject) and a
-// JSON text. Reply texts are built with the JSON library, never by string concatenation, so they are always
-// valid JSON whatever the command or the error message contains.
 #include "cjson_item.clh"
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
 #include "cjson_print.clh"
-#include "../shim/app_shim.h"
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
 
 ext_fn int app_open(string title, int width, int height, string html, string initJs, int debug);
 ext_fn int app_next_call(int handle, int timeoutMs, ref string id, ref string request);
-ext_fn int app_return(int handle, string id, int status, string json);
-ext_fn int app_eval(int handle, string js);
+ext_fn int app_push(int handle, string id, string request, int maxQueued);
 ext_fn int app_terminate(int handle);
 ext_fn int app_close(int handle);
-ext_fn int app_sleep_ms(int ms);
-ext_fn int app_gauge_enter();
-ext_fn int app_gauge_leave();
-ext_fn int app_gauge_peak();
-
-// file access with the allowed-folder policy enforced inside the shim (shim/app_fs.h)
-ext_fn int app_fs_allow(string dir);
-ext_fn int app_fs_clear();
-ext_fn int app_fs_read(string path, int maxBytes, ref string out);
-ext_fn int app_fs_write(string path, string data, int mode);
-ext_fn int app_fs_list(string dir, ref string out);
-ext_fn int app_fs_stat(string path, ref string out);
-ext_fn int app_fs_mkdir(string path, int parents);
-ext_fn int app_fs_remove(string path);
-ext_fn int app_fs_is_utf8(string s);
-ext_fn int app_fs_grant_file(string path, ref string canonical);
-ext_fn int app_fs_grant_folder(string path, ref string canonical);
-ext_fn int app_fs_revoke_grants();
-ext_fn int app_fs_resolve(string path, int kind, ref string canonical);
-
-// watching folders (shim/app_watch.h)
-ext_fn int app_watch_start(int handle, string path, int recursive, ref int watchId);
+ext_fn int app_window_title(int handle, string title);
+ext_fn int app_window_size(int handle, int width, int height);
+ext_fn int app_window_state(int handle, int state);
+ext_fn int app_window_guard(int handle, int on);
+ext_fn int app_watch_start(int handle, string root, int recursive, ref int watchId);
 ext_fn int app_watch_stop(int handle, int watchId);
-
-// running programs (shim/app_proc.h)
-ext_fn int app_proc_resolve(string name, ref string absolute);
-ext_fn int app_proc_run(string exe, string args, string cwd, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
-ext_fn int app_proc_clean_text(string in, ref string out);
-
-// native dialogs (shim/app_dialog.h)
-ext_fn int app_dialog_open_file(int handle, string title, string filters, ref string path);
-ext_fn int app_dialog_save_file(int handle, string title, string defaultName, string filters, ref string path);
-ext_fn int app_dialog_pick_folder(int handle, string title, ref string path);
-ext_fn int app_dialog_message(int handle, string title, string message, string kind, string buttons);
+ext_fn int app_os_windows();
+ext_fn int app_os_env(string name, ref string out);
+ext_fn int app_os_path_kind(string path);
+ext_fn double app_now_ms();
+ext_fn int app_proc_run(string exe, std::vector<string> args, string cwd, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
+ext_fn int app_dialog_pick(int handle, int mode, string title, string defaultName, string defaultExt, std::vector<string> filters, ref string path);
+ext_fn int app_dialog_message(int handle, string title, string message, int kind, int buttons);
 // the page and the bridge script, compiled into the program by scripts/build.sh
 ext_fn string app_page_html();
 ext_fn string app_bridge_js();
-
-// What a handler produces. status 0 resolves the page's promise with `json`; 1 rejects it.
-class Reply {
-public:
-    int status;
-    string json;
-    Reply(int s, string j) {
-        status = s;
-        json = j;
-    }
-};
-
-// A command. Override `call`; the default answers null.
-class Command {
-public:
-    Command() { }
-    virtual Item call(Item args) {
-        return createNull();
-    }
-};
-
-// {"code": code, "message": message} as JSON text
-string errorJson(string code, string message) {
-    Item e = createObject();
-    addStringToObject(e, "code", code);
-    addStringToObject(e, "message", message);
-    return printUnformatted(e);
-}
-
-// A thrown message may start with "<code>: " (lower-case letters, digits and underscores, at most 40): the code becomes
-// the reply's error code and the rest its message, so a page can tell "not_found" from "forbidden". Anything else keeps
-// the code "command_failed" and the whole message.
-int errorPrefixLength(string thrown) {
-    int i = 0;
-    while (i < thrown.length() && i < 40) {
-        char c = thrown[i];
-        bool lower = c >= 'a' && c <= 'z';
-        bool digit = c >= '0' && c <= '9';
-        if (lower || (i > 0 && (digit || c == '_'))) {
-            i = i + 1;
-        } else {
-            break;
-        }
-    }
-    if (i > 0 && i + 1 < thrown.length() && thrown[i] == ':' && thrown[i + 1] == ' ') {
-        return i + 2;
-    }
-    return 0;
-}
-
-string errorCodeOf(string thrown) {
-    int n = errorPrefixLength(thrown);
-    if (n == 0) {
-        return "command_failed";
-    }
-    return thrown.substr(0, n - 2);
-}
-
-string errorTextOf(string thrown) {
-    int n = errorPrefixLength(thrown);
-    if (n == 0) {
-        return thrown;
-    }
-    return thrown.substr(n, thrown.length() - n);
-}
-
-// ---- argument helpers --------------------------------------------------------------------------
-// A command receives whatever the page sent. Reading a missing or wrongly typed value straight off the
-// JSON would dereference a null handle and stop the application (the runtime null check turns that into a
-// clean abort naming the line, but a web page should not be able to end the program). These helpers reject
-// the call instead: the page's promise is rejected with the message.
-
-string intToString(int v) {
-    if (v == 0) {
-        return "0";
-    }
-    int n = v;
-    string digits = "";
-    bool negative = n < 0;
-    if (negative) {
-        n = 0 - n;
-    }
-    while (n > 0) {
-        digits.push_back(char(48 + n % 10));
-        n = n / 10;
-    }
-    string text = "";
-    if (negative) {
-        text.push_back('-');
-    }
-    int i = digits.length() - 1;
-    while (i >= 0) {
-        text.push_back(digits[i]);
-        i = i - 1;
-    }
-    return text;
-}
-
-string argName(int index) {
-    return "argument " + intToString(index);
-}
-
-// args[index] as a number, or throws "argument N must be a number"
-double numberAt(Item args, int index) {
-    Item v = getArrayItem(args, index);
-    if (!isNumber(v)) {
-        string message = argName(index) + " must be a number";
-        throw message;
-    }
-    return v.valuedouble;
-}
-
-string stringAt(Item args, int index) {
-    Item v = getArrayItem(args, index);
-    if (!isString(v)) {
-        string message = argName(index) + " must be a string";
-        throw message;
-    }
-    return v.valuestring;
-}
-
-bool boolAt(Item args, int index) {
-    Item v = getArrayItem(args, index);
-    if (!isBool(v)) {
-        string message = argName(index) + " must be a boolean";
-        throw message;
-    }
-    return isTrue(v);
-}
-
-// the member `name` of an object argument, or throws "missing field NAME"
-Item fieldOf(Item object, string name) {
-    Item v = getObjectItem(object, name);
-    if (v == nullptr) {
-        string message = "missing field " + name;
-        throw message;
-    }
-    return v;
-}
-
-// ---- background work ---------------------------------------------------------------------------
-// A command that must not block the window loop is an AsyncCommand. `start` runs on the main thread, copies
-// what it needs out of `args` into plain values, and hands them to a worker:
-//
-//     app.asyncCommand("scan", closure AsyncCommand [] (Item args, string id, int handle) {
-//         string payload = printUnformatted(args);
-//         spawn(closure Job [payload, id, handle] () {
-//             Item mine = parse(payload);            // the worker builds its OWN tree
-//             replyOk(handle, id, printUnformatted(mine));
-//         });
-//     });
-//
-// `spawn` accepts only primitives, string and vectors of primitives in the capture list (the compiler refuses
-// an Item or any other object), so the worker shares no CeeLing memory with the main thread; it answers the
-// page itself through replyOk / replyError, which go through the mutex-protected shim. `start` must either
-// spawn and return, or throw BEFORE spawning -- a promise is answered exactly once.
-class Job {
-public:
-    Job() { }
-    virtual void run() { }
-};
-
-class AsyncCommand {
-public:
-    AsyncCommand() { }
-    virtual void start(Item args, string id, int handle) { }
-};
-
-// What runs when a spawned job throws (see spawn's optional second argument and onJobFailure). The dispatcher
-// installs one around every AsyncCommand.start, so a job that throws answers the page with a rejection
-// {code: "command_failed", message} instead of leaving its promise pending.
-class Failure {
-public:
-    Failure() { }
-    virtual void fail(string message) { }
-};
-
-// Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
-void replyOk(int handle, string id, string json) {
-    app_return(handle, id, 0, json);
-}
-
-void replyError(int handle, string id, string code, string message) {
-    app_return(handle, id, 1, errorJson(code, message));
-}
-
-// ---- events: CeeLing -> page -------------------------------------------------------------------
-// emitEvent(handle, "progress", "{\"done\":3}") runs `cling.on("progress", fn)` listeners on the page with the payload
-// {done: 3}. It takes only an int and strings, so a worker job can call it (capture the handle):
-//
-//     spawn(closure Job [handle, payload] () { ... emitEvent(handle, "progress", text); ... });
-//
-// The payload must be valid JSON text; the script handed to the page is built ONLY with the JSON printer (the name
-// and the payload are re-printed, never pasted), so a name or a string containing quotes, backslashes or script text
-// stays a string literal and cannot become code. Returns false, and sends nothing, if the payload is not valid JSON or
-// the window is gone. An event sent before the page has loaded and registered its listener is dropped.
-bool emitEvent(int handle, string name, string payloadJson) {
-    Item payload = parseWithOpts(payloadJson, true);   // strict: trailing text after the JSON value is an error
-    if (payload == nullptr) {
-        return false;
-    }
-    Item message = createArray();
-    addItemToArray(message, createString(name));
-    addItemToArray(message, payload);
-    string text = printUnformatted(message);
-    if (text.length() == 0) {
-        return false;
-    }
-    return app_eval(handle, "window.__cling_emit(" + text + ");") == 1;
-}
 
 class Dispatcher {
 public:
@@ -375,9 +142,8 @@ public:
 };
 
 // ---- file commands --------------------------------------------------------------------------------
-// The allowed folders and every check on a path live in the C++ shim (shim/app_fs.cpp): it decides on what the
-// operating system actually opened, which a CeeLing string comparison cannot do. These helpers only map its status
-// codes to error codes and shape the JSON.
+// The allowed folders and every check on a path live in FileGate (files.clg), which decides on what the operating system
+// actually opened. These helpers only map its status codes to error codes and shape the JSON.
 
 string fsCodeFor(int status) {
     if (status == 1) { return "forbidden"; }
@@ -400,76 +166,6 @@ void fsCheck(int status, string what) {
     }
 }
 
-Item objectArg(Item args) {
-    if (args == nullptr || !isObject(args)) {
-        throw "invalid_argument: expected an object such as {path: \"...\"}";
-    }
-    return args;
-}
-
-string requiredString(Item args, string name) {
-    Item v = getObjectItem(objectArg(args), name);
-    if (v == nullptr || !isString(v)) {
-        string message = "invalid_argument: `" + name + "` must be a string";
-        throw message;
-    }
-    return v.valuestring;
-}
-
-string optionalString(Item args, string name, string fallback) {
-    Item v = getObjectItem(objectArg(args), name);
-    if (v == nullptr) {
-        return fallback;
-    }
-    if (!isString(v)) {
-        string message = "invalid_argument: `" + name + "` must be a string";
-        throw message;
-    }
-    return v.valuestring;
-}
-
-bool optionalBool(Item args, string name, bool fallback) {
-    Item v = getObjectItem(objectArg(args), name);
-    if (v == nullptr) {
-        return fallback;
-    }
-    if (!isBool(v)) {
-        string message = "invalid_argument: `" + name + "` must be true or false";
-        throw message;
-    }
-    return isTrue(v);
-}
-
-// The NUL-separated fields the shim returns, as a vector.
-std::vector<string> splitFields(string records) {
-    std::vector<string> parts;
-    string current = "";
-    int i = 0;
-    while (i < records.length()) {
-        if (records[i] == char(0)) {
-            parts.push_back(current);
-            current = "";
-        } else {
-            current.push_back(records[i]);
-        }
-        i = i + 1;
-    }
-    return parts;
-}
-
-double decimalValue(string digits) {
-    double value = 0.0;
-    int i = 0;
-    while (i < digits.length()) {
-        char c = digits[i];
-        if (c >= '0' && c <= '9') {
-            value = value * 10.0 + double(int(c) - 48);
-        }
-        i = i + 1;
-    }
-    return value;
-}
-
 string kindName(string code) {
     if (code == "d") { return "dir"; }
     if (code == "l") { return "link"; }
@@ -489,18 +185,65 @@ Item entryItem(string kind, string size, string modified, string name) {
 // ---- dialog commands ------------------------------------------------------------------------------
 // The user's choice in a native dialog is a grant: exactly the file (or folder) they picked becomes reachable through
 // the file commands, and nothing around it. A page cannot reach a file it has not been given, by the app or by the
-// user; and a dialog is the only way the user can give one.
+// user; and a dialog is the only way the user can give one. What a dialog may say is decided here: the native layer shows
+// whatever it is handed.
 
-// [{name: "Text", extensions: ["txt", "md"]}, {name: "Everything"}] -> the shim's "label NUL extensions NUL ..." form
-string filterText(Item args) {
+bool extensionOk(string e) {
+    if (e.length() == 0 || e.length() > 16) {
+        return false;
+    }
+    int i = 0;
+    while (i < e.length()) {
+        char c = e[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (!ok) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// a file name with no folder in it and none of the characters Windows refuses
+bool plainFileName(string name) {
+    if (name.length() == 0 || !plainText(name, 200) || name == "." || name == "..") {
+        return false;
+    }
+    int i = 0;
+    while (i < name.length()) {
+        char c = name[i];
+        if (int(c) >= 0 && int(c) < 32) {
+            return false;
+        }
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+string dialogTitle(Item args) {
+    string title = optionalString(args, "title", "");
+    if (!plainText(title, 200)) {
+        throw "invalid_argument: `title` must be plain text of at most 200 bytes";
+    }
+    return title;
+}
+
+// [{name: "Text", extensions: ["txt", "md"]}, {name: "Everything"}] -> label, pattern, label, pattern ... ("*.txt;*.md", "*.*")
+std::vector<string> filterList(Item args) {
+    std::vector<string> out;
     Item list = getObjectItem(objectArg(args), "filters");
     if (list == nullptr) {
-        return "";
+        return out;
     }
     if (!isArray(list)) {
         throw "invalid_argument: `filters` must be an array";
     }
-    string text = "";
+    if (getArraySize(list) > 20) {
+        throw "invalid_argument: at most 20 filters";
+    }
     int i = 0;
     while (i < getArraySize(list)) {
         Item f = getArrayItem(list, i);
@@ -511,62 +254,81 @@ string filterText(Item args) {
         if (name == nullptr || !isString(name)) {
             throw "invalid_argument: every filter needs a string `name`";
         }
-        string extensions = "*";
+        if (name.valuestring.length() == 0 || !plainText(name.valuestring, 80)) {
+            throw "invalid_argument: a filter `name` must be plain text of 1 to 80 bytes";
+        }
+        string pattern = "*.*";
         Item exts = getObjectItem(f, "extensions");
         if (exts != nullptr) {
             if (!isArray(exts)) {
                 throw "invalid_argument: `extensions` must be an array of strings";
             }
             if (getArraySize(exts) > 0) {
-                extensions = "";
+                pattern = "";
                 int j = 0;
                 while (j < getArraySize(exts)) {
                     Item e = getArrayItem(exts, j);
-                    if (!isString(e)) {
-                        throw "invalid_argument: `extensions` must be an array of strings";
+                    if (!isString(e) || !extensionOk(e.valuestring)) {
+                        throw "invalid_argument: an extension is 1 to 16 letters, digits, _ or -";
                     }
                     if (j > 0) {
-                        extensions.push_back(',');
+                        pattern = pattern + ";";
                     }
-                    extensions = extensions + e.valuestring;
+                    pattern = pattern + "*." + e.valuestring;
                     j = j + 1;
                 }
             }
         }
-        text = text + name.valuestring;
-        text.push_back(char(0));
-        text = text + extensions;
-        text.push_back(char(0));
+        out.push_back(name.valuestring);
+        out.push_back(pattern);
         i = i + 1;
     }
-    return text;
+    return out;
 }
 
-// Answers a picker: null if the user cancelled, {path} (the form the file commands accept) after granting it.
+// the first extension of the first filter, which a "save as" dialog appends to a name typed without one
+string defaultExtension(Item args) {
+    Item list = getObjectItem(objectArg(args), "filters");
+    if (list == nullptr || !isArray(list) || getArraySize(list) == 0) {
+        return "";
+    }
+    Item exts = getObjectItem(getArrayItem(list, 0), "extensions");
+    if (exts == nullptr || !isArray(exts) || getArraySize(exts) == 0) {
+        return "";
+    }
+    Item first = getArrayItem(exts, 0);
+    if (first == nullptr || !isString(first)) {
+        return "";
+    }
+    return first.valuestring;
+}
+
+// What the worker that showed a dialog sends the main loop when the user chose something: the main loop applies the grant
+// (the allow-list is touched by one thread only) and answers the page.
+string pickRecord(string id, bool folder, string chosen) {
+    string record = "pick";
+    record.push_back(char(0));
+    record = record + id;
+    record.push_back(char(0));
+    if (folder) {
+        record.push_back('1');
+    } else {
+        record.push_back('0');
+    }
+    record.push_back(char(0));
+    record = record + chosen;
+    record.push_back(char(0));
+    return record;
+}
+
+// Runs on the worker that showed the dialog.
 void finishPick(int handle, string id, int status, string chosen, bool folder) {
     if (status == 0) {
         replyOk(handle, id, "null");
     } else if (status < 0) {
-        if (status == -2) {
-            replyError(handle, id, "invalid_argument", "the dialog arguments were refused (title or filter too long or malformed)");
-        } else {
-            replyError(handle, id, "unsupported", "the dialog could not be shown");
-        }
-    } else {
-        string canonical = "";
-        int granted = 0;
-        if (folder) {
-            granted = app_fs_grant_folder(chosen, canonical);
-        } else {
-            granted = app_fs_grant_file(chosen, canonical);
-        }
-        if (granted != 0) {
-            replyError(handle, id, fsCodeFor(granted), "the chosen path cannot be used");
-        } else {
-            Item result = createObject();
-            addStringToObject(result, "path", canonical);
-            replyOk(handle, id, printUnformatted(result));
-        }
+        replyError(handle, id, "unsupported", "the dialog could not be shown");
+    } else if (app_push(handle, "", pickRecord(id, folder, chosen), 100000) != 1) {
+        replyError(handle, id, "busy", "the application is not keeping up");
     }
 }
 
@@ -575,6 +337,21 @@ string buttonName(int button) {
     if (button == 3) { return "yes"; }
     if (button == 4) { return "no"; }
     return "cancel";
+}
+
+int dialogKind(string kind) {
+    if (kind == "info") { return 0; }
+    if (kind == "warning") { return 1; }
+    if (kind == "error") { return 2; }
+    if (kind == "question") { return 3; }
+    return -1;
+}
+
+int dialogButtons(string buttons) {
+    if (buttons == "ok") { return 0; }
+    if (buttons == "okcancel") { return 1; }
+    if (buttons == "yesno") { return 2; }
+    return -1;
 }
 
 // ---- program commands -----------------------------------------------------------------------------
@@ -628,48 +405,6 @@ public:
     }
 };
 
-std::vector<string> splitOn(string s, char sep) {
-    std::vector<string> parts;
-    string current = "";
-    int i = 0;
-    while (i < s.length()) {
-        if (s[i] == sep) {
-            parts.push_back(current);
-            current = "";
-        } else {
-            current.push_back(s[i]);
-        }
-        i = i + 1;
-    }
-    parts.push_back(current);
-    return parts;
-}
-
-int indexOfChar(string s, char c) {
-    int i = 0;
-    while (i < s.length()) {
-        if (s[i] == c) {
-            return i;
-        }
-        i = i + 1;
-    }
-    return -1;
-}
-
-bool isDigits(string s) {
-    if (s.length() == 0 || s.length() > 9) {
-        return false;
-    }
-    int i = 0;
-    while (i < s.length()) {
-        if (s[i] < '0' || s[i] > '9') {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
 // "count:int:1:500", "ref:token", "msg:text:80", "f:file" -- is the slot text well formed?
 bool slotSpecOk(string text) {
     std::vector<string> p = splitOn(text, ':');
@@ -721,7 +456,7 @@ bool tokenChar(char c) {
 }
 
 // The checked text for one slot. `whole` = the slot is the entire argument, so a leading '-' could be read as an option.
-string slotValue(string slotText, Item args, bool whole) {
+string slotValue(FileGate gate, string slotText, Item args, bool whole) {
     std::vector<string> p = splitOn(slotText, ':');
     string name = p[0];
     string kind = p[1];
@@ -767,7 +502,7 @@ string slotValue(string slotText, Item args, bool whole) {
             argError(name, "is too long");
             return "";
         }
-        if (app_fs_is_utf8(text) == 0 || indexOfChar(text, char(0)) >= 0) {
+        if (!plainText(text, 100000)) {
             argError(name, "must be plain text");
             return "";
         }
@@ -778,13 +513,12 @@ string slotValue(string slotText, Item args, bool whole) {
         } else if (kind == "folder") {
             want = 2;
         }
-        string canonical = "";
-        int status = app_fs_resolve(text, want, canonical);
-        if (status != 0) {
-            string message = fsCodeFor(status) + ": cannot use " + text;
+        FsResult found = gate.resolve(text, want);
+        if (found.status != 0) {
+            string message = fsCodeFor(found.status) + ": cannot use " + text;
             throw message;
         }
-        return canonical;
+        return found.text;
     }
     if (whole && text.length() > 0 && text[0] == '-') {
         argError(name, "must not start with '-'");
@@ -794,7 +528,7 @@ string slotValue(string slotText, Item args, bool whole) {
 }
 
 // The element with its slot replaced by the checked value.
-string renderElement(string element, Item args) {
+string renderElement(FileGate gate, string element, Item args) {
     int open = slotOpen(element);
     if (open < 0) {
         return element;
@@ -802,18 +536,17 @@ string renderElement(string element, Item args) {
     int close = slotClose(element);
     string slotText = element.substr(open + 1, close - open - 1);
     bool whole = open == 0 && close == element.length() - 1;
-    string value = slotValue(slotText, args, whole);
+    string value = slotValue(gate, slotText, args, whole);
     return element.substr(0, open) + value + element.substr(close + 1, element.length() - close - 1);
 }
 
 // Replies for a finished program: {exitCode, stdout, stderr, timedOut, truncated: {stdout, stderr}, lossy}.
+// Runs on the worker that ran it.
 void finishRun(int handle, string id, int status, string out, string err, int exitCode, int flags) {
     if (status == 0) {
         Item result = createObject();
-        string cleanOut = "";
-        string cleanErr = "";
-        int lossyOut = app_proc_clean_text(out, cleanOut);
-        int lossyErr = app_proc_clean_text(err, cleanErr);
+        string cleanOut = cleanUtf8(out);
+        string cleanErr = cleanUtf8(err);
         addNumberToObject(result, "exitCode", double(exitCode));
         addStringToObject(result, "stdout", cleanOut);
         addStringToObject(result, "stderr", cleanErr);
@@ -821,7 +554,7 @@ void finishRun(int handle, string id, int status, string out, string err, int ex
         Item cut = addObjectToObject(result, "truncated");
         addBoolToObject(cut, "stdout", ((flags / 2) % 2) == 1);
         addBoolToObject(cut, "stderr", ((flags / 4) % 2) == 1);
-        addBoolToObject(result, "lossy", lossyOut == 1 || lossyErr == 1);
+        addBoolToObject(result, "lossy", cleanOut != out || cleanErr != err);
         replyOk(handle, id, printUnformatted(result));
     } else if (status == 2) {
         replyError(handle, id, "program_not_found", "the program or its working folder does not exist");
@@ -848,10 +581,6 @@ bool programNameOk(string name) {
     return true;
 }
 
-bool startsWithText(string text, string prefix) {
-    return text.length() >= prefix.length() && text.substr(0, prefix.length()) == prefix;
-}
-
 // The slot text inside an element's braces, or "" if it has none (-1: malformed braces).
 int elementSlotCheck(string element) {
     int open = slotOpen(element);
@@ -873,28 +602,208 @@ int elementSlotCheck(string element) {
     return 1;
 }
 
+// ---- finding a program ----------------------------------------------------------------------------
+// `name` is an absolute path to a program (a plain .exe on Windows), or a bare name ("git") that is searched for on PATH ONLY: never
+// the current folder, never the folder of the running program, and ("" and relative entries of PATH mean the current folder) never
+// a PATH entry that is not absolute. Anything else is refused. Windows note: the arguments are joined into one command line with the
+// C runtime's quoting rules, and a program that parses its command line differently (cmd.exe, and so every .bat / .cmd, msiexec,
+// ...) could read them differently, so only .exe is accepted. Status: 0 found (text = absolute path), 2 not found, 5 refused.
+
+bool windowsAbsolute(string w) {
+    if (isDriveAbsolute(w)) {
+        return true;
+    }
+    return w.length() >= 3 && isSeparator(w[0]) && isSeparator(w[1]) && w[2] != '?' && w[2] != '.';
+}
+
+bool endsWithExe(string w) {
+    return w.length() >= 4 && lowerAscii(w.substr(w.length() - 4, 4)) == ".exe";
+}
+
+// no "." or ".." component in an absolute path
+bool plainComponents(string path) {
+    std::vector<string> parts = splitOn(path, '/');
+    std::vector<string> more = splitOn(path, '\\');
+    int i = 0;
+    while (i < parts.size()) {
+        if (parts[i] == "." || parts[i] == "..") {
+            return false;
+        }
+        i = i + 1;
+    }
+    int k = 0;
+    while (k < more.size()) {
+        if (more[k] == "." || more[k] == "..") {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+bool runnable(string path, bool windows) {
+    int kind = app_os_path_kind(path);
+    if (windows) {
+        return (kind & 3) == 1;
+    }
+    return (kind & 5) == 5;
+}
+
+FsResult resolveProgram(string name) {
+    bool windows = app_os_windows() == 1;
+    if (name.length() == 0 || !plainText(name, 4000)) {
+        return new FsResult(5, "");
+    }
+    bool hasSeparator = indexOfChar(name, '/') >= 0 || (windows && (indexOfChar(name, '\\') >= 0 || indexOfChar(name, ':') >= 0));
+    if (hasSeparator) {
+        if (windows) {
+            if (!windowsAbsolute(name) || !endsWithExe(name) || indexOfChar(name.substr(2, name.length() - 2), ':') >= 0) {
+                return new FsResult(5, "");
+            }
+        } else if (name[0] != '/') {
+            return new FsResult(5, "");
+        }
+        if (!plainComponents(name)) {
+            return new FsResult(5, "");
+        }
+        if (!runnable(name, windows)) {
+            return new FsResult(2, "");
+        }
+        return new FsResult(0, name);
+    }
+    int i = 0;
+    while (i < name.length()) {
+        char c = name[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if (!ok) {
+            return new FsResult(5, "");
+        }
+        i = i + 1;
+    }
+    if (name == "." || name == "..") {
+        return new FsResult(5, "");
+    }
+    string file = name;
+    char listSeparator = ':';
+    string slash = "/";
+    if (windows) {
+        listSeparator = ';';
+        slash = "\\";
+        if (!endsWithExe(name)) {
+            file = name + ".exe";
+        }
+    }
+    string path = "";
+    if (app_os_env("PATH", path) != 1) {
+        return new FsResult(2, "");
+    }
+    std::vector<string> dirs = splitOn(path, listSeparator);
+    int d = 0;
+    while (d < dirs.size()) {
+        string dir = dirs[d];
+        d = d + 1;
+        if (windows && dir.length() >= 2 && dir[0] == '"' && dir[dir.length() - 1] == '"') {
+            dir = dir.substr(1, dir.length() - 2);
+        }
+        bool absolute = dir.length() > 0 && dir[0] == '/';
+        if (windows) {
+            absolute = windowsAbsolute(dir);
+        }
+        if (!absolute) {
+            continue;
+        }
+        while (dir.length() > 3 && (dir[dir.length() - 1] == '/' || dir[dir.length() - 1] == '\\')) {
+            dir = dir.substr(0, dir.length() - 1);
+        }
+        string candidate = dir + slash + file;
+        if (dir[dir.length() - 1] == '/' || dir[dir.length() - 1] == '\\') {
+            candidate = dir + file;
+        }
+        if (runnable(candidate, windows)) {
+            return new FsResult(0, candidate);
+        }
+    }
+    return new FsResult(2, "");
+}
+
 // ---- watching folders -----------------------------------------------------------------------------
 // fs.watch {path, recursive?} starts a watch and answers {id}; changes then arrive on the page as "fs.change" events
 //     {watch: id, kind: "created" | "modified" | "removed", path}              path is relative to the watched folder
 //     {watch: id, kind: "renamed", path: newName, from: oldName}
 //     {watch: id, kind: "overflow"}                                              events were lost: read the folder again
 //     {watch: id, kind: "stopped", reason: "closed" | "access_revoked" | "folder_gone" | "failed"}   no more will come
-// The watch ends by itself when the permission to read that folder is withdrawn. A record comes from the shim's watcher
-// thread through the call queue with an EMPTY id, which a page's own call never has; this turns it into the event.
+// The native watcher thread queues one record per change (id empty: a page's own call always has one); this side merges bursts
+// (a program saving a file touches it many times in a few milliseconds), re-checks the permission before every delivery, and
+// ends a watch whose folder can no longer be reached. At most 32 watches at a time.
 
-void forwardWatchRecord(int handle, string record) {
-    std::vector<string> f = splitFields(record);
-    if (f.size() < 5) {
-        return;
+class WatchEvent {
+public:
+    string kind;
+    string path;
+    string from;
+    WatchEvent(string k, string p, string f) {
+        kind = k;
+        path = p;
+        from = f;
     }
-    string kind = f[2];
-    string path = f[3];
-    string from = f[4];
-    if (app_fs_is_utf8(path) == 0 || app_fs_is_utf8(from) == 0) {
+};
+
+class WatchState {
+public:
+    int id;
+    string root;                       // canonical, as FileGate.resolve spelled it
+    std::vector<WatchEvent> pending;   // merged, not yet delivered
+    bool overflowed;
+    double firstAt;                    // when the oldest pending event arrived
+    double lastAt;                     // when the newest did
+    WatchState(int watchId, string folder) {
+        id = watchId;
+        root = folder;
+        overflowed = false;
+        firstAt = 0.0;
+        lastAt = 0.0;
+    }
+
+    void clearPending() {
+        while (pending.size() > 0) {
+            pending.pop_back();
+        }
+        overflowed = false;
+    }
+
+    // The same change again straight away, or one more "modified" for a file that already has one, adds nothing.
+    void merge(string kind, string path, string from, double now) {
+        if (pending.size() == 0) {
+            firstAt = now;
+        }
+        lastAt = now;
+        if (kind == "overflow") {
+            overflowed = true;
+            return;
+        }
+        int i = 0;
+        while (i < pending.size()) {
+            WatchEvent e = pending[i];
+            bool same = e.kind == kind && e.path == path && e.from == from;
+            if (same && (kind == "modified" || i == pending.size() - 1)) {
+                return;
+            }
+            i = i + 1;
+        }
+        if (pending.size() >= 500) {
+            overflowed = true;
+            return;
+        }
+        pending.push_back(new WatchEvent(kind, path, from));
+    }
+};
+
+void emitWatchEvent(int handle, int watch, string kind, string path, string from) {
+    if (!isUtf8(path) || !isUtf8(from)) {
         return;
     }
     Item e = createObject();
-    addNumberToObject(e, "watch", decimalValue(f[1]));
+    addNumberToObject(e, "watch", double(watch));
     addStringToObject(e, "kind", kind);
     if (kind == "stopped") {
         addStringToObject(e, "reason", path);
@@ -907,17 +816,149 @@ void forwardWatchRecord(int handle, string record) {
     emitEvent(handle, "fs.change", printUnformatted(e));
 }
 
+// All the watches of a window, with the logic that delivers them.
+class Watches {
+public:
+    std::vector<WatchState> states;
+    Watches() { }
+
+    int indexOf(int id) {
+        int i = 0;
+        while (i < states.size()) {
+            WatchState s = states[i];
+            if (s.id == id) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // (order does not matter: the last one takes the place of the dropped one)
+    void drop(int index) {
+        int last = states.size() - 1;
+        if (index != last) {
+            states[index] = states[last];
+        }
+        states.pop_back();
+    }
+
+    bool anyPending() {
+        int i = 0;
+        while (i < states.size()) {
+            WatchState s = states[i];
+            if (s.pending.size() > 0 || s.overflowed) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // Delivers what a watch has merged so far, after checking that the folder can still be reached. If it cannot (the
+    // permission was withdrawn, or the folder is gone) the watch ends: the thread is stopped and "stopped" is the last event.
+    void flush(FileGate gate, int handle, int index) {
+        WatchState s = states[index];
+        FsResult now = gate.resolve(s.root, 2);
+        if (now.status != 0 || now.text != s.root) {
+            string reason = "access_revoked";
+            if (now.status == 2) {
+                reason = "folder_gone";
+            }
+            app_watch_stop(handle, s.id);
+            emitWatchEvent(handle, s.id, "stopped", reason, "");
+            drop(index);
+            return;
+        }
+        int i = 0;
+        while (i < s.pending.size()) {
+            WatchEvent e = s.pending[i];
+            emitWatchEvent(handle, s.id, e.kind, e.path, e.from);
+            i = i + 1;
+        }
+        if (s.overflowed) {
+            emitWatchEvent(handle, s.id, "overflow", "", "");
+        }
+        s.clearPending();
+    }
+
+    // Delivers every watch that has been quiet for 40 ms, or has been collecting for 400 ms.
+    void flushQuiet(FileGate gate, int handle) {
+        double now = app_now_ms();
+        int i = states.size() - 1;
+        while (i >= 0) {
+            WatchState s = states[i];
+            bool some = s.pending.size() > 0 || s.overflowed;
+            if (some && (now - s.lastAt >= 40.0 || now - s.firstAt >= 400.0)) {
+                flush(gate, handle, i);
+            }
+            i = i - 1;
+        }
+    }
+
+    // A record from the native watcher: "watch" id kind path from.
+    void onRecord(FileGate gate, int handle, std::vector<string> f) {
+        if (f.size() < 5) {
+            return;
+        }
+        int index = indexOf(int(decimalValue(f[1])));
+        if (index < 0) {
+            return;
+        }
+        WatchState s = states[index];
+        string kind = f[2];
+        if (kind == "stopped") {
+            if (s.pending.size() > 0 || s.overflowed) {
+                flush(gate, handle, index);
+                index = indexOf(s.id);
+            }
+            if (index >= 0) {
+                app_watch_stop(handle, s.id);
+                emitWatchEvent(handle, s.id, "stopped", f[3], "");
+                drop(index);
+            }
+            return;
+        }
+        s.merge(kind, f[3], f[4], app_now_ms());
+    }
+};
+
+// ---- the window -----------------------------------------------------------------------------------
+class WindowState {
+public:
+    int handle;
+    bool dirty;                // the page says it has unsaved work (window.setDirty)
+    bool confirming;           // a "close anyway?" box is open
+    bool confirm;              // confirmClose was called: the close button asks (applied when the window exists)
+    string closeTitle;
+    string closeMessage;
+    WindowState() {
+        handle = 0;
+        dirty = false;
+        confirming = false;
+        confirm = false;
+        closeTitle = "";
+        closeMessage = "";
+    }
+};
+
 // A running application: a window plus a command table.
 class App {
 public:
     int handle;
     Dispatcher dispatcher;
     ProgramRegistry programs;
+    FileGate gate;
+    Watches watches;
+    WindowState window;
 
     App() {
         handle = 0;
         dispatcher = new Dispatcher();
         programs = new ProgramRegistry();
+        gate = new FileGate();
+        watches = new Watches();
+        window = new WindowState();
     }
 
     void command(string name, Command handler) {
@@ -937,25 +978,31 @@ public:
     // Adds a folder the page may reach through the file commands. Nothing is reachable until at least one is added;
     // a relative path from the page means "inside the first folder added". false if the folder does not exist.
     bool allowFolder(string dir) {
-        return app_fs_allow(dir) == 0;
+        return gate.allow(dir) == 0;
+    }
+
+    // Withdraws everything the user granted through dialogs (the folders added with allowFolder stay).
+    void revokeGrants() {
+        gate.revokeGrants();
     }
 
     // Registers fs.read, fs.write, fs.list, fs.stat, fs.exists, fs.mkdir and fs.remove. Every path is checked by the
-    // shim against the folders added with allowFolder. fs.read refuses files larger than maxReadBytes and files that
+    // FileGate against the folders added with allowFolder. fs.read refuses files larger than maxReadBytes and files that
     // are not valid UTF-8 (text only; binary needs its own command).
     void enableFileCommands(int maxReadBytes) {
-        command("fs.read", closure Command [maxReadBytes] (Item args) {
+        FileGate files = gate;
+        command("fs.read", closure Command [files, maxReadBytes] (Item args) {
             string path = requiredString(args, "path");
-            string content = "";
-            fsCheck(app_fs_read(path, maxReadBytes, content), "cannot read " + path);
-            if (app_fs_is_utf8(content) == 0) {
+            FsResult r = files.read(path, maxReadBytes);
+            fsCheck(r.status, "cannot read " + path);
+            if (!isUtf8(r.text)) {
                 throw "not_text: the file is not valid UTF-8";
             }
             Item result = createObject();
-            addStringToObject(result, "text", content);
+            addStringToObject(result, "text", r.text);
             return result;
         });
-        command("fs.write", closure Command [] (Item args) {
+        command("fs.write", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
             string text = requiredString(args, "text");
             string mode = optionalString(args, "mode", "replace");
@@ -967,61 +1014,56 @@ public:
             } else if (mode != "replace") {
                 throw "invalid_argument: `mode` must be \"replace\", \"append\" or \"create\"";
             }
-            fsCheck(app_fs_write(path, text, code), "cannot write " + path);
+            fsCheck(files.write(path, text, code), "cannot write " + path);
             return createNull();
         });
-        command("fs.list", closure Command [] (Item args) {
+        command("fs.list", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
-            string records = "";
-            fsCheck(app_fs_list(path, records), "cannot list " + path);
-            std::vector<string> parts = splitFields(records);
+            FsResult r = files.list(path);
+            fsCheck(r.status, "cannot list " + path);
+            std::vector<string> parts = splitFields(r.text);
             Item listing = createArray();
             int i = 0;
             while (i + 3 < parts.size()) {
                 string name = parts[i + 3];
-                if (app_fs_is_utf8(name) == 1) {
+                if (isUtf8(name)) {
                     addItemToArray(listing, entryItem(parts[i], parts[i + 1], parts[i + 2], name));
                 }
                 i = i + 4;
             }
             return listing;
         });
-        command("fs.stat", closure Command [] (Item args) {
+        command("fs.stat", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
-            string record = "";
-            fsCheck(app_fs_stat(path, record), "cannot stat " + path);
-            std::vector<string> parts = splitFields(record);
-            if (parts.size() < 4 || app_fs_is_utf8(parts[3]) == 0) {
+            FsResult r = files.stat(path);
+            fsCheck(r.status, "cannot stat " + path);
+            std::vector<string> parts = splitFields(r.text);
+            if (parts.size() < 4 || !isUtf8(parts[3])) {
                 throw "io_error: unreadable file entry";
             }
             return entryItem(parts[0], parts[1], parts[2], parts[3]);
         });
-        command("fs.exists", closure Command [] (Item args) {
+        command("fs.exists", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
-            string record = "";
-            int status = app_fs_stat(path, record);
-            if (status == 2) {
+            FsResult r = files.stat(path);
+            if (r.status == 2) {
                 return createBool(false);
             }
-            fsCheck(status, "cannot stat " + path);
+            fsCheck(r.status, "cannot stat " + path);
             return createBool(true);
         });
-        command("fs.mkdir", closure Command [] (Item args) {
+        command("fs.mkdir", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
             bool parents = optionalBool(args, "parents", false);
-            int flag = 0;
-            if (parents) {
-                flag = 1;
-            }
-            int status = app_fs_mkdir(path, flag);
+            int status = files.mkdir(path, parents);
             if (!(parents && status == 6)) {
                 fsCheck(status, "cannot create " + path);
             }
             return createNull();
         });
-        command("fs.remove", closure Command [] (Item args) {
+        command("fs.remove", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
-            fsCheck(app_fs_remove(path), "cannot remove " + path);
+            fsCheck(files.remove(path), "cannot remove " + path);
             return createNull();
         });
     }
@@ -1036,17 +1078,17 @@ public:
         if (timeoutMs < 100 || timeoutMs > 600000 || maxOutputBytes < 0 || maxOutputBytes > 67108864) {
             return false;
         }
-        string resolved = "";
-        if (app_proc_resolve(exe, resolved) != 0) {
+        FsResult found = resolveProgram(exe);
+        if (found.status != 0) {
             return false;
         }
-        ProgramSpec spec = new ProgramSpec(name, resolved, timeoutMs, maxOutputBytes);
+        ProgramSpec spec = new ProgramSpec(name, found.text, timeoutMs, maxOutputBytes);
         std::vector<string> names;
         int cwdCount = 0;
         int i = 0;
         while (i < elements.size()) {
             string element = elements[i];
-            if (element.length() > 1000 || app_fs_is_utf8(element) == 0 || indexOfChar(element, char(0)) >= 0) {
+            if (element.length() > 1000 || !plainText(element, 1000)) {
                 return false;
             }
             if (startsWithText(element, "@cwd=")) {
@@ -1101,7 +1143,8 @@ public:
     // runs on a worker, so the command loop keeps serving.
     void enableProcessCommands() {
         ProgramRegistry registry = programs;
-        asyncCommand("proc.run", closure AsyncCommand [registry] (Item args, string id, int handle) {
+        FileGate files = gate;
+        asyncCommand("proc.run", closure AsyncCommand [registry, files] (Item args, string id, int handle) {
             string program = requiredString(args, "program");
             Item given = getObjectItem(args, "args");
             if (given == nullptr) {
@@ -1132,120 +1175,272 @@ public:
                 }
                 child = child.next;
             }
-            string packed = "";
+            std::vector<string> argv;
             string cwd = "";
+            int total = 0;
             int e = 0;
             while (e < spec.elements.size()) {
                 string element = spec.elements[e];
                 if (startsWithText(element, "@cwd=")) {
                     string inner = element.substr(5, element.length() - 5);
-                    cwd = slotValue(inner.substr(1, inner.length() - 2), given, false);
+                    cwd = slotValue(files, inner.substr(1, inner.length() - 2), given, false);
                 } else {
-                    packed = packed + renderElement(element, given);
-                    packed.push_back(char(0));
+                    string rendered = renderElement(files, element, given);
+                    if (!plainText(rendered, 32000)) {
+                        throw "invalid_argument: an argument is not plain text";
+                    }
+                    total = total + rendered.length() + 3;
+                    argv.push_back(rendered);
                 }
                 e = e + 1;
             }
+            if (argv.size() > 256 || total > 30000) {
+                throw "invalid_argument: too many or too long arguments";
+            }
             if (cwd.length() == 0) {
-                int where = app_fs_resolve(".", 2, cwd);
-                if (where != 0) {
-                    string message = fsCodeFor(where) + ": no folder is allowed to run programs in";
+                FsResult where = files.resolve(".", 2);
+                if (where.status != 0) {
+                    string message = fsCodeFor(where.status) + ": no folder is allowed to run programs in";
                     throw message;
                 }
+                cwd = where.text;
             }
             string exe = spec.exe;
             int timeoutMs = spec.timeoutMs;
             int maxBytes = spec.maxBytes;
-            spawn(closure Job [exe, packed, cwd, timeoutMs, maxBytes, id, handle] () {
+            spawn(closure Job [exe, argv, cwd, timeoutMs, maxBytes, id, handle] () {
                 string out = "";
                 string err = "";
                 int exitCode = 0;
                 int flags = 0;
-                int status = app_proc_run(exe, packed, cwd, timeoutMs, maxBytes, out, err, exitCode, flags);
+                int status = app_proc_run(exe, argv, cwd, timeoutMs, maxBytes, out, err, exitCode, flags);
                 finishRun(handle, id, status, out, err, exitCode, flags);
             });
         });
     }
 
+    // ---- watches ----
+
     // Registers fs.watch and fs.unwatch (see "watching folders" above). A page may watch only folders the file commands
     // can reach, at most 32 at a time.
     void enableWatchCommands() {
-        asyncCommand("fs.watch", closure AsyncCommand [] (Item args, string id, int handle) {
+        FileGate files = gate;
+        Watches book = watches;
+        asyncCommand("fs.watch", closure AsyncCommand [files, book] (Item args, string id, int handle) {
             string path = requiredString(args, "path");
             bool recursive = optionalBool(args, "recursive", false);
             int flag = 0;
             if (recursive) {
                 flag = 1;
             }
+            FsResult r = files.resolve(path, 2);
+            fsCheck(r.status, "cannot watch " + path);
+            if (book.states.size() >= 32) {
+                throw "too_many: at most 32 folders can be watched at a time";
+            }
             int watchId = 0;
-            fsCheck(app_watch_start(handle, path, flag, watchId), "cannot watch " + path);
+            fsCheck(app_watch_start(handle, r.text, flag, watchId), "cannot watch " + path);
+            book.states.push_back(new WatchState(watchId, r.text));
             Item result = createObject();
             addNumberToObject(result, "id", double(watchId));
             replyOk(handle, id, printUnformatted(result));
         });
-        asyncCommand("fs.unwatch", closure AsyncCommand [] (Item args, string id, int handle) {
+        asyncCommand("fs.unwatch", closure AsyncCommand [book] (Item args, string id, int handle) {
             Item given = getObjectItem(objectArg(args), "id");
             if (given == nullptr || !isNumber(given)) {
                 throw "invalid_argument: `id` must be a number";
             }
-            fsCheck(app_watch_stop(handle, int(given.valuedouble)), "no such watch");
+            int watchId = int(given.valuedouble);
+            int index = book.indexOf(watchId);
+            if (index < 0) {
+                throw "not_found: no such watch";
+            }
+            app_watch_stop(handle, watchId);
+            book.drop(index);
             replyOk(handle, id, "null");
         });
     }
 
-    // Withdraws everything the user granted through dialogs (the folders added with allowFolder stay).
-    void revokeGrants() {
-        app_fs_revoke_grants();
-    }
+    // ---- dialogs ----
 
     // Registers dialog.open, dialog.save, dialog.folder and dialog.message. They are asynchronous commands, so the
     // command loop keeps serving while a dialog is open. A pick answers null on cancel, else {path} and grants that
     // one file (or folder) to the file commands.
     void enableDialogCommands() {
         asyncCommand("dialog.open", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = optionalString(args, "title", "");
-            string filters = filterText(args);
+            string title = dialogTitle(args);
+            std::vector<string> filters = filterList(args);
             spawn(closure Job [title, filters, id, handle] () {
                 string chosen = "";
-                int status = app_dialog_open_file(handle, title, filters, chosen);
+                int status = app_dialog_pick(handle, 0, title, "", "", filters, chosen);
                 finishPick(handle, id, status, chosen, false);
             });
         });
         asyncCommand("dialog.save", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = optionalString(args, "title", "");
+            string title = dialogTitle(args);
             string suggested = optionalString(args, "defaultName", "");
-            string filters = filterText(args);
-            spawn(closure Job [title, suggested, filters, id, handle] () {
+            if (suggested.length() > 0 && !plainFileName(suggested)) {
+                throw "invalid_argument: `defaultName` must be a file name without a folder";
+            }
+            std::vector<string> filters = filterList(args);
+            string extension = defaultExtension(args);
+            spawn(closure Job [title, suggested, extension, filters, id, handle] () {
                 string chosen = "";
-                int status = app_dialog_save_file(handle, title, suggested, filters, chosen);
+                int status = app_dialog_pick(handle, 1, title, suggested, extension, filters, chosen);
                 finishPick(handle, id, status, chosen, false);
             });
         });
         asyncCommand("dialog.folder", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = optionalString(args, "title", "");
-            spawn(closure Job [title, id, handle] () {
+            string title = dialogTitle(args);
+            std::vector<string> none;
+            spawn(closure Job [title, none, id, handle] () {
                 string chosen = "";
-                int status = app_dialog_pick_folder(handle, title, chosen);
+                int status = app_dialog_pick(handle, 2, title, "", "", none, chosen);
                 finishPick(handle, id, status, chosen, true);
             });
         });
         asyncCommand("dialog.message", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = optionalString(args, "title", "");
+            string title = dialogTitle(args);
             string message = requiredString(args, "message");
-            string kind = optionalString(args, "kind", "info");
-            string buttons = optionalString(args, "buttons", "ok");
+            if (!plainText(message, 4000)) {
+                throw "invalid_argument: `message` must be plain text of at most 4000 bytes";
+            }
+            int kind = dialogKind(optionalString(args, "kind", "info"));
+            int buttons = dialogButtons(optionalString(args, "buttons", "ok"));
+            if (kind < 0 || buttons < 0) {
+                throw "invalid_argument: unknown `kind` or `buttons`";
+            }
             spawn(closure Job [title, message, kind, buttons, id, handle] () {
                 int button = app_dialog_message(handle, title, message, kind, buttons);
                 if (button > 0) {
                     Item result = createObject();
                     addStringToObject(result, "button", buttonName(button));
                     replyOk(handle, id, printUnformatted(result));
-                } else if (button == -2) {
-                    replyError(handle, id, "invalid_argument", "the dialog arguments were refused (text too long, or an unknown kind or buttons)");
                 } else {
                     replyError(handle, id, "unsupported", "the dialog could not be shown");
                 }
             });
+        });
+    }
+
+    // Applies what a dialog worker sent: grants the user's choice, then answers the page.
+    void onPickRecord(std::vector<string> f) {
+        if (f.size() < 4) {
+            return;
+        }
+        string id = f[1];
+        FsResult g = new FsResult(0, "");
+        if (f[2] == "1") {
+            g = gate.grantFolder(f[3]);
+        } else {
+            g = gate.grantFile(f[3]);
+        }
+        if (g.status != 0) {
+            replyError(handle, id, fsCodeFor(g.status), "the chosen path cannot be used");
+            return;
+        }
+        Item result = createObject();
+        addStringToObject(result, "path", g.text);
+        replyOk(handle, id, printUnformatted(result));
+    }
+
+    // ---- the window ----
+
+    // Registers window.setTitle {title}, window.setSize {width, height}, window.minimize / maximize / restore / focus,
+    // window.close, and window.setDirty {dirty}: the page says it has unsaved work, which matters to confirmClose.
+    void enableWindowCommands() {
+        WindowState state = window;
+        command("window.setTitle", closure Command [state] (Item args) {
+            string title = requiredString(args, "title");
+            if (title.length() == 0 || !plainText(title, 200)) {
+                throw "invalid_argument: `title` must be plain text of 1 to 200 bytes";
+            }
+            app_window_title(state.handle, title);
+            return createNull();
+        });
+        command("window.setSize", closure Command [state] (Item args) {
+            Item w = getObjectItem(objectArg(args), "width");
+            Item h = getObjectItem(objectArg(args), "height");
+            if (w == nullptr || h == nullptr || !isNumber(w) || !isNumber(h)) {
+                throw "invalid_argument: `width` and `height` must be numbers";
+            }
+            if (w.valuedouble < 200.0 || w.valuedouble > 10000.0 || h.valuedouble < 150.0 || h.valuedouble > 10000.0) {
+                throw "invalid_argument: width must be 200 to 10000 and height 150 to 10000";
+            }
+            app_window_size(state.handle, int(w.valuedouble), int(h.valuedouble));
+            return createNull();
+        });
+        command("window.minimize", closure Command [state] (Item args) {
+            app_window_state(state.handle, 1);
+            return createNull();
+        });
+        command("window.maximize", closure Command [state] (Item args) {
+            app_window_state(state.handle, 2);
+            return createNull();
+        });
+        command("window.restore", closure Command [state] (Item args) {
+            app_window_state(state.handle, 0);
+            return createNull();
+        });
+        command("window.focus", closure Command [state] (Item args) {
+            app_window_state(state.handle, 3);
+            return createNull();
+        });
+        command("window.close", closure Command [state] (Item args) {
+            app_terminate(state.handle);
+            return createNull();
+        });
+        command("window.setDirty", closure Command [state] (Item args) {
+            state.dirty = optionalBool(args, "dirty", true);
+            return createNull();
+        });
+    }
+
+    // When the user closes the window (the X, Alt+F4) while the page has said it has unsaved work, ask first with a native
+    // box whose text is the application's, not the page's. Without this the window just closes.
+    bool confirmClose(string title, string message) {
+        if (!plainText(title, 200) || !plainText(message, 4000)) {
+            return false;
+        }
+        window.closeTitle = title;
+        window.closeMessage = message;
+        window.confirm = true;
+        if (handle == 0) {
+            return true;
+        }
+        return app_window_guard(handle, 1) >= 0;
+    }
+
+    void onWindowRecord(std::vector<string> f) {
+        if (f.size() < 2) {
+            return;
+        }
+        if (f[1] == "close_declined") {
+            window.confirming = false;
+            emitEvent(handle, "window.closeDeclined", "null");
+            return;
+        }
+        if (f[1] != "close_requested") {
+            return;
+        }
+        if (!window.dirty) {
+            app_terminate(handle);
+            return;
+        }
+        if (window.confirming) {
+            return;
+        }
+        window.confirming = true;
+        int h = handle;
+        string title = window.closeTitle;
+        string message = window.closeMessage;
+        string declined = packRecord("window", "close_declined");
+        spawn(closure Job [h, title, message, declined] () {
+            if (app_dialog_message(h, title, message, 3, 2) == 3) {
+                app_terminate(h);
+            } else {
+                app_push(h, "", declined, 100);
+            }
         });
     }
 
@@ -1262,6 +1457,10 @@ public:
             d = 1;
         }
         handle = app_open(title, width, height, html, bridgeJs, d);
+        window.handle = handle;
+        if (handle != 0 && window.confirm) {
+            app_window_guard(handle, 1);
+        }
         return handle != 0;
     }
 
@@ -1270,27 +1469,66 @@ public:
         return open(title, width, height, app_page_html(), app_bridge_js(), debug);
     }
 
-    // Serves the next thing in the queue: a call from the page (dispatched and answered) or a record from one of the
-    // shim's file watchers (turned into a page event). Waits up to timeoutMs (-1 = for as long as it takes).
-    // Returns 1 if something was served, 2 if the wait timed out, 0 if the window has closed.
-    int serveOne(int timeoutMs) {
-        string id = "";
-        string request = "";
-        int r = app_next_call(handle, timeoutMs, id, request);
-        if (r == 1) {
-            if (id.length() == 0) {
-                forwardWatchRecord(handle, request);
-            } else {
-                Reply reply = dispatcher.handle(handle, id, request);
-                if (reply.status != 2) {
-                    app_return(handle, id, reply.status, reply.json);
-                }
-            }
+    // A record the native layer queued itself (empty id): "watch", "pick" or "window".
+    void onInternalRecord(string request) {
+        std::vector<string> f = splitFields(request);
+        if (f.size() == 0) {
+            return;
         }
-        return r;
+        if (f[0] == "watch") {
+            watches.onRecord(gate, handle, f);
+        } else if (f[0] == "pick") {
+            onPickRecord(f);
+        } else if (f[0] == "window") {
+            onWindowRecord(f);
+        }
     }
 
-    // Serves calls and file-watch records until the window closes. Returns how many calls and records were served.
+    // Serves the next thing in the queue: a call from the page (dispatched and answered) or a record from the native layer
+    // (a file watcher's change, a dialog's choice, the window's close button). Waits up to timeoutMs (-1 = for as long as it
+    // takes), and delivers merged file-watch events when they have been quiet for a moment.
+    // Returns 1 if something was served, 2 if the wait timed out, 0 if the window has closed.
+    int serveOne(int timeoutMs) {
+        double started = app_now_ms();
+        while (true) {
+            int wait = timeoutMs;
+            if (timeoutMs >= 0) {
+                wait = timeoutMs - int(app_now_ms() - started);
+                if (wait < 0) {
+                    wait = 0;
+                }
+            }
+            bool pending = watches.anyPending();
+            if (pending && (wait < 0 || wait > 40)) {
+                wait = 40;
+            }
+            string id = "";
+            string request = "";
+            int r = app_next_call(handle, wait, id, request);
+            if (r == 1) {
+                if (id.length() == 0) {
+                    onInternalRecord(request);
+                } else {
+                    Reply reply = dispatcher.handle(handle, id, request);
+                    if (reply.status != 2) {
+                        app_return(handle, id, reply.status, reply.json);
+                    }
+                }
+                watches.flushQuiet(gate, handle);
+                return 1;
+            }
+            if (r == 0) {
+                return 0;
+            }
+            watches.flushQuiet(gate, handle);
+            if (timeoutMs >= 0 && app_now_ms() - started >= double(timeoutMs)) {
+                return 2;
+            }
+        }
+        return 2;
+    }
+
+    // Serves calls and records until the window closes. Returns how many calls and records were served.
     int run() {
         int served = 0;
         while (true) {
@@ -1312,5 +1550,6 @@ public:
     void close() {
         app_close(handle);
         handle = 0;
+        window.handle = 0;
     }
 };

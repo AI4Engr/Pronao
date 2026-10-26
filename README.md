@@ -26,9 +26,11 @@ CeeLing main thread:  app_next_call()  <-- blocks on the queue
                       app_return(id, status, json) --> resolves / rejects the page's promise
 ```
 
-The shim (`shim/`, about 250 lines of C++) owns the window thread and the queue and holds no application logic.
-CeeLing runs the loop, so no callback ever has to cross into CeeLing. Everything crossing the boundary is an int or a
-copied string. JSON is handled by [cjson-cling](../cjson-cling), reply texts are always built with it, never by string
+The native layer (`shim/`, trusted C++, under 1000 lines for Windows) holds no application logic: it opens the window,
+queues calls, opens files, runs programs, shows dialogs and waits for file changes, as small primitives that take and return
+ints and strings. **Every decision is in `src/`**, which CeeLing checks: which files a page may reach, which programs it may
+start, what a dialog may say, what a folder watch reports. CeeLing runs the loop, so no callback ever has to cross into
+CeeLing. JSON is handled by [cjson-cling](../cjson-cling), reply texts are always built with it, never by string
 concatenation.
 
 Errors reach the page as a rejected promise carrying `{code, message}`: `bad_request` (not JSON, not an array, command
@@ -69,17 +71,20 @@ A relative path means "inside the first allowed folder". Errors reject with a co
 `forbidden`, `not_found`, `too_large`, `not_text`, `invalid_path`, `invalid_argument`, `already_exists`, `not_empty`,
 `is_directory`, `not_directory`, `permission_denied`, `io_error`.
 
-**Where the policy lives, and why.** The allowed-folder check is in the C++ shim (`shim/app_fs.cpp`), not in CeeLing,
-because whether a path is inside a folder cannot be decided from its text (`..`, symlinks and junctions, `C:foo`,
-`\\?\` prefixes, `file:stream`, device names such as `NUL`, trailing dots). Every operation opens first, asks the
-operating system where the open handle really points, compares that with the canonical allowed folders, and only then
-reads or writes through the same handle; a link that leads out of an allowed folder is refused (and removing a link
-removes the link, never its target). A `forbidden` answer is the same whether or not the file exists, so a page cannot
-probe the rest of the disk. Text only: `fs.read` returns the file as a JSON string and refuses anything that is not valid
-UTF-8. This file code is trusted C++; it is tested with 96 checks on Windows and 80 under ASan/UBSan on Linux, and a
-control run with the final-path check disabled fails the link-escape tests (so they can fail).
+**Where the policy lives, and why.** The allowed-folder policy is CeeLing code (`src/files.clg`, class `FileGate`), but it
+never decides on the text of a path, because whether a path is inside a folder cannot be told from its text (`..`, symlinks
+and junctions, `C:foo`, `\\?\` prefixes, `file:stream`, device names such as `NUL`, trailing dots). Every operation opens
+first through a native primitive (`app_fs_open`), asks the operating system where the OPEN HANDLE really points, compares
+that with the canonical allowed folders, and only then reads or writes through the same handle; a link that leads out of an
+allowed folder is refused (and removing a link removes the link, never its target). The text is checked too, but only to
+refuse early and without saying whether the path exists; it never allows anything by itself. A `forbidden` answer is the
+same whether or not the file exists, so a page cannot probe the rest of the disk. Text only: `fs.read` returns the file as a
+JSON string and refuses anything that is not valid UTF-8. Tested with 128 checks on Windows and 112 under ASan/UBSan on
+Linux (`tests/files_main.clg`), and `tests/negative_controls.sh` removes the final-path check, the root guard and the
+grant rules in turn and shows the tests then fail (so they can fail).
 Not covered: a local attacker who can create links inside an allowed folder at the very moment of a write (a file may be
-created and then removed again if it turns out to lie outside), and whatever an allowed folder itself contains.
+created and then removed again if it turns out to lie outside), non-ASCII case differences in a path's text on Windows
+(the text pre-check refuses them; the OS's own answer is what allows), and whatever an allowed folder itself contains.
 
 ## Watching folders
 
@@ -99,11 +104,32 @@ file are a few events, not sixty), and the permission is re-checked before every
 `app.revokeGrants()` ends the watch with `access_revoked` and the change that followed is not reported. Changes made through a
 link that leads out of the watched folder are not reported.
 
-How an event gets to the page: a watcher thread in the shim (ReadDirectoryChangesW on Windows, inotify on Linux) puts a record
-in the same queue the page's calls arrive in, with an EMPTY id (a page's call always has one, and the shim drops an empty-id
-call from the page), the CeeLing main loop (`App.run`, or `serveOne` if you write your own) turns it into an `fs.change` event,
-and the JSON is built with the JSON library, not in the shim. If the main loop falls behind, events beyond 1000 queued are
-dropped and an `overflow` follows.
+How an event gets to the page: a watcher thread in the native layer (ReadDirectoryChangesW on Windows, inotify on Linux) puts
+one raw record per change in the same queue the page's calls arrive in, with an EMPTY id (a page's call always has one, and
+the shim drops an empty-id call from the page). The CeeLing main loop (`App.run`, or `serveOne` if you write your own) merges
+them, checks the permission, and turns them into `fs.change` events; the JSON is built with the JSON library. If the main
+loop falls behind, records beyond 2000 queued are dropped and an `overflow` follows.
+
+## The window
+
+```
+app.enableWindowCommands();
+app.confirmClose("Unsaved work", "Close without saving?");   // optional, see below
+```
+```js
+await cling.window.setTitle({ title: 'Report - draft' });
+await cling.window.setSize({ width: 900, height: 600 });     // 200..10000 by 150..10000
+await cling.window.minimize();  await cling.window.maximize();  await cling.window.restore();  await cling.window.focus();
+await cling.window.setDirty({ dirty: true });                  // the page has unsaved work
+await cling.window.close();
+cling.window.onCloseDeclined(() => { ... });                   // the user pressed the X, was asked, and chose to stay
+```
+With `confirmClose`, pressing the window's X (or Alt+F4) no longer closes the window by itself: the native layer only queues a
+record. If the page has said it has unsaved work (`setDirty`), CeeLing asks with a native box whose text is the
+application's, never the page's, and closes only on "Yes"; with nothing unsaved the window just closes. `window.close` is the
+page closing its own window and is not asked about. Title and size values are checked in CeeLing before they reach the
+window. Windows only for now; the real-window self-test presses the X, answers the box and checks the title, size, maximize
+and restore.
 
 ## Dialogs
 
@@ -148,21 +174,22 @@ passed as its absolute path. A slot that fills a whole argument may not start wi
 an option); one slot per argument; every slot is required; a parameter the template does not have is refused. `@cwd={n:folder}`
 names the working folder, otherwise it is the first allowed folder.
 
-What the shim does with it (`shim/app_proc.cpp`, trusted C++, 43 checks on Windows and 39 under ASan/UBSan on Linux):
-the program is an absolute `.exe` found on `PATH` only, never the current folder (a `.bat` or `.cmd` is refused, because
-`cmd.exe` would re-read the arguments); arguments are quoted with the C runtime's rules and tested with every character a
-command line treats specially; the child has no standard input, no console window and inherits only its three pipes; it
-runs inside a job object (a process group on Linux), so on a timeout, or if it leaves something behind, the whole tree is
-killed; output is capped per stream and drained past the cap; text that is not valid UTF-8 is repaired (`lossy: true`).
+How a program is found and run: CeeLing (`resolveProgram`, 18 checks in `tests/programs_main.clg`) accepts an absolute path or a
+bare name searched for on `PATH` only, never the current folder (a `.bat` or `.cmd` is refused, because `cmd.exe` would
+re-read the arguments). The native runner (`shim/{win,posix}/proc.cpp`, 24 checks) quotes arguments with the C runtime's rules,
+tested with every character a command line treats specially; the child has no standard input, no console window and
+inherits only its three pipes; it runs inside a job object (a process group on Linux), so on a timeout, or if it leaves
+something behind, the whole tree is killed; output is capped per stream and drained past the cap; text that is not valid
+UTF-8 is repaired in CeeLing (`lossy: true`).
 Not covered: what the program itself does (`git` with a hostile repository, for instance), environment variables (they
 are inherited), and a program that parses its command line in a non-standard way.
 
 ## What is and is not checked
 
 CeeLing checks the command table and everything the commands do with their own data: no dangling references, no
-use-after-move, no raw pointers, bounds and null checks at run time. **Not checked, and trusted:** the shim, the
-`webview` library, the browser engine, the six `ext_fn` declarations (a wrong signature is silently believed), and
-any other C++ you link in.
+use-after-move, no raw pointers, bounds and null checks at run time. **Not checked, and trusted:** the native layer
+(`shim/`), the `webview` library, the browser engine, every `ext_fn` declaration (a wrong signature is silently
+believed), and any other C++ you link in.
 
 **Background work and the thread rule.** A command that must not block the window is an `AsyncCommand`: its `start`
 copies what it needs out of the request into plain values and calls `spawn(closure Job [payload, id, handle] () {...})`.
@@ -189,9 +216,10 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 147 end-to-end checks, no window
+bash tests/run_headless.sh            # 176 end-to-end checks + 128 file policy + 18 program lookup + 24 process + 26 watcher, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
-bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, TSan negative control
+bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
+bash tests/negative_controls.sh       # removes one check at a time from src/ and shows the tests fail
 ```
 
 Requirements: the CeeLing compiler (`CLING`, default `c:/project/CeeLing/build/cling.exe`), cjson-cling (`CJSON`), MinGW
@@ -203,11 +231,14 @@ g++, the WebView2 runtime for window runs, WSL with g++ for the sanitizers. Wind
 
 | path | what |
 |---|---|
-| `src/app.clg` | `Command`, `Dispatcher`, `App`, argument helpers, the six `ext_fn`s |
-| `src/bridge.js` | defines `window.cling.invoke`; embedded into the program at build time |
-| `shim/` | the C++ shim (window thread, queue, handle table); `APP_HEADLESS` swaps the window for a test queue |
+| `src/text.clg` | UTF-8 checking and repair, splitting, small parsers |
+| `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
+| `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
+| `src/app.clg` | `Dispatcher`, `App`, the commands (files, programs, dialogs, watches, window), program lookup and slots, watch merging |
+| `src/bridge.js` | defines `window.cling.*`; embedded into the program at build time |
+| `shim/` | the native layer: `app_native.h` lists every primitive; `app_shim.cpp` window and queue; `win/` and `posix/` the OS parts |
 | `examples/hello/` | window with three buttons |
-| `tests/` | headless suite, real-window self-test, queue stress test, sanitizer scripts |
+| `tests/` | headless suites, real-window self-test, queue stress test, sanitizer and negative-control scripts; `tests/doubles/` stands in for the window and the dialogs |
 
 ## License
 

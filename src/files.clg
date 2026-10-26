@@ -1,0 +1,815 @@
+// app-cling -- which files a page may reach, and the operations on them.
+//
+// THE POLICY IS HERE, in checked CeeLing code; the native layer (shim/app_fs.cpp) only opens, reads, writes, lists,
+// creates and deletes, and reports where an OPEN HANDLE really points. Every decision is taken on that answer, never on
+// the text of a path: `..`, links, junctions, case, 8.3 names and `\\?\` all defeat text checks, and the answer can change
+// between a check and an open. So an operation opens first, asks "where does this handle point?", decides, and only then
+// reads or writes through that same handle. (A text pre-check still runs first, but only to refuse early and without
+// saying whether the path exists; it never allows anything by itself.)
+//
+// A FileGate is used from the main thread only (the command loop). Grants coming from a dialog are applied there too.
+//
+// Status codes (the same numbers the native layer uses):
+//   0 ok  1 forbidden  2 not found  3 too large  4 io error  5 invalid  6 exists  7 not empty  8 is a folder
+//   9 not a folder  10 permission denied  11 too many
+#include "text.clh"
+
+ext_fn int app_os_windows();
+ext_fn int app_fs_open(string path, int mode, ref int h, ref string fin, ref int created);
+ext_fn int app_fs_close(int h);
+ext_fn int app_fs_info(int h, ref int kind, ref string size, ref string mtime);
+ext_fn int app_fs_read(int h, int maxBytes, ref string out);
+ext_fn int app_fs_write(int h, string data, int append);
+ext_fn int app_fs_list(int h, ref string out);
+ext_fn int app_fs_mkdir(string path);
+ext_fn int app_fs_delete(int h);
+
+// open modes of app_fs_open
+//   0 read a file   1 a folder (to list)   2 attributes only, following links   3 attributes only, NOT following a final link
+//   4 like 3 but with the right to delete   5 write, creating the file if it is missing (no truncation)   6 create, fail if it exists
+
+class FsResult {
+public:
+    int status;
+    string text;
+    FsResult(int s, string t) {
+        status = s;
+        text = t;
+    }
+};
+
+// An open native handle and where it points (plain form: no \\?\ prefix). The holder must close it.
+class Opened {
+public:
+    int status;
+    int h;
+    string fin;
+    int created;
+    Opened(int s, int handle, string path, int made) {
+        status = s;
+        h = handle;
+        fin = path;
+        created = made;
+    }
+};
+
+// "\\?\C:\x" -> "C:\x", "\\?\UNC\srv\share\x" -> "\\srv\share\x"
+string plainOf(string fin) {
+    if (startsWithText(fin, "\\\\?\\UNC\\")) {
+        return "\\" + fin.substr(7, fin.length() - 7);
+    }
+    if (startsWithText(fin, "\\\\?\\")) {
+        return fin.substr(4, fin.length() - 4);
+    }
+    return fin;
+}
+
+bool isSeparator(char c) {
+    return c == '\\' || c == '/';
+}
+
+bool isDriveAbsolute(string w) {
+    if (w.length() < 3) {
+        return false;
+    }
+    char c = w[0];
+    bool letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    return letter && w[1] == ':' && isSeparator(w[2]);
+}
+
+bool reservedDeviceName(string name) {
+    string base = name;
+    int dot = indexOfChar(base, '.');
+    if (dot >= 0) {
+        base = base.substr(0, dot);
+    }
+    while (base.length() > 0 && base[base.length() - 1] == ' ') {
+        base = base.substr(0, base.length() - 1);
+    }
+    string up = "";
+    int i = 0;
+    while (i < base.length()) {
+        char c = base[i];
+        if (c >= 'a' && c <= 'z') {
+            c = char(int(c) - 32);
+        }
+        up.push_back(c);
+        i = i + 1;
+    }
+    if (up == "CON" || up == "PRN" || up == "AUX" || up == "NUL" || up == "CONIN$" || up == "CONOUT$") {
+        return true;
+    }
+    if (up.length() == 4 && (startsWithText(up, "COM") || startsWithText(up, "LPT")) && up[3] >= '1' && up[3] <= '9') {
+        return true;
+    }
+    return false;
+}
+
+class FileGate {
+public:
+    std::vector<string> paths;     // canonical plain paths, no trailing separator (except a drive or "/")
+    std::vector<int> exact;        // 1: a granted FILE, only this very path matches
+    std::vector<int> grant;        // 1: added by a dialog, withdrawable
+    int windows;
+
+    FileGate() {
+        windows = app_os_windows();
+    }
+
+    string sep() {
+        if (windows == 1) {
+            return "\\";
+        }
+        return "/";
+    }
+
+    char sepChar() {
+        if (windows == 1) {
+            return '\\';
+        }
+        return '/';
+    }
+
+    // ---- the roots ----------------------------------------------------------------------------------------------
+
+    bool isInside(string path, string root) {
+        if (path == root) {
+            return true;
+        }
+        if (root.length() > 0 && root.length() < path.length() && isSeparator(root[root.length() - 1]) && startsWithText(path, root)) {
+            return true;
+        }
+        return startsWithText(path, root + sep());
+    }
+
+    // `fin` is what the OS says an open handle points at: exact comparison, the OS spells both the same way
+    bool allowedFinal(string fin) {
+        int i = 0;
+        while (i < paths.size()) {
+            if (exact[i] == 1) {
+                if (fin == paths[i]) {
+                    return true;
+                }
+            } else if (isInside(fin, paths[i])) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // the same for TEXT (a pre-check only): Windows paths ignore ASCII case
+    bool allowedText(string path) {
+        string p = path;
+        if (windows == 1) {
+            p = lowerAscii(path);
+        }
+        int i = 0;
+        while (i < paths.size()) {
+            string r = paths[i];
+            if (windows == 1) {
+                r = lowerAscii(r);
+            }
+            if (exact[i] == 1) {
+                if (p == r) {
+                    return true;
+                }
+            } else if (isInside(p, r)) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // an allowed FOLDER itself (never removable); a granted file may be removed, the user chose it
+    bool isRootItself(string fin) {
+        int i = 0;
+        while (i < paths.size()) {
+            if (exact[i] == 0 && paths[i] == fin) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // relative paths hang off the FIRST folder the application allowed (never off a grant)
+    string basePath() {
+        int i = 0;
+        while (i < paths.size()) {
+            if (exact[i] == 0 && grant[i] == 0) {
+                return paths[i];
+            }
+            i = i + 1;
+        }
+        return "";
+    }
+
+    int grantCount() {
+        int n = 0;
+        int i = 0;
+        while (i < grant.size()) {
+            n = n + grant[i];
+            i = i + 1;
+        }
+        return n;
+    }
+
+    // ---- text: the absolute, normalized form of a path --------------------------------------------------------
+
+    // Lexical only. Relative paths hang off the first allowed folder. Refuses device paths, drive- and root-relative
+    // paths, alternate data streams, trailing dots and spaces (Windows drops them, so the page would get another file
+    // than the one it named) and device names. With checkRoots the text must also lie under an allowed place.
+    FsResult normalize(string path, bool allowRelative, bool checkRoots) {
+        if (path.length() == 0 || !plainText(path, 32000)) {
+            return new FsResult(5, "");
+        }
+        string p = path;
+        string base = "";
+        if (windows == 1) {
+            if (startsWithText(p, "\\\\?\\") || startsWithText(p, "\\\\.\\") || startsWithText(p, "//?/") || startsWithText(p, "//./")) {
+                return new FsResult(1, "");
+            }
+            bool unc = p.length() >= 2 && isSeparator(p[0]) && isSeparator(p[1]);
+            if (!unc && !isDriveAbsolute(p)) {
+                if (!allowRelative) {
+                    return new FsResult(5, "");
+                }
+                if (isSeparator(p[0]) || (p.length() >= 2 && p[1] == ':')) {
+                    return new FsResult(1, "");
+                }
+                base = basePath();
+                if (base.length() == 0) {
+                    return new FsResult(1, "");
+                }
+                p = base + "\\" + p;
+            }
+            int i = 0;
+            while (i < p.length()) {
+                if (p[i] == ':' && !(i == 1 && isDriveAbsolute(p))) {
+                    return new FsResult(1, "");
+                }
+                i = i + 1;
+            }
+        } else if (p[0] != '/') {
+            if (!allowRelative) {
+                return new FsResult(5, "");
+            }
+            base = basePath();
+            if (base.length() == 0) {
+                return new FsResult(1, "");
+            }
+            p = base + "/" + p;
+        }
+        // split on separators and collapse "." and ".."; on Windows the drive (or \\server\share) stays in front
+        std::vector<string> parts;
+        string current = "";
+        int k = 0;
+        while (k <= p.length()) {
+            bool atEnd = k == p.length();
+            bool cut = atEnd;
+            if (!atEnd) {
+                cut = p[k] == '/' || (windows == 1 && p[k] == '\\');
+            }
+            if (cut) {
+                if (current.length() > 0) {
+                    parts.push_back(current);
+                }
+                current = "";
+            } else {
+                current.push_back(p[k]);
+            }
+            k = k + 1;
+        }
+        string prefix = "";
+        int first = 0;
+        if (windows == 1) {
+            if (isDriveAbsolute(p)) {
+                prefix = parts[0];
+                first = 1;
+            } else {
+                if (parts.size() < 2) {
+                    return new FsResult(1, "");
+                }
+                prefix = "\\\\" + parts[0] + "\\" + parts[1];
+                first = 2;
+            }
+        }
+        std::vector<string> kept;
+        int j = first;
+        while (j < parts.size()) {
+            string c = parts[j];
+            if (c == "..") {
+                if (kept.size() > 0) {
+                    kept.pop_back();
+                }
+            } else if (c != ".") {
+                if (windows == 1) {
+                    char last = c[c.length() - 1];
+                    if (last == '.' || last == ' ' || reservedDeviceName(c)) {
+                        return new FsResult(1, "");
+                    }
+                }
+                kept.push_back(c);
+            }
+            j = j + 1;
+        }
+        string full = prefix;
+        int m = 0;
+        while (m < kept.size()) {
+            full = full + sep() + kept[m];
+            m = m + 1;
+        }
+        if (kept.size() == 0) {
+            full = full + sep();
+        }
+        if (checkRoots && !allowedText(full)) {
+            return new FsResult(1, "");
+        }
+        return new FsResult(0, full);
+    }
+
+    // normalize for something that is not a path to open yet (no roots check): used by grants
+    FsResult normalizeAbsolute(string path) {
+        FsResult r = normalize(path, false, false);
+        return r;
+    }
+
+    // ---- parent and leaf of a normalized path ------------------------------------------------------------------
+
+    int lastSeparator(string full) {
+        char c = sepChar();
+        int i = full.length() - 1;
+        while (i >= 0) {
+            if (full[i] == c) {
+                return i;
+            }
+            i = i - 1;
+        }
+        return -1;
+    }
+
+    string parentOf(string full) {
+        int i = lastSeparator(full);
+        if (i <= 0) {
+            return sep();
+        }
+        if (windows == 1 && i == 2 && isDriveAbsolute(full)) {
+            return full.substr(0, 3);
+        }
+        return full.substr(0, i);
+    }
+
+    string leafOf(string full) {
+        int i = lastSeparator(full);
+        return full.substr(i + 1, full.length() - i - 1);
+    }
+
+    string join(string dir, string leaf) {
+        if (dir.length() > 0 && dir[dir.length() - 1] == sepChar()) {
+            return dir + leaf;
+        }
+        return dir + sep() + leaf;
+    }
+
+    // a name that may be CREATED
+    bool nameOk(string leaf) {
+        if (leaf.length() == 0 || leaf == "." || leaf == "..") {
+            return false;
+        }
+        int i = 0;
+        while (i < leaf.length()) {
+            char c = leaf[i];
+            if (c == '/' || (int(c) >= 0 && int(c) < 32)) {
+                return false;
+            }
+            if (windows == 1 && (c == '<' || c == '>' || c == ':' || c == '"' || c == '|' || c == '?' || c == '*' || c == '\\')) {
+                return false;
+            }
+            i = i + 1;
+        }
+        if (windows == 1) {
+            char last = leaf[leaf.length() - 1];
+            if (last == '.' || last == ' ' || reservedDeviceName(leaf)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // ---- opening ---------------------------------------------------------------------------------------------
+
+    Opened openAt(string path, int mode) {
+        int h = 0;
+        string fin = "";
+        int created = 0;
+        int st = app_fs_open(path, mode, h, fin, created);
+        if (st != 0) {
+            return new Opened(st, 0, "", 0);
+        }
+        return new Opened(0, h, plainOf(fin), created);
+    }
+
+    // Opens `full` and refuses (closing it, and undoing a file this call created) if the handle does not point inside an
+    // allowed place. `full` came from normalize.
+    Opened openAllowed(string full, int mode) {
+        Opened o = openAt(full, mode);
+        if (o.status != 0) {
+            return o;
+        }
+        if (!allowedFinal(o.fin)) {
+            if (o.created == 1) {
+                app_fs_delete(o.h);
+            }
+            app_fs_close(o.h);
+            return new Opened(1, 0, "", 0);
+        }
+        return o;
+    }
+
+    // 'f' file, 'd' folder, 'l' link, 'o' anything else (a device, a pipe); 0 if the handle cannot be asked
+    int kindOf(int h) {
+        int kind = 0;
+        string size = "";
+        string mtime = "";
+        app_fs_info(h, kind, size, mtime);
+        return kind;
+    }
+
+    int finish(int h, int status) {
+        app_fs_close(h);
+        return status;
+    }
+
+    // ---- the allow-list ----------------------------------------------------------------------------------------
+
+    // Adds a folder the application allows. It must exist; it is stored as the OS spells it (links resolved).
+    int allow(string dir) {
+        if (dir.length() == 0 || !plainText(dir, 32000)) {
+            return 5;
+        }
+        Opened o = openAt(dir, 1);
+        if (o.status != 0) {
+            return o.status;
+        }
+        if (kindOf(o.h) != 100) {
+            return finish(o.h, 9);
+        }
+        add(o.fin, 0, 0);
+        return finish(o.h, 0);
+    }
+
+    void add(string fin, int isExact, int isGrant) {
+        string p = fin;
+        while (p.length() > 3 && isSeparator(p[p.length() - 1])) {
+            p = p.substr(0, p.length() - 1);
+        }
+        paths.push_back(p);
+        exact.push_back(isExact);
+        grant.push_back(isGrant);
+    }
+
+    // Empties the allow-list (nothing is reachable afterwards), grants included.
+    void clear() {
+        while (paths.size() > 0) {
+            paths.pop_back();
+            exact.pop_back();
+            grant.pop_back();
+        }
+    }
+
+    // What the user picked: exactly that file (it may not exist yet: a "save as" target, whose folder must) or folder.
+    // At most 256 at a time. On success the text is the form the file commands will accept.
+    FsResult addGrant(string fin, int isExact) {
+        string canonical = fin;
+        int i = 0;
+        while (i < paths.size()) {
+            if (grant[i] == 1 && exact[i] == isExact && paths[i] == canonical) {
+                return new FsResult(0, canonical);
+            }
+            i = i + 1;
+        }
+        if (grantCount() >= 256) {
+            return new FsResult(11, "");
+        }
+        add(canonical, isExact, 1);
+        return new FsResult(0, canonical);
+    }
+
+    FsResult grantFolder(string path) {
+        FsResult n = normalizeAbsolute(path);
+        if (n.status != 0) {
+            return n;
+        }
+        Opened o = openAt(n.text, 1);
+        if (o.status != 0) {
+            return new FsResult(o.status, "");
+        }
+        if (kindOf(o.h) != 100) {
+            return new FsResult(finish(o.h, 9), "");
+        }
+        app_fs_close(o.h);
+        return addGrant(o.fin, 0);
+    }
+
+    FsResult grantFile(string path) {
+        FsResult n = normalizeAbsolute(path);
+        if (n.status != 0) {
+            return n;
+        }
+        Opened o = openAt(n.text, 2);
+        if (o.status == 0) {
+            int kind = kindOf(o.h);
+            app_fs_close(o.h);
+            if (kind == 100) {
+                return new FsResult(8, "");
+            }
+            return addGrant(o.fin, 1);
+        }
+        if (o.status != 2) {
+            return new FsResult(o.status, "");
+        }
+        // does not exist yet: its folder must, and the name must be an ordinary one
+        string leaf = leafOf(n.text);
+        if (!nameOk(leaf)) {
+            return new FsResult(1, "");
+        }
+        Opened parent = openAt(parentOf(n.text), 1);
+        if (parent.status != 0) {
+            return new FsResult(parent.status, "");
+        }
+        int pk = kindOf(parent.h);
+        app_fs_close(parent.h);
+        if (pk != 100) {
+            return new FsResult(9, "");
+        }
+        return addGrant(join(parent.fin, leaf), 1);
+    }
+
+    // Withdraws every grant; the application's own folders stay.
+    void revokeGrants() {
+        std::vector<string> keptPaths;
+        std::vector<int> keptExact;
+        int i = 0;
+        while (i < paths.size()) {
+            if (grant[i] == 0) {
+                keptPaths.push_back(paths[i]);
+                keptExact.push_back(exact[i]);
+            }
+            i = i + 1;
+        }
+        clear();
+        int k = 0;
+        while (k < keptPaths.size()) {
+            add(keptPaths[k], keptExact[k], 0);
+            k = k + 1;
+        }
+    }
+
+    // ---- operations ---------------------------------------------------------------------------------------------
+
+    // An EXISTING path the file commands could reach, as its canonical absolute form (links resolved), or the failure.
+    // kind: 0 anything, 1 a file, 2 a folder. This is how a page-supplied path is vetted before it is handed to a program.
+    FsResult resolve(string path, int kind) {
+        FsResult n = normalize(path, true, true);
+        if (n.status != 0) {
+            return n;
+        }
+        Opened o = openAllowed(n.text, 2);
+        if (o.status != 0) {
+            return new FsResult(o.status, "");
+        }
+        int k = kindOf(o.h);
+        app_fs_close(o.h);
+        if (kind == 1 && k == 100) {
+            return new FsResult(8, "");
+        }
+        if (kind == 2 && k != 100) {
+            return new FsResult(9, "");
+        }
+        return new FsResult(0, o.fin);
+    }
+
+    // The whole file, refusing (without reading it) one larger than maxBytes.
+    FsResult read(string path, int maxBytes) {
+        FsResult n = normalize(path, true, true);
+        if (n.status != 0) {
+            return n;
+        }
+        Opened o = openAllowed(n.text, 0);
+        if (o.status != 0) {
+            return new FsResult(o.status, "");
+        }
+        int kind = kindOf(o.h);
+        if (kind == 100) {
+            return new FsResult(finish(o.h, 8), "");
+        }
+        if (kind != 102) {
+            return new FsResult(finish(o.h, 1), "");
+        }
+        string data = "";
+        int st = app_fs_read(o.h, maxBytes, data);
+        app_fs_close(o.h);
+        return new FsResult(st, data);
+    }
+
+    // mode 0 create or replace, 1 append (create if missing), 2 create only. The parent folder must exist and be inside
+    // an allowed place (or the file itself be a granted one).
+    int write(string path, string data, int mode) {
+        FsResult n = normalize(path, true, true);
+        if (n.status != 0) {
+            return n.status;
+        }
+        string leaf = leafOf(n.text);
+        if (!nameOk(leaf)) {
+            return 1;
+        }
+        Opened parent = openAt(parentOf(n.text), 1);
+        if (parent.status != 0) {
+            return parent.status;
+        }
+        int pk = kindOf(parent.h);
+        app_fs_close(parent.h);
+        if (pk != 100) {
+            return 9;
+        }
+        string target = join(parent.fin, leaf);
+        if (!allowedFinal(parent.fin) && !allowedFinal(target)) {
+            return 1;
+        }
+        int open = 5;
+        if (mode == 2) {
+            open = 6;
+        }
+        Opened o = openAllowed(target, open);
+        if (o.status != 0) {
+            return o.status;
+        }
+        int kind = kindOf(o.h);
+        if (kind == 100) {
+            return finish(o.h, 8);
+        }
+        if (kind != 102) {
+            return finish(o.h, 1);
+        }
+        int append = 0;
+        if (mode == 1) {
+            append = 1;
+        }
+        return finish(o.h, app_fs_write(o.h, data, append));
+    }
+
+    // One record per entry, each field followed by a NUL: kind ("f" file, "d" folder, "l" link), size in bytes, modified
+    // time (seconds since 1970), name.
+    FsResult list(string path) {
+        FsResult n = normalize(path, true, true);
+        if (n.status != 0) {
+            return n;
+        }
+        Opened o = openAllowed(n.text, 1);
+        if (o.status != 0) {
+            return new FsResult(o.status, "");
+        }
+        if (kindOf(o.h) != 100) {
+            return new FsResult(finish(o.h, 9), "");
+        }
+        string records = "";
+        int st = app_fs_list(o.h, records);
+        app_fs_close(o.h);
+        return new FsResult(st, records);
+    }
+
+    // The same four NUL-terminated fields for one path. A link is described as itself, not as its target.
+    FsResult stat(string path) {
+        FsResult n = normalize(path, true, true);
+        if (n.status != 0) {
+            return n;
+        }
+        Opened o = openAllowed(n.text, 3);
+        if (o.status != 0) {
+            return new FsResult(o.status, "");
+        }
+        int kind = 0;
+        string size = "";
+        string mtime = "";
+        int st = app_fs_info(o.h, kind, size, mtime);
+        app_fs_close(o.h);
+        if (st != 0) {
+            return new FsResult(st, "");
+        }
+        string code = "f";
+        if (kind == 100) {
+            code = "d";
+        } else if (kind == 108) {
+            code = "l";
+        }
+        string record = code;
+        record.push_back(char(0));
+        record = record + size;
+        record.push_back(char(0));
+        record = record + mtime;
+        record.push_back(char(0));
+        record = record + leafOf(o.fin);
+        record.push_back(char(0));
+        return new FsResult(0, record);
+    }
+
+    // one folder: its parent must be a real folder inside an allowed place, and the new name an ordinary one
+    int makeOne(string full) {
+        Opened parent = openAt(parentOf(full), 1);
+        if (parent.status != 0) {
+            return parent.status;
+        }
+        int pk = kindOf(parent.h);
+        app_fs_close(parent.h);
+        if (pk != 100) {
+            return 9;
+        }
+        if (!allowedFinal(parent.fin)) {
+            return 1;
+        }
+        string target = join(parent.fin, leafOf(full));
+        int made = app_fs_mkdir(target);
+        if (made != 0) {
+            return made;
+        }
+        // the parent may have been swapped for a link between the check and the creation: look again at what was made
+        Opened check = openAt(target, 4);
+        if (check.status != 0) {
+            return check.status;
+        }
+        if (!allowedFinal(check.fin)) {
+            app_fs_delete(check.h);
+            return finish(check.h, 1);
+        }
+        return finish(check.h, 0);
+    }
+
+    // With `parents`, missing ancestors are created too, outermost first, each one checked as it is made.
+    int mkdir(string path, bool parents) {
+        FsResult n = normalize(path, true, true);
+        if (n.status != 0) {
+            return n.status;
+        }
+        if (!nameOk(leafOf(n.text))) {
+            return 1;
+        }
+        if (!parents) {
+            return makeOne(n.text);
+        }
+        std::vector<string> chain;
+        string cur = n.text;
+        while (true) {
+            Opened o = openAt(cur, 1);
+            if (o.status == 0) {
+                int kind = kindOf(o.h);
+                app_fs_close(o.h);
+                if (kind != 100) {
+                    return 9;
+                }
+                break;
+            }
+            if (o.status != 2) {
+                return o.status;
+            }
+            chain.push_back(cur);
+            string up = parentOf(cur);
+            if (up == cur || !allowedText(up)) {
+                return 1;
+            }
+            cur = up;
+        }
+        if (chain.size() == 0) {
+            return 6;
+        }
+        int i = chain.size() - 1;
+        while (i >= 0) {
+            if (!nameOk(leafOf(chain[i]))) {
+                return 1;
+            }
+            int r = makeOne(chain[i]);
+            if (r != 0 && r != 6) {
+                return r;
+            }
+            i = i - 1;
+        }
+        return 0;
+    }
+
+    // Removes a file, a link (the link, never its target), or an EMPTY folder. Never an allowed folder itself.
+    int remove(string path) {
+        FsResult n = normalize(path, true, true);
+        if (n.status != 0) {
+            return n.status;
+        }
+        Opened o = openAllowed(n.text, 4);
+        if (o.status != 0) {
+            return o.status;
+        }
+        if (isRootItself(o.fin)) {
+            return finish(o.h, 1);
+        }
+        return finish(o.h, app_fs_delete(o.h));
+    }
+};
