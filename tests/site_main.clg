@@ -23,12 +23,10 @@ void check(string name, bool ok) {
 // one GET: the status (0 = not the site's, so the network would get it), headers and body
 class Fetched {
 public:
-    // (declared before `mine`: the constructor's assignments are emitted as an initializer list in DECLARATION order, so the call that
-    // fills these through `ref` would otherwise run before they are constructed. A CeeLing bug, in TODO.md.)
+    int mine;
     int status;
     string headers;
     string body;
-    int mine;
     Fetched(string method, string url) {
         status = 0;
         headers = "";
