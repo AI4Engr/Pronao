@@ -5,7 +5,7 @@
 # Fails if any check prints FAIL, if fewer than the expected number of checks ran, or if a program does not exit 0.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_HEADLESS=176
+EXPECTED_HEADLESS=192
 EXPECTED_FILES=128
 EXPECTED_PROGRAMS=18
 W="${TMPDIR:-/tmp}/app-cling-headless"

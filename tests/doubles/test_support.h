@@ -30,6 +30,9 @@ int app_test_dialog_take_request(std::string& request);
 // a program for the process tests to run (the environment variable APP_PROC_ECHO); 0 if unset
 int app_test_helper(std::string& path);
 
+// the environment of this (test) process
+int app_test_setenv(std::string name, std::string value);
+
 // threads
 int app_test_sleep_ms(int ms);
 int app_test_gauge_enter();

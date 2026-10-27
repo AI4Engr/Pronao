@@ -20,3 +20,16 @@ inline std::string narrow(const std::wstring& w) {
     if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &s[0], n, nullptr, nullptr);
     return s;
 }
+
+// Closes the handle when it goes out of scope (an invalid handle counts as none).
+struct Handle {
+    HANDLE h = nullptr;
+    Handle() {}
+    explicit Handle(HANDLE x) : h(x == INVALID_HANDLE_VALUE ? nullptr : x) {}
+    ~Handle() { reset(); }
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+    void reset() { if (h) CloseHandle(h); h = nullptr; }
+    HANDLE* put() { reset(); return &h; }
+    operator HANDLE() const { return h; }
+};

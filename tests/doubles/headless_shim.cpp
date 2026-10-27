@@ -20,6 +20,7 @@ struct App {
     std::deque<std::string> evals;      // every script passed to app_eval, in order
     std::deque<std::string> windowLog;  // window control calls, as "title|x", "size|w|h", "state|n", "guard|n"
     bool guard = false;
+    int maxRequest = 16 << 20, maxQueued = 1000;
 };
 
 std::mutex g_tableMutex;
@@ -87,6 +88,19 @@ int app_close(int handle) {
 int app_window_title(int handle, std::string title) { logWindow(handle, "title|" + title); return lookup(handle) ? 1 : 0; }
 int app_window_size(int handle, int w, int h) { logWindow(handle, "size|" + std::to_string(w) + "|" + std::to_string(h)); return lookup(handle) ? 1 : 0; }
 int app_window_state(int handle, int state) { logWindow(handle, "state|" + std::to_string(state)); return lookup(handle) ? 1 : 0; }
+int app_limits(int handle, int max_request, int max_queued) {
+    auto app = lookup(handle);
+    if (!app) return 0;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->maxRequest = max_request; app->maxQueued = max_queued;
+    return 1;
+}
+int app_navigation_allow(int handle, std::vector<std::string> prefixes) {
+    std::string line = "navigation";
+    for (const auto& p : prefixes) line += "|" + p;
+    logWindow(handle, line);
+    return lookup(handle) ? 1 : 0;
+}
 int app_window_guard(int handle, int on) {
     auto app = lookup(handle);
     if (!app) return 0;
@@ -95,9 +109,14 @@ int app_window_guard(int handle, int on) {
 }
 
 // ---- what the tests add --------------------------------------------------------------------------------------------------
+// as the page's bind callback does: refused calls are answered at once with the shim's own texts. Returns CallQueue::admit's code
 int app_test_inject(int handle, std::string id, std::string request) {
-    if (id.empty()) return 0;     // like the real bind callback: an empty id is the shim's own, never a page's
-    return app_push(handle, std::move(id), std::move(request), 1 << 30) == 1;
+    auto app = lookup(handle);
+    if (!app) return 3;
+    int refused;
+    { std::lock_guard<std::mutex> lock(app->m); refused = app->calls.admit(id, request, app->maxRequest, app->maxQueued); }
+    if (refused == 1 || refused == 2) app_return(handle, id, 1, refusalJson(refused));
+    return refused;
 }
 int app_test_take_response(int handle, std::string& id, int& status, std::string& json) {
     auto app = lookup(handle);

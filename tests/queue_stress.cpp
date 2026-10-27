@@ -19,6 +19,7 @@ int main() {
     int h = app_open("stress", 10, 10, "", "", 0);
     if (h == 0) { std::printf("FAIL: app_open\n"); return 2; }
 
+    app_limits(h, 1 << 20, 1 << 30);          // the stress test queues thousands of calls before the consumer starts
     std::vector<std::thread> pool;
     for (int p = 0; p < producers; ++p) {
         pool.emplace_back([=] {

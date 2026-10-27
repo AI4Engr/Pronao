@@ -140,3 +140,11 @@ int app_test_gauge_enter() {
 }
 int app_test_gauge_leave() { return g_gaugeNow.fetch_sub(1) - 1; }
 int app_test_gauge_peak() { return g_gaugePeak.load(); }
+
+int app_test_setenv(std::string name, std::string value) {
+#ifdef _WIN32
+    return SetEnvironmentVariableA(name.c_str(), value.c_str()) ? 0 : 4;
+#else
+    return setenv(name.c_str(), value.c_str(), 1) == 0 ? 0 : 4;
+#endif
+}

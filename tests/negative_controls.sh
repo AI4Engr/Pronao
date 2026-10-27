@@ -10,18 +10,22 @@ rm -rf "$W"; mkdir -p "$W"
 "${CXX:-g++}" --std=c++17 -O1 "$HERE/tests/proc_helper.cpp" -o "$W/proc_helper.exe" || exit 1
 export APP_PROC_ECHO="$W/proc_helper.exe"
 bad=0
-control() { # name  file  old  new  program  must-fail-substring
+control() { # name  file (relative to src/, or shim/...)  old  new  program  must-fail-substring
     local dir="$W/$1"
-    mkdir -p "$dir/src" "$dir/work"
+    mkdir -p "$dir/src" "$dir/work" "$dir/shim"
     cp "$HERE"/src/* "$dir/src/"
-    python3 - "$dir/src/$2" "$3" "$4" <<'PYEOF' || { echo "SETUP FAILED: $1"; bad=1; return; }
+    cp -r "$HERE"/shim/. "$dir/shim/"
+    mkdir -p "$dir/tests/doubles" && cp "$HERE"/tests/doubles/* "$dir/tests/doubles/"     # (the doubles include ../../shim/queue.h)
+    local target="$dir/src/$2"
+    case "$2" in shim/*) target="$dir/$2" ;; esac
+    python3 - "$target" "$3" "$4" <<'PYEOF' || { echo "SETUP FAILED: $1"; bad=1; return; }
 import sys
 p, old, new = sys.argv[1:4]
 s = open(p, encoding='utf-8', newline='').read()
 assert s.count(old) == 1, (old, s.count(old))
 open(p, 'w', encoding='utf-8', newline='').write(s.replace(old, new))
 PYEOF
-    SRC="$dir/src" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
+    SRC="$dir/src" SHIM="$dir/shim" DOUBLES="$dir/tests/doubles" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
     "$dir/t.exe" > "$dir/out.txt" 2>&1
     local failed; failed=$(grep -c '^FAIL ' "$dir/out.txt")
     if [ "$failed" -gt 0 ] && grep -q "^FAIL .*$6" "$dir/out.txt"; then echo "ok: without '$1' $failed checks fail (including \"$6\")"; else echo "NEGATIVE CONTROL DID NOT FAIL: $1 ($failed failures)"; bad=1; fi
@@ -34,5 +38,9 @@ control "a dialog pick must be granted" app.clg 'g = gate.grantFile(f[3]);' 'g =
 control "program name check" app.clg 'if (!programNameOk(name) || programs.indexOf(name) >= 0 || elements.size() > 64) {' 'if (programs.indexOf(name) >= 0 || elements.size() > 64) {' headless_main "a name with a space is refused"
 control "watch limit" app.clg 'if (book.states.size() >= 32) {' 'if (false) {' headless_main "at most 32 folders"
 control "dialog title check" app.clg 'if (!plainText(title, 200)) {' 'if (false) {' headless_main "an over-long title is refused"
+control "request size limit" shim/queue.h '        if (static_cast<int>(request.size()) > max_request) return 1;' '' headless_main "a call over the size limit is refused"
+control "queue length limit" shim/queue.h '        return push(id, request, max_queued) == 1 ? 0 : 2;' '        return push(id, request, 1 << 30) == 1 ? 0 : 2;' headless_main "with 3 waiting"
+control "ids a page cannot have" shim/queue.h '        if (id.empty() || id.size() > 64) return 3;' '' headless_main "an id the page could not have been given"
+control "environment is withheld" app.clg 'splitOn("PATH,SystemRoot,' 'splitOn("APP_CLING_SECRET,PATH,SystemRoot,' headless_main "a variable of this process is not passed"
 [ "$bad" -eq 0 ] && echo "negative controls: ALL OK" || echo "negative controls: FAILED"
 exit $bad

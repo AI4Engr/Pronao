@@ -27,13 +27,15 @@ ext_fn int app_window_title(int handle, string title);
 ext_fn int app_window_size(int handle, int width, int height);
 ext_fn int app_window_state(int handle, int state);
 ext_fn int app_window_guard(int handle, int on);
+ext_fn int app_limits(int handle, int maxRequest, int maxQueued);
+ext_fn int app_navigation_allow(int handle, std::vector<string> prefixes);
 ext_fn int app_watch_start(int handle, string root, int recursive, ref int watchId);
 ext_fn int app_watch_stop(int handle, int watchId);
 ext_fn int app_os_windows();
 ext_fn int app_os_env(string name, ref string out);
 ext_fn int app_os_path_kind(string path);
 ext_fn double app_now_ms();
-ext_fn int app_proc_run(string exe, std::vector<string> args, string cwd, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
+ext_fn int app_proc_run(string exe, std::vector<string> args, string cwd, std::vector<string> env, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
 ext_fn int app_dialog_pick(int handle, int mode, string title, string defaultName, string defaultExt, std::vector<string> filters, ref string path);
 ext_fn int app_dialog_message(int handle, string title, string message, int kind, int buttons);
 // the page and the bridge script, compiled into the program by scripts/build.sh
@@ -388,10 +390,31 @@ public:
     }
 };
 
+// The environment a program gets: ONLY these variables of this process, if they are set (a program started from an application that
+// holds a token in its environment must not inherit the token). passEnvironment adds names.
 class ProgramRegistry {
 public:
     std::vector<ProgramSpec> specs;
-    ProgramRegistry() { }
+    std::vector<string> envNames;
+    ProgramRegistry() {
+        std::vector<string> base = splitOn("PATH,SystemRoot,SYSTEMDRIVE,windir,TEMP,TMP,TMPDIR,LANG,LC_ALL,HOME,USERPROFILE", ',');
+        envNames = base;
+    }
+
+    // NAME=value for each of the names that is set
+    std::vector<string> environment() {
+        std::vector<string> env;
+        int i = 0;
+        while (i < envNames.size()) {
+            string value = "";
+            if (app_os_env(envNames[i], value) == 1 && plainText(value, 30000)) {
+                env.push_back(envNames[i] + "=" + value);
+            }
+            i = i + 1;
+        }
+        return env;
+    }
+
     int indexOf(string name) {
         int i = 0;
         while (i < specs.size()) {
@@ -951,6 +974,9 @@ public:
     FileGate gate;
     Watches watches;
     WindowState window;
+    std::vector<string> navigation;    // addresses the window may load after the application's own page (allowNavigation)
+    int maxRequestBytes;
+    int maxQueuedCalls;
 
     App() {
         handle = 0;
@@ -959,6 +985,8 @@ public:
         gate = new FileGate();
         watches = new Watches();
         window = new WindowState();
+        maxRequestBytes = 4194304;
+        maxQueuedCalls = 256;
     }
 
     void command(string name, Command handler) {
@@ -1138,6 +1166,15 @@ public:
         return true;
     }
 
+    // Adds variables of this process that programs may see (see ProgramRegistry); everything else is withheld.
+    bool passEnvironment(string name) {
+        if (name.length() == 0 || !plainText(name, 200) || indexOfChar(name, '=') >= 0) {
+            return false;
+        }
+        programs.envNames.push_back(name);
+        return true;
+    }
+
     // Registers proc.run: {program: "git.log", args: {count: 20, ...}} -> {exitCode, stdout, stderr, timedOut,
     // truncated: {stdout, stderr}, lossy}. A non-zero exit code is a result, not an error. Asynchronous: the program
     // runs on a worker, so the command loop keeps serving.
@@ -1205,15 +1242,16 @@ public:
                 }
                 cwd = where.text;
             }
+            std::vector<string> env = registry.environment();
             string exe = spec.exe;
             int timeoutMs = spec.timeoutMs;
             int maxBytes = spec.maxBytes;
-            spawn(closure Job [exe, argv, cwd, timeoutMs, maxBytes, id, handle] () {
+            spawn(closure Job [exe, argv, cwd, env, timeoutMs, maxBytes, id, handle] () {
                 string out = "";
                 string err = "";
                 int exitCode = 0;
                 int flags = 0;
-                int status = app_proc_run(exe, argv, cwd, timeoutMs, maxBytes, out, err, exitCode, flags);
+                int status = app_proc_run(exe, argv, cwd, env, timeoutMs, maxBytes, out, err, exitCode, flags);
                 finishRun(handle, id, status, out, err, exitCode, flags);
             });
         });
@@ -1415,6 +1453,14 @@ public:
         if (f.size() < 2) {
             return;
         }
+        if (f[1] == "navigation_blocked" && f.size() >= 3) {
+            if (isUtf8(f[2])) {
+                Item e = createObject();
+                addStringToObject(e, "url", f[2]);
+                emitEvent(handle, "window.navigationBlocked", printUnformatted(e));
+            }
+            return;
+        }
         if (f[1] == "close_declined") {
             window.confirming = false;
             emitEvent(handle, "window.closeDeclined", "null");
@@ -1444,6 +1490,28 @@ public:
         });
     }
 
+    // The page may not send a call larger than maxRequestBytes or while maxQueuedCalls are waiting: such a call is answered at
+    // once with {code: "too_large"} / {code: "busy"} and never reaches a command (defaults 4 MiB and 256). Applies to the next open.
+    bool setRequestLimits(int maxRequest, int maxQueued) {
+        if (maxRequest < 1024 || maxRequest > 268435456 || maxQueued < 1 || maxQueued > 100000) {
+            return false;
+        }
+        maxRequestBytes = maxRequest;
+        maxQueuedCalls = maxQueued;
+        return true;
+    }
+
+    // After the application's own page, the window may load only addresses that start with `prefix` (for example a dev server,
+    // "http://localhost:5173/"); everything else, every new window and every frame pointing elsewhere is refused and reported as
+    // the event window.navigationBlocked {url}. Call before open.
+    bool allowNavigation(string prefix) {
+        if (prefix.length() < 5 || !plainText(prefix, 1000)) {
+            return false;
+        }
+        navigation.push_back(prefix);
+        return true;
+    }
+
     // At most n async jobs run at the same time (the rest wait in a queue, oldest first); 0 = the default,
     // max(4, number of cores). A job is never dropped: on exit every queued job still runs.
     void setWorkerLimit(int n) {
@@ -1458,8 +1526,12 @@ public:
         }
         handle = app_open(title, width, height, html, bridgeJs, d);
         window.handle = handle;
-        if (handle != 0 && window.confirm) {
-            app_window_guard(handle, 1);
+        if (handle != 0) {
+            app_limits(handle, maxRequestBytes, maxQueuedCalls);
+            app_navigation_allow(handle, navigation);
+            if (window.confirm) {
+                app_window_guard(handle, 1);
+            }
         }
         return handle != 0;
     }

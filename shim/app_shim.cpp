@@ -8,7 +8,6 @@
 #include <atomic>
 #include <cstdio>
 #include <exception>
-#include <typeinfo>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -27,6 +26,8 @@ struct App {
     webview::webview* w = nullptr;     // valid only while the loop runs, and only touched under `m`
     std::thread ui;
     std::atomic<bool> guard{false};    // closing the window asks CeeLing instead of closing
+    std::atomic<int> maxRequest{16 << 20}, maxQueued{1000};
+    std::shared_ptr<NavRules> nav = std::make_shared<NavRules>();   // (nav->handle is set by app_open)
     void* oldProc = nullptr;
 };
 
@@ -74,14 +75,19 @@ int app_open(std::string title, int width, int height, std::string html, std::st
         handle = static_cast<int>(g_table.size());
     }
     App* raw = app.get();
+    app->nav->handle = handle;
     app->ui = std::thread([raw, title, width, height, html, init_js, debug] {
         try {
             webview::webview w(debug != 0, nullptr);
             w.set_title(title);
             w.set_size(width, height, WEBVIEW_HINT_NONE);
-            w.bind("__cling_invoke", [raw](const std::string& id, const std::string& req, void*) {
-                if (!id.empty()) raw->calls.push(id, req, 1 << 30);   // an empty id marks the shim's own records: never from a page
+            w.bind("__cling_invoke", [raw, &w](const std::string& id, const std::string& req, void*) {
+                const int refused = raw->calls.admit(id, req, raw->maxRequest, raw->maxQueued);
+                if (refused == 1 || refused == 2) w.resolve(id, 1, refusalJson(refused));
             }, nullptr);
+#ifdef _WIN32
+            app_nav_install(w.browser_controller().value(), raw->nav, debug);
+#endif
             if (!init_js.empty()) w.init(init_js);
             w.set_html(html);
 #ifdef _WIN32
@@ -172,6 +178,18 @@ int app_window_guard(int handle, int on) {
 #else
     return -1;
 #endif
+}
+
+int app_limits(int handle, int max_request, int max_queued) {
+    auto app = lookup(handle);
+    if (app) { app->maxRequest = max_request; app->maxQueued = max_queued; }
+    return app ? 1 : 0;
+}
+
+int app_navigation_allow(int handle, std::vector<std::string> prefixes) {
+    auto app = lookup(handle);
+    if (app) { std::lock_guard<std::mutex> lock(app->nav->m); app->nav->prefixes = std::move(prefixes); }
+    return app ? 1 : 0;
 }
 
 int app_ui_call(int handle, const std::function<void(void*)>& fn) {

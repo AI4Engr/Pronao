@@ -25,6 +25,16 @@
     r.window = sized && maximized && restored;
     r.guard = (await declined) === null;
     await cling.window.setDirty({ dirty: false });
+    // the window refuses to go anywhere else: a frame, a script navigation and a popup, all to an address that cannot exist
+    const blocked = [];
+    cling.window.onNavigationBlocked(function (e) { blocked.push(e.url); });
+    const frame = document.createElement('iframe');
+    frame.src = 'https://example.invalid/frame';
+    document.body.appendChild(frame);
+    window.open('https://example.invalid/popup');
+    setTimeout(function () { location.href = 'https://example.invalid/top'; }, 0);
+    await until(function () { return blocked.length >= 2; });
+    r.nav = [blocked.some(function (u) { return u.indexOf('/frame') > 0; }), blocked.some(function (u) { return u.indexOf('/top') > 0; }), (await cling.invoke('ping')) === 'pong'];
     // real native dialogs; tests/close_dialogs.ps1 closes them like a user clicking the X
     r.msg = await cling.invoke('dialog.message', { title: 'app-cling selftest message', message: 'closing by itself', kind: 'info', buttons: 'ok' });
     r.open = await cling.invoke('dialog.open', { title: 'app-cling selftest open', filters: [{ name: 'Text', extensions: ['txt'] }] });

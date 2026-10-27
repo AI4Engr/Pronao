@@ -26,7 +26,7 @@ CeeLing main thread:  app_next_call()  <-- blocks on the queue
                       app_return(id, status, json) --> resolves / rejects the page's promise
 ```
 
-The native layer (`shim/`, trusted C++, under 1000 lines for Windows) holds no application logic: it opens the window,
+The native layer (`shim/`, trusted C++; 908 lines of code for a Windows build, 1079 counting comments and blank lines, `scripts/shim_lines.sh`) holds no application logic: it opens the window,
 queues calls, opens files, runs programs, shows dialogs and waits for file changes, as small primitives that take and return
 ints and strings. **Every decision is in `src/`**, which CeeLing checks: which files a page may reach, which programs it may
 start, what a dialog may say, what a folder watch reports. CeeLing runs the loop, so no callback ever has to cross into
@@ -109,6 +109,27 @@ one raw record per change in the same queue the page's calls arrive in, with an 
 the shim drops an empty-id call from the page). The CeeLing main loop (`App.run`, or `serveOne` if you write your own) merges
 them, checks the permission, and turns them into `fs.change` events; the JSON is built with the JSON library. If the main
 loop falls behind, records beyond 2000 queued are dropped and an `overflow` follows.
+
+## What a page may send, and where the window may go
+
+```
+app.setRequestLimits(4 * 1024 * 1024, 256);      // bytes per call, calls waiting; these are the defaults
+app.allowNavigation("http://localhost:5173/");   // optional, e.g. a dev server; before open
+```
+- **Size and flood limits.** A call larger than the limit, or arriving while that many are already waiting, is answered at once
+  with `{code: "too_large"}` / `{code: "busy"}` and never reaches a command, so a page cannot make the application buffer
+  without bound. A call whose id is empty or longer than 64 bytes is dropped (an empty id marks the shim's own records; a page
+  could try to forge one by calling the browser's message channel directly).
+- **Navigation.** The bridge is injected into every document the window shows, so a window that could be sent to another site
+  would hand the application's commands to a stranger's page. After the application's own page, the window loads nothing except
+  an address that starts with an allowed prefix; links, redirects, scripts and **frames** pointing elsewhere are cancelled, no
+  new window can open, and the right-click menu is off in a release build (`debug` false). Each refusal reaches the page as the
+  event `window.navigationBlocked {url}` (`cling.window.onNavigationBlocked`). The real-window self-test tries a frame, a script
+  navigation and a popup, and fails if the guard is removed. Windows only.
+- **The environment of a program** is withheld: a program gets only `PATH`, `SystemRoot`, `SYSTEMDRIVE`, `windir`, `TEMP`, `TMP`,
+  `TMPDIR`, `LANG`, `LC_ALL`, `HOME` and `USERPROFILE` (those that are set), plus whatever `app.passEnvironment("NAME")` adds.
+  A token in the application's own environment is not handed to `git`. A program linked dynamically needs `PATH` to find its
+  libraries, which is why it is in the default list.
 
 ## The window
 
@@ -216,7 +237,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 176 end-to-end checks + 128 file policy + 18 program lookup + 24 process + 26 watcher, no window
+bash tests/run_headless.sh            # 192 end-to-end checks + 128 file policy + 18 program lookup + 28 process + 26 watcher, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # removes one check at a time from src/ and shows the tests fail

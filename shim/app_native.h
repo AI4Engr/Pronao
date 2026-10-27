@@ -24,6 +24,11 @@ int app_window_title(int handle, std::string title);
 int app_window_size(int handle, int width, int height);
 int app_window_state(int handle, int state);
 int app_window_guard(int handle, int on);
+// Limits on what a page may send: a call over `max_request` bytes or arriving while `max_queued` wait is answered at once with
+// {code: too_large} / {code: busy} and never reaches CeeLing. Defaults 16 MiB and 1000.
+int app_limits(int handle, int max_request, int max_queued);
+// After the application's own page, only addresses starting with one of these may load (and never a new window). Default: none.
+int app_navigation_allow(int handle, std::vector<std::string> prefixes);
 
 // ---- files: open first, then ask where the open handle really points (`fin`, as the OS spells it), then act on it -----------
 // mode: 0 read a file | 1 a folder, to list | 2 attributes only, following a link | 3 attributes only, NOT following a final link
@@ -44,10 +49,10 @@ int app_fs_delete(int h);                                                 // a f
 double app_now_ms();                                                      // milliseconds since the process started (monotonic)
 int app_os_env(std::string name, std::string& out);                       // 1 and the value, or 0 if unset
 int app_os_path_kind(std::string path);                                   // 0 nothing, 1 file (+4 executable), 2 folder
-// `exe` and `cwd` absolute, `args` already vetted. 0 ran, 2 no such program or folder, 4 could not start, 5 cannot be passed.
+// `exe` and `cwd` absolute, `args` already vetted, `env` the child's WHOLE environment as NAME=value (nothing is inherited). 0 ran, 2 no such program or folder, 4 could not start, 5 cannot be passed.
 // flags: 1 timed out (everything it started is killed), 2 stdout / 4 stderr cut at max_bytes (still drained).
-int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd, int timeout_ms, int max_bytes,
-                 std::string& out, std::string& err, int& exit_code, int& flags);
+int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env, int timeout_ms,
+                 int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags);
 
 // ---- dialogs: shown on the window's UI thread, the calling thread waits, so call from a worker --------------------------------
 // mode 0 open a file, 1 save as, 2 pick a folder. `filters` = label, pattern, label, pattern ... ("*.txt;*.md"). 1 chose (path set),

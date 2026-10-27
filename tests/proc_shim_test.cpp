@@ -28,10 +28,21 @@ struct Result {
     long long ms = 0;
 };
 
-static Result run(const std::string& exe, const std::vector<std::string>& args, const std::string& cwd, int timeoutMs = 10000, int maxBytes = 1 << 20) {
+// the environment a test child gets: exactly these (CeeLing decides which; here just enough for the helper to start)
+static std::vector<std::string> baseEnv() {
+    std::vector<std::string> env;
+    for (const char* name : {"PATH", "SystemRoot", "SYSTEMDRIVE", "TEMP", "TMP", "LD_LIBRARY_PATH"}) {
+        std::string value;
+        if (app_os_env(name, value) == 1) env.push_back(std::string(name) + "=" + value);
+    }
+    return env;
+}
+
+static Result run(const std::string& exe, const std::vector<std::string>& args, const std::string& cwd, int timeoutMs = 10000, int maxBytes = 1 << 20,
+                  std::vector<std::string> env = baseEnv()) {
     Result r;
     auto t0 = std::chrono::steady_clock::now();
-    r.status = app_proc_run(exe, args, cwd, timeoutMs, maxBytes, r.out, r.err, r.code, r.flags);
+    r.status = app_proc_run(exe, args, cwd, env, timeoutMs, maxBytes, r.out, r.err, r.code, r.flags);
     r.ms = millis(t0);
     return r;
 }
@@ -88,8 +99,17 @@ int main() {
         check("the working folder is the one given", r.status == 0 && r.out.find(leaf) != std::string::npos);
     }
     {
-        Result r = run(exe, {"--env", "PATH"}, cwd);
-        check("the environment is inherited", r.status == 0 && r.out.size() > 3 && r.out.find("(unset)") == std::string::npos);
+        app_test_setenv("APP_CLING_SECRET", "hunter2");
+        Result secret = run(exe, {"--env", "APP_CLING_SECRET"}, cwd);
+        check("a variable of the parent is NOT inherited", secret.status == 0 && secret.out.find("hunter2") == std::string::npos && secret.out.find("(unset)") != std::string::npos);
+        Result path = run(exe, {"--env", "PATH"}, cwd);
+        check("a variable that was passed arrives", path.status == 0 && path.out.size() > 3 && path.out.find("(unset)") == std::string::npos);
+        std::vector<std::string> withOne = baseEnv();
+        withOne.push_back("ONLY_THIS=value with = and spaces");
+        Result given = run(exe, {"--env", "ONLY_THIS"}, cwd, 10000, 1 << 20, withOne);
+        check("an explicit variable arrives exactly", given.status == 0 && given.out.find("value with = and spaces") != std::string::npos);
+        Result none = run(exe, {"--env", "ONLY_THIS"}, cwd);
+        check("and is absent when not given", none.status == 0 && none.out.find("(unset)") != std::string::npos);
     }
 
     // ---- limits ----
@@ -122,15 +142,17 @@ int main() {
     {
         Result r;
         std::vector<std::string> withNul = {std::string("a\0b", 3)};
-        r.status = app_proc_run(exe, withNul, cwd, 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(exe, withNul, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("an argument with a NUL", r.status == 5);
-        r.status = app_proc_run(exe, {}, "relative/dir", 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(exe, {}, cwd, {"NO_EQUALS_SIGN"}, 1000, 1000, r.out, r.err, r.code, r.flags);
+        check("an environment entry without =", r.status == 5);
+        r.status = app_proc_run(exe, {}, "relative/dir", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a relative working folder", r.status == 5);
-        r.status = app_proc_run(exe, {}, cwd + "/no-such-folder", 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(exe, {}, cwd + "/no-such-folder", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a missing working folder", r.status == 2);
-        r.status = app_proc_run(cwd + "/missing-program.exe", {}, cwd, 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(cwd + "/missing-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a missing program", r.status == 2);
-        r.status = app_proc_run("relative-program.exe", {}, cwd, 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run("relative-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a relative program", r.status == 5);
     }
 

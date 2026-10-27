@@ -63,7 +63,7 @@ int main() {
         return createNull();
     });
     app.command("selftest", closure Command [verdict, handle] (Item args) {
-        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"file\":{\"text\":\"hi é\"},\"escape\":\"forbidden\",\"missing\":\"not_found\",\"window\":true,\"guard\":true,\"msg\":{\"button\":\"ok\"},\"open\":null,\"watch\":[true,true],\"proc\":[0,true,false],\"noShell\":\"unknown_program\",\"event\":{\"x\":[1,\"two\"]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
+        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"file\":{\"text\":\"hi é\"},\"escape\":\"forbidden\",\"missing\":\"not_found\",\"window\":true,\"guard\":true,\"nav\":[true,true,true],\"msg\":{\"button\":\"ok\"},\"open\":null,\"watch\":[true,true],\"proc\":[0,true,false],\"noShell\":\"unknown_program\",\"event\":{\"x\":[1,\"two\"]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
         string got = printUnformatted(args);
         verdict.set(got == expected);
         if (got != expected) {

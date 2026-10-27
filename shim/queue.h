@@ -8,6 +8,12 @@
 #include <string>
 #include <utility>
 
+// What the page's promise is rejected with when `admit` refuses (constant texts: nothing from the request is echoed)
+inline const char* refusalJson(int code) {
+    return code == 1 ? "{\"code\":\"too_large\",\"message\":\"the request is larger than the application allows\"}"
+                     : "{\"code\":\"busy\",\"message\":\"the application has too many requests waiting\"}";
+}
+
 class CallQueue {
     std::mutex m_;
     std::condition_variable cv_;
@@ -23,6 +29,13 @@ public:
         }
         cv_.notify_all();
         return 1;
+    }
+    // What the page's call gets: 0 queued, 1 refused as too large, 2 refused because the queue is full, 3 refused (a bad id; an
+    // empty id marks the shim's own records, which a page must never be able to forge)
+    int admit(const std::string& id, const std::string& request, int max_request, int max_queued) {
+        if (id.empty() || id.size() > 64) return 3;
+        if (static_cast<int>(request.size()) > max_request) return 1;
+        return push(id, request, max_queued) == 1 ? 0 : 2;
     }
     // 1 got one, 0 closed and drained, 2 timed out (timeout_ms < 0 waits forever)
     int pop(int timeout_ms, std::string& id, std::string& request) {

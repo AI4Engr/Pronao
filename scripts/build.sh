@@ -53,20 +53,23 @@ for f in cjson_item cjson_api cjson_parse cjson_print $MODULES "$MAIN_NAME"; do
 done
 
 # the native layer: shared files, the OS's files, and either the window or the test doubles
-NATIVE=("$HERE/shim/watch.cpp" "$HERE/shim/os.cpp" "$HERE/shim/$PLAT/fs.cpp" "$HERE/shim/$PLAT/proc.cpp" "$HERE/shim/$PLAT/watch.cpp")
+SHIM="${SHIM:-$HERE/shim}"      # (tests/negative_controls.sh builds against a doctored copy)
+NATIVE=("$SHIM/watch.cpp" "$SHIM/os.cpp" "$SHIM/$PLAT/fs.cpp" "$SHIM/$PLAT/proc.cpp" "$SHIM/$PLAT/watch.cpp")
 if [ "$MODE" = "--headless" ]; then
-    NATIVE+=("$HERE/tests/doubles/headless_shim.cpp" "$HERE/tests/doubles/test_support.cpp")
+    DOUBLES="${DOUBLES:-$HERE/tests/doubles}"
+    NATIVE+=("$DOUBLES/headless_shim.cpp" "$DOUBLES/test_support.cpp")
     LINK="-pthread"
 else
     INC="-I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
-    "$CXX" --std=c++14 -O1 -Wno-unknown-pragmas $INC -c "$HERE/shim/app_shim.cpp" -o "$WORK/app_shim.o"
+    "$CXX" --std=c++14 -O1 -Wno-unknown-pragmas $INC -c "$SHIM/app_shim.cpp" -o "$WORK/app_shim.o"
     OBJS+=("$WORK/app_shim.o")
-    NATIVE+=("$HERE/shim/$PLAT/dialog.cpp")
+    NATIVE+=("$SHIM/$PLAT/dialog.cpp")
+    [ -f "$SHIM/$PLAT/nav.cpp" ] && NATIVE+=("$SHIM/$PLAT/nav.cpp")
     LINK="-static -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
 fi
 for n in "${NATIVE[@]}"; do
     o="$WORK/native_$(basename "$(dirname "$n")")_$(basename "$n" .cpp).o"
-    "$CXX" $CXXFLAGS -c "$n" -o "$o"
+    "$CXX" $CXXFLAGS ${INC:-} -c "$n" -o "$o"
     OBJS+=("$o")
 done
 "$CXX" -c "$EMBED" -o "$WORK/embedded.o"

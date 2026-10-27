@@ -29,13 +29,14 @@ int app_os_path_kind(std::string path) {
     return S_ISDIR(sb.st_mode) ? 2 : S_ISREG(sb.st_mode) ? (access(path.c_str(), X_OK) == 0 ? 5 : 1) : 0;
 }
 
-// Runs `exe` (an absolute path) in `cwd` (an absolute folder): no stdin, in its own process group so that everything it
+// Runs `exe` in `cwd` (both absolute) with exactly the environment `env`: no stdin, in its own process group so that everything it
 // starts dies with it. flags: 1 timed out, 2 stdout cut at max_bytes, 4 stderr cut.
-int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd, int timeout_ms, int max_bytes,
-                 std::string& out, std::string& err, int& exit_code, int& flags) {
+int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env, int timeout_ms,
+                 int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
     out.clear(); err.clear(); exit_code = -1; flags = 0;
     if (exe.empty() || exe[0] != '/' || cwd.empty() || cwd[0] != '/' || exe.find('\0') != std::string::npos || cwd.find('\0') != std::string::npos) return 5;
     for (const auto& a : args) if (a.find('\0') != std::string::npos) return 5;
+    for (const auto& e : env) if (e.find('\0') != std::string::npos || e.find('=') == std::string::npos) return 5;
     struct stat sb;
     if (stat(exe.c_str(), &sb) != 0 || !S_ISREG(sb.st_mode) || stat(cwd.c_str(), &sb) != 0 || !S_ISDIR(sb.st_mode)) return 2;
     timeout_ms = std::max(1, std::min(timeout_ms, 600000));
@@ -43,6 +44,9 @@ int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd
     std::vector<char*> argv{const_cast<char*>(exe.c_str())};
     for (auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
     argv.push_back(nullptr);
+    std::vector<char*> envp;
+    for (auto& e : env) envp.push_back(const_cast<char*>(e.c_str()));
+    envp.push_back(nullptr);
 
     int outPipe[2], errPipe[2], failPipe[2];
     if (pipe2(outPipe, O_CLOEXEC) != 0 || pipe2(errPipe, O_CLOEXEC) != 0 || pipe2(failPipe, O_CLOEXEC) != 0) return 4;
@@ -53,7 +57,7 @@ int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd
         setpgid(0, 0);
         dup2(devnull, 0); dup2(outPipe[1], 1); dup2(errPipe[1], 2);
         if (chdir(cwd.c_str()) != 0) { int e = errno; if (write(failPipe[1], &e, sizeof e) < 0) {} _exit(127); }
-        execv(exe.c_str(), argv.data());
+        execve(exe.c_str(), argv.data(), envp.data());
         int e = errno;
         if (write(failPipe[1], &e, sizeof e) < 0) {}
         _exit(127);

@@ -49,7 +49,9 @@
     maximize: call('window.maximize'), restore: call('window.restore'), focus: call('window.focus'),
     close: call('window.close'), setDirty: call('window.setDirty'),
     // fires when the user tried to close the window with unsaved work and chose to stay (see app.confirmClose)
-    onCloseDeclined: function (fn) { return window.cling.on('window.closeDeclined', fn); }
+    onCloseDeclined: function (fn) { return window.cling.on('window.closeDeclined', fn); },
+    // fires with {url} when the window refused to load an address (a link, a redirect, a frame or window.open pointing elsewhere)
+    onNavigationBlocked: function (fn) { return window.cling.on('window.navigationBlocked', fn); }
   };
   // Called by the shim (app_eval) with ONE argument: the JSON array [name, payload] that CeeLing's JSON printer built.
   // The page never needs to call this itself.
