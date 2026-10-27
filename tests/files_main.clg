@@ -373,6 +373,30 @@ int main() {
     check("a truncated sequence is repaired", isUtf8(cleanUtf8(tail)));
     check("an overlong encoding is repaired", isUtf8(cleanUtf8(bad)) && isUtf8(cleanUtf8("À")));
 
+    // ---- base64 (RFC 4648 vectors) ----
+    check("base64: empty", base64Encode("") == "" && base64Decode("") == "");
+    check("base64: f", base64Encode("f") == "Zg==" && base64Decode("Zg==") == "f");
+    check("base64: fo", base64Encode("fo") == "Zm8=" && base64Decode("Zm8=") == "fo");
+    check("base64: foo", base64Encode("foo") == "Zm9v" && base64Decode("Zm9v") == "foo");
+    check("base64: foob", base64Encode("foob") == "Zm9vYg==" && base64Decode("Zm9vYg==") == "foob");
+    check("base64: fooba", base64Encode("fooba") == "Zm9vYmE=" && base64Decode("Zm9vYmE=") == "fooba");
+    check("base64: foobar", base64Encode("foobar") == "Zm9vYmFy" && base64Decode("Zm9vYmFy") == "foobar");
+    string allBytes = "";
+    int byteValue = 0;
+    while (byteValue < 256) {
+        allBytes.push_back(char(byteValue));
+        byteValue = byteValue + 1;
+    }
+    string encodedAll = base64Encode(allBytes);
+    int encodedLength = encodedAll.length();
+    check("base64: every byte value survives", base64Decode(encodedAll) == allBytes && encodedLength == 344);
+    check("base64: bad padding is refused", !isBase64("Zg=") && !isBase64("Z===") && !isBase64("Zg==Zg==") && !isBase64("=Zg="));
+    check("base64: bad characters are refused", !isBase64("Z!==") && !isBase64(" Zg==") && !isBase64("Zg==\n") && base64Decode("Z!==") == "");
+    std::vector<string> someLines = splitLines("a\r\nb\n\nc");
+    int lineCount = someLines.size();
+    check("text: trim, lines and search", trimText("  a b \r\n") == "a b" && lineCount == 4 && containsText("hello", "ell") && !containsText("hello", "elx") &&
+          endsWithText("a.pdf", ".pdf") && indexOfText("abcabc", "c", 3) == 5);
+
     app_test_remove_tree(base);
     return 0;
 }

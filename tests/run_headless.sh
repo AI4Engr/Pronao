@@ -6,8 +6,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXPECTED_HEADLESS=192
-EXPECTED_FILES=128
+EXPECTED_FILES=139
 EXPECTED_PROGRAMS=18
+EXPECTED_TAURIPORT=50
 W="${TMPDIR:-/tmp}/app-cling-headless"
 rm -rf "$W"; mkdir -p "$W/work"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
@@ -28,6 +29,12 @@ runProgram() { # name expected
 runProgram headless_main "$EXPECTED_HEADLESS"
 runProgram files_main "$EXPECTED_FILES"
 runProgram programs_main "$EXPECTED_PROGRAMS"
+# the tauriport port against the real `lore` tool (only where it is installed)
+if command -v lore > /dev/null 2>&1 || [ -n "${LORE_CLI_PATH:-}" ]; then
+    EXTRA="$HERE/tests/support.clg $HERE/examples/tauriport/tauriport.clg" runProgram tauriport_main "$EXPECTED_TAURIPORT"
+else
+    echo "tauriport_main: SKIPPED (lore is not installed)"
+fi
 
 # the native process runner and folder watcher on their own, against the real helper program and real file changes
 NATIVE="$HERE/shim/watch.cpp $HERE/shim/os.cpp $HERE/shim/$PLAT/fs.cpp $HERE/shim/$PLAT/proc.cpp $HERE/shim/$PLAT/watch.cpp $HERE/tests/doubles/headless_shim.cpp $HERE/tests/doubles/test_support.cpp"

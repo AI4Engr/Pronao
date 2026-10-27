@@ -219,3 +219,177 @@ string packRecord(string first, string second) {
     record.push_back(char(0));
     return record;
 }
+
+bool endsWithText(string text, string suffix) {
+    return text.length() >= suffix.length() && text.substr(text.length() - suffix.length(), suffix.length()) == suffix;
+}
+
+// the index of `needle` in `text` at or after `from`, or -1
+int indexOfText(string text, string needle, int from) {
+    int i = from;
+    while (i + needle.length() <= text.length()) {
+        if (text.substr(i, needle.length()) == needle) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+bool containsText(string text, string needle) {
+    return indexOfText(text, needle, 0) >= 0;
+}
+
+// spaces, tabs, CR and LF removed from both ends
+string trimText(string s) {
+    int a = 0;
+    int b = s.length();
+    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n')) {
+        a = a + 1;
+    }
+    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r' || s[b - 1] == '\n')) {
+        b = b - 1;
+    }
+    return s.substr(a, b - a);
+}
+
+// The lines of `text` (LF or CRLF); no empty last element for a final newline.
+std::vector<string> splitLines(string text) {
+    std::vector<string> lines;
+    string current = "";
+    int i = 0;
+    while (i < text.length()) {
+        char c = text[i];
+        if (c == '\n') {
+            lines.push_back(current);
+            current = "";
+        } else if (c != '\r') {
+            current.push_back(c);
+        }
+        i = i + 1;
+    }
+    if (current.length() > 0) {
+        lines.push_back(current);
+    }
+    return lines;
+}
+
+// ---- base64 (standard alphabet, padded): file contents travel through JSON as text ----------------------------------------
+
+string base64Alphabet() {
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+}
+
+string base64Encode(string bytes) {
+    string alphabet = base64Alphabet();
+    string out = "";
+    int i = 0;
+    int n = bytes.length();
+    while (i < n) {
+        int b0 = charCode(bytes, i);
+        int b1 = 0;
+        int b2 = 0;
+        if (i + 1 < n) {
+            b1 = charCode(bytes, i + 1);
+        }
+        if (i + 2 < n) {
+            b2 = charCode(bytes, i + 2);
+        }
+        out.push_back(alphabet[b0 >> 2]);
+        out.push_back(alphabet[((b0 & 3) << 4) | (b1 >> 4)]);
+        if (i + 1 < n) {
+            out.push_back(alphabet[((b1 & 15) << 2) | (b2 >> 6)]);
+        } else {
+            out.push_back('=');
+        }
+        if (i + 2 < n) {
+            out.push_back(alphabet[b2 & 63]);
+        } else {
+            out.push_back('=');
+        }
+        i = i + 3;
+    }
+    return out;
+}
+
+// the value of a base64 character, or -1
+int base64Value(int c) {
+    if (c >= 65 && c <= 90) {
+        return c - 65;
+    }
+    if (c >= 97 && c <= 122) {
+        return c - 71;
+    }
+    if (c >= 48 && c <= 57) {
+        return c + 4;
+    }
+    if (c == 43) {
+        return 62;
+    }
+    if (c == 47) {
+        return 63;
+    }
+    return -1;
+}
+
+// true if `text` is well-formed padded base64 (no whitespace, length a multiple of 4)
+bool isBase64(string text) {
+    int n = text.length();
+    if (n % 4 != 0) {
+        return false;
+    }
+    int pad = 0;
+    if (n > 0 && charCode(text, n - 1) == 61) {
+        pad = 1;
+        if (charCode(text, n - 2) == 61) {
+            pad = 2;
+        }
+    }
+    int i = 0;
+    while (i < n - pad) {
+        if (base64Value(charCode(text, i)) < 0) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The bytes `text` stands for ("" if it is not base64; check isBase64 first when the difference matters).
+string base64Decode(string text) {
+    string out = "";
+    if (!isBase64(text)) {
+        return out;
+    }
+    int i = 0;
+    int n = text.length();
+    while (i < n) {
+        int v0 = base64Value(charCode(text, i));
+        int v1 = base64Value(charCode(text, i + 1));
+        int c2 = charCode(text, i + 2);
+        int c3 = charCode(text, i + 3);
+        int v2 = 0;
+        int v3 = 0;
+        if (c2 != 61) {
+            v2 = base64Value(c2);
+        }
+        if (c3 != 61) {
+            v3 = base64Value(c3);
+        }
+        out.push_back(char(((v0 << 2) | (v1 >> 4)) & 255));
+        if (c2 != 61) {
+            out.push_back(char(((v1 << 4) | (v2 >> 2)) & 255));
+        }
+        if (c3 != 61) {
+            out.push_back(char(((v2 << 6) | v3) & 255));
+        }
+        i = i + 4;
+    }
+    return out;
+}
+
+// nothing but spaces, tabs and line ends
+bool isBlank(string s) {
+    string trimmed = trimText(s);
+    return trimmed.length() == 0;
+}

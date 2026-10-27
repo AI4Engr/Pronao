@@ -11,9 +11,10 @@ rm -rf "$W"; mkdir -p "$W"
 export APP_PROC_ECHO="$W/proc_helper.exe"
 bad=0
 control() { # name  file (relative to src/, or shim/...)  old  new  program  must-fail-substring
-    local dir="$W/$1"
+    local dir="$W/${1// /_}"
     mkdir -p "$dir/src" "$dir/work" "$dir/shim"
     cp "$HERE"/src/* "$dir/src/"
+    cp "$HERE/examples/tauriport/tauriport.clg" "$dir/src/"      # (only compiled by the tauriport controls)
     cp -r "$HERE"/shim/. "$dir/shim/"
     mkdir -p "$dir/tests/doubles" && cp "$HERE"/tests/doubles/* "$dir/tests/doubles/"     # (the doubles include ../../shim/queue.h)
     local target="$dir/src/$2"
@@ -25,7 +26,9 @@ s = open(p, encoding='utf-8', newline='').read()
 assert s.count(old) == 1, (old, s.count(old))
 open(p, 'w', encoding='utf-8', newline='').write(s.replace(old, new))
 PYEOF
-    SRC="$dir/src" SHIM="$dir/shim" DOUBLES="$dir/tests/doubles" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
+    local extra=""
+    [ "$5" = "tauriport_main" ] && extra="$HERE/tests/support.clg $dir/src/tauriport.clg"
+    EXTRA="$extra" SRC="$dir/src" SHIM="$dir/shim" DOUBLES="$dir/tests/doubles" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
     "$dir/t.exe" > "$dir/out.txt" 2>&1
     local failed; failed=$(grep -c '^FAIL ' "$dir/out.txt")
     if [ "$failed" -gt 0 ] && grep -q "^FAIL .*$6" "$dir/out.txt"; then echo "ok: without '$1' $failed checks fail (including \"$6\")"; else echo "NEGATIVE CONTROL DID NOT FAIL: $1 ($failed failures)"; bad=1; fi
@@ -42,5 +45,9 @@ control "request size limit" shim/queue.h '        if (static_cast<int>(request.
 control "queue length limit" shim/queue.h '        return push(id, request, max_queued) == 1 ? 0 : 2;' '        return push(id, request, 1 << 30) == 1 ? 0 : 2;' headless_main "with 3 waiting"
 control "ids a page cannot have" shim/queue.h '        if (id.empty() || id.size() > 64) return 3;' '' headless_main "an id the page could not have been given"
 control "environment is withheld" app.clg 'splitOn("PATH,SystemRoot,' 'splitOn("APP_CLING_SECRET,PATH,SystemRoot,' headless_main "a variable of this process is not passed"
+if command -v lore > /dev/null 2>&1 || [ -n "${LORE_CLI_PATH:-}" ]; then
+    control "recursive remove checks the folder first" files.clg '            if (isRootItself(here.text)) {' '            if (false) {' tauriport_main "the opened folder itself is never removed"
+    control "paths that could be options are refused" tauriport.clg '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000) || path[0] == '"'"'-'"'"'' '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000)' tauriport_main "a path that could be read as an option is refused"
+fi
 [ "$bad" -eq 0 ] && echo "negative controls: ALL OK" || echo "negative controls: FAILED"
 exit $bad

@@ -17,6 +17,9 @@ WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
 MODULES="text core files app"
+# EXTRA: more modules (paths to .clg files, space separated) that sit between the library and the main program
+EXTRA_NAMES=""
+for x in ${EXTRA:-}; do EXTRA_NAMES="$EXTRA_NAMES $(basename "$x" .clg)"; done
 # generated code includes "../shim/cjson_num.h": give the work directory a sibling shim/ with it
 SHIMDIR="$(cd "$WORK/.." && pwd)/shim"
 mkdir -p "$SHIMDIR"
@@ -26,6 +29,7 @@ sync() { cp "$1" "$2"; }
 for f in cjson_item cjson_api cjson_parse cjson_print; do sync "$CJSON/src/$f.clg" "$WORK/$f.clg"; done
 SRC="${SRC:-$HERE/src}"      # (tests/negative_controls.sh builds from a doctored copy)
 for f in $MODULES; do sync "$SRC/$f.clg" "$WORK/$f.clg"; done
+for x in ${EXTRA:-}; do sync "$x" "$WORK/$(basename "$x")"; done
 MAIN_NAME="$(basename "$MAIN" .clg)"
 sync "$MAIN" "$WORK/$MAIN_NAME.clg"
 
@@ -43,7 +47,7 @@ EMBED="$WORK/embedded.cpp"
 
 CXXFLAGS="--std=c++17 -O1 -Wno-unknown-pragmas"
 OBJS=()
-for f in cjson_item cjson_api cjson_parse cjson_print $MODULES "$MAIN_NAME"; do
+for f in cjson_item cjson_api cjson_parse cjson_print $MODULES $EXTRA_NAMES "$MAIN_NAME"; do
     OBJS+=("$WORK/$f.o")
     "$CLING" $CLING_FLAGS --cpp "$WORK/$f.cpp" "$WORK/$f.clg" > "$WORK/$f.log" 2>&1 || { grep -v Detected "$WORK/$f.log"; exit 1; }
     if [ "$f" != "$MAIN_NAME" ]; then

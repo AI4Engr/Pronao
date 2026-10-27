@@ -32,17 +32,6 @@ void check(string name, bool ok) {
     }
 }
 
-bool containsText(string text, string needle) {
-    int i = 0;
-    while (i + needle.length() <= text.length()) {
-        if (text.substr(i, needle.length()) == needle) {
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
 string repeated(string unit, int times) {
     string out = "";
     int i = 0;

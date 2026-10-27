@@ -1,0 +1,75 @@
+// Helpers for the CeeLing test programs that drive an App through the same queue a page uses (against the headless window double).
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_test_take_eval(int handle, ref string js);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+Item pathArgs(string p) {
+    Item o = createObject();
+    addStringToObject(o, "path", p);
+    return o;
+}
+
+Item rootArgs(string root) {
+    Item o = createObject();
+    addStringToObject(o, "root", root);
+    return o;
+}
+
+string requestText(string command, Item args) {
+    Item arr = createArray();
+    addItemToArray(arr, createString(command));
+    addItemToArray(arr, args);
+    return printUnformatted(arr);
+}
+
+// Sends one request through the whole pipeline and returns "<status> <json>". The loop keeps serving until the answer is there.
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 3000) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    if (gotId != id) {
+        return "WRONG ID " + gotId;
+    }
+    return intToString(status) + " " + json;
+}
+
+// the JSON part of a roundTrip answer
+string bodyOf(string reply) {
+    return reply.substr(2, reply.length() - 2);
+}
+
+bool ok(string reply) {
+    return startsWithText(reply, "0 ");
+}
+
+bool failedWith(string reply, string code) {
+    return startsWithText(reply, "1 {\"code\":\"" + code + "\"");
+}

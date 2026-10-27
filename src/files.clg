@@ -797,6 +797,44 @@ public:
         return 0;
     }
 
+    // A folder and everything in it, links removed as links (never followed), at most 64 levels deep. The folder itself must not be an
+    // allowed folder. Returns the first failure.
+    int removeTree(string path, int depth) {
+        if (depth > 64) {
+            return 4;
+        }
+        if (depth == 0) {
+            // refuse BEFORE deleting anything below: removing the contents and then failing on the folder itself would be the worst of both
+            FsResult here = resolve(path, 2);
+            if (here.status != 0) {
+                return here.status;
+            }
+            if (isRootItself(here.text)) {
+                return 1;
+            }
+        }
+        FsResult entries = list(path);
+        if (entries.status != 0) {
+            return entries.status;
+        }
+        std::vector<string> f = splitFields(entries.text);
+        int i = 0;
+        while (i + 3 < f.size()) {
+            string child = join(path, f[i + 3]);
+            int st = 0;
+            if (f[i] == "d") {
+                st = removeTree(child, depth + 1);
+            } else {
+                st = remove(child);
+            }
+            if (st != 0) {
+                return st;
+            }
+            i = i + 4;
+        }
+        return remove(path);
+    }
+
     // Removes a file, a link (the link, never its target), or an EMPTY folder. Never an allowed folder itself.
     int remove(string path) {
         FsResult n = normalize(path, true, true);

@@ -749,6 +749,158 @@ FsResult resolveProgram(string name) {
     return new FsResult(2, "");
 }
 
+// "replace" (default), "append" or "create" as the numbers FileGate.write takes
+int writeMode(Item args) {
+    string mode = optionalString(args, "mode", "replace");
+    if (mode == "append") {
+        return 1;
+    }
+    if (mode == "create") {
+        return 2;
+    }
+    if (mode != "replace") {
+        throw "invalid_argument: `mode` must be \"replace\", \"append\" or \"create\"";
+    }
+    return 0;
+}
+
+// the folders above `path` that do not exist yet (inside an allowed place, like everything else)
+void makeParents(FileGate files, string path) {
+    FsResult n = files.normalize(path, true, true);
+    fsCheck(n.status, "cannot write " + path);
+    int st = files.mkdir(files.parentOf(n.text), true);
+    if (st != 6) {
+        fsCheck(st, "cannot create the folder for " + path);
+    }
+}
+
+// ---- programs the application runs itself -------------------------------------------------------------------------------
+// A command that is the application's own (not a page's choice from the allowProgram table) runs a program like this: the main thread
+// builds a ToolRun from values it has vetted, a worker calls runTool, and the worker answers the page (or sends the main loop a
+// `Later` record when the answer needs the main thread, which alone may touch the file policy). Both structs hold plain values only,
+// so they can be copied into a worker.
+struct ToolRun {
+public:
+    string exe;
+    std::vector<string> args;
+    string cwd;
+    std::vector<string> env;
+    int timeoutMs;
+    int maxBytes;
+    ToolRun(string e, string c, int t, int m) {
+        exe = e;
+        cwd = c;
+        timeoutMs = t;
+        maxBytes = m;
+    }
+};
+
+struct ToolResult {
+public:
+    int status;              // 0 it ran; else the native status (2 program or folder missing, 4 could not start, 5 refused)
+    string out;
+    string err;
+    int exitCode;
+    int flags;               // 1 timed out, 2 stdout cut, 4 stderr cut
+    ToolResult() {
+        status = 0;
+        exitCode = 0;
+        flags = 0;
+    }
+    // ran, did not time out, exited 0
+    bool succeeded() {
+        return status == 0 && (flags % 2) == 0 && exitCode == 0;
+    }
+    // what to tell the page when it did not succeed: the program's own complaint, else the reason
+    string complaint() {
+        if (status == 2) {
+            return "program_not_found: the program or its working folder does not exist";
+        }
+        if (status != 0) {
+            return "spawn_failed: the program could not be started";
+        }
+        if ((flags % 2) == 1) {
+            return "timed_out: the program took too long";
+        }
+        string text = trimText(cleanUtf8(err));
+        if (text.length() == 0) {
+            text = trimText(cleanUtf8(out));
+        }
+        if (text.length() == 0) {
+            text = "the program exited with code " + intToString(exitCode);
+        }
+        return "command_failed: " + text;
+    }
+};
+
+ToolResult runTool(ToolRun run) {
+    ToolResult r = new ToolResult();
+    r.status = app_proc_run(run.exe, run.args, run.cwd, run.env, run.timeoutMs, run.maxBytes, r.out, r.err, r.exitCode, r.flags);
+    return r;
+}
+
+// runTool, or throws the complaint ("code: message") when the program could not run, timed out or exited non-zero. For use in a worker's job:
+// a throw there rejects the page's promise with that code and message.
+ToolResult runToolOrThrow(ToolRun run) {
+    ToolResult r = runTool(run);
+    if (!r.succeeded()) {
+        string complaint = r.complaint();
+        throw complaint;
+    }
+    return r;
+}
+
+// ---- background work whose last step needs the main thread -----------------------------------------------------------
+// The file policy (FileGate) and every other piece of state belongs to the main thread, so a worker that has to read or write a file
+// after its program has finished cannot do it itself. It sends the main loop a record instead: finishLater(handle, id, status, text).
+// The command registered a `Later` for that page call (App.later); the main loop runs its `done` with the worker's result.
+class Later {
+public:
+    Later() { }
+    virtual void done(int handle, string id, int status, string payload) { }
+};
+
+class LaterBook {
+public:
+    std::vector<string> ids;
+    std::vector<Later> items;
+    LaterBook() { }
+    int indexOf(string id) {
+        int i = 0;
+        while (i < ids.size()) {
+            if (ids[i] == id) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+    void drop(int index) {
+        int last = ids.size() - 1;
+        if (index != last) {
+            ids[index] = ids[last];
+            items[index] = items[last];
+        }
+        ids.pop_back();
+        items.pop_back();
+    }
+};
+
+// Runs on the worker: status 0 means `payload` is the JSON for the page, anything else means it is "code: message".
+void finishLater(int handle, string id, int status, string payload) {
+    string record = "later";
+    record.push_back(char(0));
+    record = record + id;
+    record.push_back(char(0));
+    record = record + intToString(status);
+    record.push_back(char(0));
+    record = record + payload;
+    record.push_back(char(0));
+    if (app_push(handle, "", record, 100000) != 1) {
+        replyError(handle, id, "busy", "the application is not keeping up");
+    }
+}
+
 // ---- watching folders -----------------------------------------------------------------------------
 // fs.watch {path, recursive?} starts a watch and answers {id}; changes then arrive on the page as "fs.change" events
 //     {watch: id, kind: "created" | "modified" | "removed", path}              path is relative to the watched folder
@@ -971,6 +1123,7 @@ public:
     int handle;
     Dispatcher dispatcher;
     ProgramRegistry programs;
+    LaterBook laters;
     FileGate gate;
     Watches watches;
     WindowState window;
@@ -982,6 +1135,7 @@ public:
         handle = 0;
         dispatcher = new Dispatcher();
         programs = new ProgramRegistry();
+        laters = new LaterBook();
         gate = new FileGate();
         watches = new Watches();
         window = new WindowState();
@@ -1033,17 +1187,34 @@ public:
         command("fs.write", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
             string text = requiredString(args, "text");
-            string mode = optionalString(args, "mode", "replace");
-            int code = 0;
-            if (mode == "append") {
-                code = 1;
-            } else if (mode == "create") {
-                code = 2;
-            } else if (mode != "replace") {
-                throw "invalid_argument: `mode` must be \"replace\", \"append\" or \"create\"";
+            int code = writeMode(args);
+            if (optionalBool(args, "parents", false)) {
+                makeParents(files, path);
             }
             fsCheck(files.write(path, text, code), "cannot write " + path);
             return createNull();
+        });
+        // the same for bytes: {base64} instead of {text}; a binary file travels through JSON as base64 text
+        command("fs.writeBytes", closure Command [files] (Item args) {
+            string path = requiredString(args, "path");
+            string encoded = requiredString(args, "base64");
+            int code = writeMode(args);
+            if (!isBase64(encoded)) {
+                throw "invalid_argument: `base64` is not well-formed base64";
+            }
+            if (optionalBool(args, "parents", false)) {
+                makeParents(files, path);
+            }
+            fsCheck(files.write(path, base64Decode(encoded), code), "cannot write " + path);
+            return createNull();
+        });
+        command("fs.readBytes", closure Command [files, maxReadBytes] (Item args) {
+            string path = requiredString(args, "path");
+            FsResult r = files.read(path, maxReadBytes);
+            fsCheck(r.status, "cannot read " + path);
+            Item result = createObject();
+            addStringToObject(result, "base64", base64Encode(r.text));
+            return result;
         });
         command("fs.list", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
@@ -1091,7 +1262,11 @@ public:
         });
         command("fs.remove", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
-            fsCheck(files.remove(path), "cannot remove " + path);
+            if (optionalBool(args, "recursive", false)) {
+                fsCheck(files.removeTree(path, 0), "cannot remove " + path);
+            } else {
+                fsCheck(files.remove(path), "cannot remove " + path);
+            }
             return createNull();
         });
     }
@@ -1541,7 +1716,22 @@ public:
         return open(title, width, height, app_page_html(), app_bridge_js(), debug);
     }
 
-    // A record the native layer queued itself (empty id): "watch", "pick" or "window".
+    // Expects a record from a worker for the page call `id`: when finishLater arrives, `l.done` runs on the main thread.
+    void later(string id, Later l) {
+        laters.ids.push_back(id);
+        laters.items.push_back(l);
+    }
+
+    // The run of a program the application chooses itself: `exe` as resolveProgram found it, `args` vetted by the caller, `cwd` a
+    // folder the file policy has resolved. The environment is the one programs get (see passEnvironment).
+    ToolRun toolRun(string exe, std::vector<string> args, string cwd, int timeoutMs, int maxBytes) {
+        ToolRun run = new ToolRun(exe, cwd, timeoutMs, maxBytes);
+        run.args = args;
+        run.env = programs.environment();
+        return run;
+    }
+
+    // A record the native layer queued itself (empty id): "watch", "pick", "window" or "later".
     void onInternalRecord(string request) {
         std::vector<string> f = splitFields(request);
         if (f.size() == 0) {
@@ -1553,6 +1743,18 @@ public:
             onPickRecord(f);
         } else if (f[0] == "window") {
             onWindowRecord(f);
+        } else if (f[0] == "later" && f.size() >= 4) {
+            int index = laters.indexOf(f[1]);
+            if (index < 0) {
+                return;
+            }
+            Later l = laters.items[index];
+            laters.drop(index);
+            try {
+                l.done(handle, f[1], int(decimalValue(f[2])), f[3]);
+            } catch (string message) {
+                replyError(handle, f[1], errorCodeOf(message), errorTextOf(message));
+            }
         }
     }
 

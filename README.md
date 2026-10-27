@@ -205,6 +205,36 @@ UTF-8 is repaired in CeeLing (`lossy: true`).
 Not covered: what the program itself does (`git` with a hostile repository, for instance), environment variables (they
 are inherited), and a program that parses its command line in a non-standard way.
 
+## Porting tauriport (the real test)
+
+`examples/tauriport/` is tauriport's Tauri backend (17 commands: a folder under version control with the `lore` tool, history, diff,
+revision bytes, a sync-link file, a watcher, two dialogs) rewritten as CeeLing, with `tauri-bridge.js` giving a page the same
+`tauriBridge` object its frontend already uses. `tests/tauriport_main.clg` runs 50 checks against the real `lore` in a scratch
+folder, and `tests/run_tauriport_window.sh` drives the same commands from a real page in a real WebView2 window, including a
+file change coming back through the watcher.
+
+What it took, and what it showed:
+- **The Tauri version enforced no file policy at all** (`write_file_bytes` wrote anywhere, any `root` was accepted). Here the
+  opened folder is a grant and every `root` and `path` the page names goes through `FileGate`; a `path` that goes up, or a
+  path / message / revision that `lore` could read as an option, is refused before `lore` starts.
+- **Two new pieces of API came out of it**: `ToolRun` / `runTool` / `runToolOrThrow` (an application command runs its own fixed
+  program, as opposed to the page choosing from the `allowProgram` table), and `Later` (a worker that needs the file policy
+  after its program ends sends the main loop a record: `App.later` + `finishLater`). Also `fs.writeBytes` / `fs.readBytes`
+  (binary through JSON as base64, 10 MiB in about 90 ms) and `fs.remove {recursive}`.
+- **The tests found a real bug on the way**: a recursive remove of the opened folder emptied it and only then refused the folder
+  itself. It now refuses first (`tests/negative_controls.sh` removes that check and the test fails).
+- **Friction that is the language's, recorded in CeeLing's TODO**: a method cannot be called on a call's result
+  (`f(x).length()`, which cost a local variable in about thirty places); a closure nested in a closure cannot capture the outer
+  one's captures; an object passed to a function is moved, so a recursive walk has to be a method; `std::map` has no `size()` and
+  I did not get iteration to work, so merging two lists is a loop inside a loop; decoding page arguments is still `requiredString` / `getObjectItem` by
+  hand (`write_link` checks its shape field by field where serde did it from a struct).
+- **Still not possible**: running tauriport's real Next.js frontend. App-cling embeds ONE html string; the static export is
+  hundreds of files (TODO C14). The adapter and the commands are what it will need.
+- **Differences from the Tauri behaviour**: a revision's bytes are extracted into `<folder>/.tauriport/extract-N` (and removed)
+  because the file policy must be able to read them back, not into the system temp folder; `lore` is found by `LORE_CLI_PATH`
+  or on `PATH` only (Tauri also looked next to its own executable; there is no primitive for that yet); the watcher is stopped
+  when the folder changes (Tauri's thread ran for the life of the process).
+
 ## What is and is not checked
 
 CeeLing checks the command table and everything the commands do with their own data: no dangling references, no
@@ -237,10 +267,11 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 192 end-to-end checks + 128 file policy + 18 program lookup + 28 process + 26 watcher, no window
+bash tests/run_headless.sh            # 192 end-to-end + 139 file policy and text + 18 program lookup + 50 tauriport (needs lore) + 28 process + 26 watcher, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # removes one check at a time from src/ and shows the tests fail
+bash tests/run_tauriport_window.sh     # the tauriport port in a real window, against the real lore tool
 ```
 
 Requirements: the CeeLing compiler (`CLING`, default `c:/project/CeeLing/build/cling.exe`), cjson-cling (`CJSON`), MinGW
