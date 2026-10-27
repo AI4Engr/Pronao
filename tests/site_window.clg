@@ -1,0 +1,46 @@
+// A real window whose page is served by the program from memory (src/assets.clg, shim/win/assets.cpp): a stylesheet, a script, json, binary data, an alias, localStorage, the bridge, a frame on the site and a frame / navigation to another origin.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "app.clh"
+
+class Verdict {
+public:
+    bool ok;
+    Verdict() {
+        ok = false;
+    }
+};
+
+int main() {
+    App app = new App();
+    app.command("ping", closure Command [] (Item args) {
+        return createString("pong");
+    });
+    Verdict verdict = new Verdict();
+    if (!app.openSite("site selftest", 480, 320, false, "http://app.localhost", "")) {
+        std::cout << "selftest FAILED: no window" << std::endl;
+        return 2;
+    }
+    int handle = app.handle;
+    app.command("selftest", closure Command [verdict, handle] (Item args) {
+        string expected = "{\"origin\":\"http://app.localhost\",\"css\":\"rgb(1, 2, 3)\",\"script\":true,\"json\":42,\"png\":true,\"missing\":404,\"alias\":true,\"storage\":\"v\",\"bridge\":\"pong\",\"frame\":true,\"blocked\":2,\"still\":true}";
+        string got = printUnformatted(args);
+        verdict.ok = got == expected;
+        if (got != expected) {
+            std::cout << "got:      " << got << std::endl;
+            std::cout << "expected: " << expected << std::endl;
+        }
+        app_terminate(handle);
+        return createNull();
+    });
+    app.run();
+    app.close();
+    if (verdict.ok) {
+        std::cout << "selftest ok" << std::endl;
+        return 0;
+    }
+    std::cout << "selftest FAILED" << std::endl;
+    return 1;
+}

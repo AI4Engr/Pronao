@@ -17,8 +17,9 @@
 #include "text.clh"
 #include "core.clh"
 #include "files.clh"
+#include "assets.clh"
 
-ext_fn int app_open(string title, int width, int height, string html, string initJs, int debug);
+ext_fn int app_open(string title, int width, int height, string html, string url, string initJs, int debug);
 ext_fn int app_next_call(int handle, int timeoutMs, ref string id, ref string request);
 ext_fn int app_push(int handle, string id, string request, int maxQueued);
 ext_fn int app_terminate(int handle);
@@ -41,6 +42,7 @@ ext_fn int app_dialog_message(int handle, string title, string message, int kind
 // the page and the bridge script, compiled into the program by scripts/build.sh
 ext_fn string app_page_html();
 ext_fn string app_bridge_js();
+ext_fn string app_extra_js();
 
 class Dispatcher {
 public:
@@ -1130,6 +1132,7 @@ public:
     std::vector<string> navigation;    // addresses the window may load after the application's own page (allowNavigation)
     int maxRequestBytes;
     int maxQueuedCalls;
+    string siteStart;          // the address the window opens on, when the program serves its own web files
 
     App() {
         handle = 0;
@@ -1141,6 +1144,7 @@ public:
         window = new WindowState();
         maxRequestBytes = 4194304;
         maxQueuedCalls = 256;
+        siteStart = "";
     }
 
     void command(string name, Command handler) {
@@ -1699,7 +1703,7 @@ public:
         if (debug) {
             d = 1;
         }
-        handle = app_open(title, width, height, html, bridgeJs, d);
+        handle = app_open(title, width, height, html, siteStart, bridgeJs, d);
         window.handle = handle;
         if (handle != 0) {
             app_limits(handle, maxRequestBytes, maxQueuedCalls);
@@ -1713,7 +1717,21 @@ public:
 
     // Opens the window on the page embedded at build time, with the standard bridge script.
     bool openPage(string title, int width, int height, bool debug) {
-        return open(title, width, height, app_page_html(), app_bridge_js(), debug);
+        return open(title, width, height, app_page_html(), app_bridge_js() + app_extra_js(), debug);
+    }
+
+    // Opens the window on the program's own web files (build with ASSETS=<folder>), served from memory under `origin`, which must be
+    // http:// or https:// with no path ("http://app.localhost"). `csp`, if not empty, is sent with every HTML file as its
+    // Content-Security-Policy. The window may navigate to that origin and nowhere else (allowNavigation adds more). false if there
+    // are no files, no page among them, or the window could not be created.
+    bool openSite(string title, int width, int height, bool debug, string origin, string csp) {
+        SiteInfo info = publishSite(origin, csp);
+        if (info.files == 0 || info.start.length() == 0) {
+            return false;
+        }
+        siteStart = info.start;
+        navigation.push_back(origin + "/");
+        return open(title, width, height, "", app_bridge_js() + app_extra_js(), debug);
     }
 
     // Expects a record from a worker for the page call `id`: when finishLater arrives, `l.done` runs on the main thread.

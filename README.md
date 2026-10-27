@@ -26,7 +26,7 @@ CeeLing main thread:  app_next_call()  <-- blocks on the queue
                       app_return(id, status, json) --> resolves / rejects the page's promise
 ```
 
-The native layer (`shim/`, trusted C++; 908 lines of code for a Windows build, 1079 counting comments and blank lines, `scripts/shim_lines.sh`) holds no application logic: it opens the window,
+The native layer (`shim/`, trusted C++; 1059 lines of code for a Windows build, 1258 counting comments and blank lines, `scripts/shim_lines.sh`) holds no application logic: it opens the window,
 queues calls, opens files, runs programs, shows dialogs and waits for file changes, as small primitives that take and return
 ints and strings. **Every decision is in `src/`**, which CeeLing checks: which files a page may reach, which programs it may
 start, what a dialog may say, what a folder watch reports. CeeLing runs the loop, so no callback ever has to cross into
@@ -109,6 +109,30 @@ one raw record per change in the same queue the page's calls arrive in, with an 
 the shim drops an empty-id call from the page). The CeeLing main loop (`App.run`, or `serveOne` if you write your own) merges
 them, checks the permission, and turns them into `fs.change` events; the JSON is built with the JSON library. If the main
 loop falls behind, records beyond 2000 queued are dropped and an `overflow` follows.
+
+## A web UI of many files
+
+One embedded HTML string was enough for a prototype; a real front end is hundreds of files (scripts, styles, images, fonts, data) and
+wants a real origin (relative URLs, `localStorage`, CORS). So the program carries a folder and serves it from memory:
+
+```
+ASSETS=path/to/dist bash scripts/build.sh app.clg app.exe        # the folder is packed into the program
+```
+```
+app.openSite("My app", 1100, 700, false, "http://app.localhost", "");     // origin, optional Content-Security-Policy
+```
+The window loads `http://app.localhost/`; that origin is answered by the program, never by the network, and an address that is not in
+the folder is a 404 (it does not fall through to the network). `index.html` is `/`, `docs/index.html` is `/docs` and `/docs/`, `local.html` is
+`/local` and `/local/` (how a static export such as Next.js's is linked). Types come from the extension. The bridge, the
+navigation guard and the request limits apply to these pages exactly as to a single embedded page. `src/assets.clg` decides
+names, types and addresses; the native side (`shim/assets.h`, `shim/win/assets.cpp`) only looks an address up in a table.
+`EXTRA_JS="a.js b.js"` adds scripts to the init script that runs in every page before its own scripts.
+
+Measured, and what it does NOT do: the files are stored as they are (about 4 MB for tauriport's whole front end). Compression was tried
+and does not work: WebView2 does not unpack a `Content-Encoding: gzip` on a response a program makes itself, the page received the gzip
+bytes. Compressing would need an inflate in the program (zlib-cling has one). One site per process, Windows only (a custom scheme in
+WebKitGTK is the Linux way), no range requests, no streaming. The origin is yours to choose: tauriport uses `http://tauri.localhost`
+because its server's CORS list already contains it.
 
 ## What a page may send, and where the window may go
 
@@ -228,8 +252,11 @@ What it took, and what it showed:
   one's captures; an object passed to a function is moved, so a recursive walk has to be a method; `std::map` has no `size()` and
   I did not get iteration to work, so merging two lists is a loop inside a loop; decoding page arguments is still `requiredString` / `getObjectItem` by
   hand (`write_link` checks its shape field by field where serde did it from a struct).
-- **Still not possible**: running tauriport's real Next.js frontend. App-cling embeds ONE html string; the static export is
-  hundreds of files (TODO C14). The adapter and the commands are what it will need.
+- **tauriport's own compiled front end runs, unchanged.** `TAURIPORT_FRONTEND=<its Next.js out folder> bash examples/tauriport/build.sh app.exe`
+  serves all 120 files from memory and injects `tauri-internals.js`, which provides the little of `__TAURI_INTERNALS__` that
+  `@tauri-apps/api` needs (invoke, callbacks, the event plugin). `tests/run_tauriport_frontend.sh` opens it in a real window and checks that
+  the app routes itself to its login page, hydrates and raises no script error. Past the login page it needs an account on the server, which
+  I did not use; the commands behind it are the ones tested above.
 - **Differences from the Tauri behaviour**: a revision's bytes are extracted into `<folder>/.tauriport/extract-N` (and removed)
   because the file policy must be able to read them back, not into the system temp folder; `lore` is found by `LORE_CLI_PATH`
   or on `PATH` only (Tauri also looked next to its own executable; there is no primitive for that yet); the watcher is stopped
@@ -272,6 +299,7 @@ bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # removes one check at a time from src/ and shows the tests fail
 bash tests/run_tauriport_window.sh     # the tauriport port in a real window, against the real lore tool
+bash tests/run_tauriport_frontend.sh   # tauriport's own compiled front end, served from memory, in a real window
 ```
 
 Requirements: the CeeLing compiler (`CLING`, default `c:/project/CeeLing/build/cling.exe`), cjson-cling (`CJSON`), MinGW
@@ -286,6 +314,7 @@ g++, the WebView2 runtime for window runs, WSL with g++ for the sanitizers. Wind
 | `src/text.clg` | UTF-8 checking and repair, splitting, small parsers |
 | `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
+| `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
 | `src/app.clg` | `Dispatcher`, `App`, the commands (files, programs, dialogs, watches, window), program lookup and slots, watch merging |
 | `src/bridge.js` | defines `window.cling.*`; embedded into the program at build time |
 | `shim/` | the native layer: `app_native.h` lists every primitive; `app_shim.cpp` window and queue; `win/` and `posix/` the OS parts |

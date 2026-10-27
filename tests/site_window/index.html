@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>site window test</title><link rel="stylesheet" href="/style.css"></head>
+<body><h1 id="h">hello</h1><script src="/app.js"></script>
+<script>
+  (async () => {
+    const r = {};
+    r.origin = location.origin;
+    r.css = getComputedStyle(document.getElementById('h')).color;
+    r.script = window.siteLoaded === true;                       // app.js ran
+    r.json = (await (await fetch('/data.json')).json()).answer;
+    const png = new Uint8Array(await (await fetch('/img/logo.png')).arrayBuffer());
+    r.png = png.length === 268 && png[0] === 137 && png[8] === 0 && png[9] === 1 && png[263] === 255;
+    r.missing = (await fetch('/nope')).status;
+    r.alias = (await (await fetch('/about')).text()).indexOf('about') >= 0;
+    localStorage.setItem('k', 'v');
+    r.storage = localStorage.getItem('k');
+    r.bridge = await cling.invoke('ping');                       // the bridge reaches the pages the program serves
+    const blocked = [];
+    cling.window.onNavigationBlocked(function (e) { blocked.push(e.url); });
+    const inside = document.createElement('iframe');             // a frame on the site itself is fine
+    inside.src = '/about';
+    document.body.appendChild(inside);
+    await new Promise(function (resolve) { inside.onload = resolve; });
+    r.frame = inside.contentDocument.body.textContent.indexOf('about') >= 0;
+    const outside = document.createElement('iframe');            // a frame on another origin is not
+    outside.src = 'https://example.invalid/frame';
+    document.body.appendChild(outside);
+    setTimeout(function () { location.href = 'https://example.invalid/top'; }, 0);
+    for (let i = 0; i < 40 && blocked.length < 2; i++) await new Promise(function (resolve) { setTimeout(resolve, 50); });
+    r.blocked = blocked.length;
+    r.still = location.origin === r.origin && (await cling.invoke('ping')) === 'pong';
+    await cling.invoke('selftest', r);
+  })().catch(function (e) { cling.invoke('selftest', { error: String(e) }); });
+</script></body></html>

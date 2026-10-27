@@ -1,0 +1,137 @@
+// The program's own web files (src/assets.clg + shim/assets.h) against tests/site, compiled into this test with ASSETS=tests/site: what
+// the window would be given for each address, through the same table lookup the real window uses (the test double calls it).
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "app.clh"
+
+ext_fn int app_os_env(string name, ref string out);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_fetch(string method, string url, ref int status, ref string headers, ref string body);
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_take_eval(int handle, ref string js);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+// one GET: the status (0 = not the site's, so the network would get it), headers and body
+class Fetched {
+public:
+    // (declared before `mine`: the constructor's assignments are emitted as an initializer list in DECLARATION order, so the call that
+    // fills these through `ref` would otherwise run before they are constructed. A CeeLing bug, in TODO.md.)
+    int status;
+    string headers;
+    string body;
+    int mine;
+    Fetched(string method, string url) {
+        status = 0;
+        headers = "";
+        body = "";
+        mine = app_test_fetch(method, url, status, headers, body);
+    }
+    bool header(string line) {
+        return containsText(headers, line + "\r\n");
+    }
+};
+
+int main() {
+    string dir = "";
+    if (app_os_env("APP_SITE_DIR", dir) != 1) {
+        std::cout << "FAIL APP_SITE_DIR is not set" << std::endl;
+        return 2;
+    }
+    string site = "http://app.localhost";
+
+    // ---- what the names and types come to, without any window ----
+    check("types by extension", mimeFor("a.html") == "text/html; charset=utf-8" && mimeFor("x/y.JS") == "text/javascript; charset=utf-8" && mimeFor("f.woff2") == "font/woff2" &&
+          mimeFor("i.svg") == "image/svg+xml" && mimeFor("noextension") == "application/octet-stream" && mimeFor("dir.v2/file") == "application/octet-stream" && mimeFor("a.zzz") == "application/octet-stream");
+    check("names the packer may produce", assetNameOk("a/b.js") && assetNameOk("_next/static/chunks/x.js") && assetNameOk("weird é.txt"));
+    check("names it may not", !assetNameOk("") && !assetNameOk("/abs") && !assetNameOk("a/../b") && !assetNameOk("a//b") && !assetNameOk("a/") && !assetNameOk("a?b") && !assetNameOk("a#b") && !assetNameOk("a%b") && !assetNameOk("a\\b"));
+    std::vector<string> pageAlias = pageAliases("docs/index.html");
+    std::vector<string> plainAlias = pageAliases("about.html");
+    std::vector<string> noAlias = pageAliases("app.js");
+    std::vector<string> rootAlias = pageAliases("index.html");
+    check("page aliases", pageAlias.size() == 2 && pageAlias[0] == "/docs/" && pageAlias[1] == "/docs" && plainAlias.size() == 2 && plainAlias[0] == "/about" && noAlias.size() == 0 && rootAlias.size() == 1 && rootAlias[0] == "/");
+
+    // ---- the site ----
+    App app = new App();
+    check("an origin with a trailing slash is refused", !app.openSite("t", 100, 100, false, "http://app.localhost/", ""));
+    check("so is one without a scheme", !app.openSite("t", 100, 100, false, "app.localhost", ""));
+    check("openSite", app.openSite("site", 400, 300, false, site, "default-src 'self'"));
+    string log = "";
+    check("the window opens on the site's first page", app_test_take_window_log(app.handle, log) == 1 && log == "open|http://app.localhost/");
+
+    Fetched index = new Fetched("GET", site + "/");
+    string expectedIndex = "";
+    app_test_read_raw(dir + "/index.html", expectedIndex);
+    check("/ is index.html", index.mine == 1 && index.status == 200 && index.body == expectedIndex && index.header("Content-Type: text/html; charset=utf-8"));
+    check("Content-Length is the length of the body", index.header("Content-Length: " + intToString(index.body.length())));
+    check("HTML carries the content security policy", index.header("Content-Security-Policy: default-src 'self'"));
+    check("nothing is cached or sniffed", index.header("Cache-Control: no-store") && index.header("X-Content-Type-Options: nosniff"));
+    Fetched css = new Fetched("GET", site + "/style.css");
+    check("a stylesheet is text/css and has no policy header", css.status == 200 && css.header("Content-Type: text/css; charset=utf-8") && !containsText(css.headers, "Content-Security-Policy"));
+
+    Fetched script = new Fetched("GET", site + "/app.js");
+    string expectedScript = "";
+    app_test_read_raw(dir + "/app.js", expectedScript);
+    check("a script is served as it is, not compressed (the engine would not unpack it)", script.status == 200 && script.body == expectedScript && !containsText(script.headers, "Content-Encoding") &&
+          script.header("Content-Type: text/javascript; charset=utf-8") && script.header("Content-Length: " + intToString(script.body.length())));
+
+    Fetched logo = new Fetched("GET", site + "/img/logo.png");
+    string expectedLogo = "";
+    app_test_read_raw(dir + "/img/logo.png", expectedLogo);
+    check("an image is served byte for byte", logo.status == 200 && logo.body == expectedLogo && logo.header("Content-Type: image/png") && !containsText(logo.headers, "Content-Encoding"));
+    Fetched json = new Fetched("GET", site + "/data.json");
+    check("json", json.status == 200 && json.header("Content-Type: application/json; charset=utf-8"));
+    Fetched mystery = new Fetched("GET", site + "/mystery.zzz");
+    check("an unknown extension is octet-stream", mystery.status == 200 && mystery.header("Content-Type: application/octet-stream"));
+
+    // ---- addresses ----
+    Fetched about = new Fetched("GET", site + "/about");
+    Fetched aboutSlash = new Fetched("GET", site + "/about/");
+    Fetched aboutFile = new Fetched("GET", site + "/about.html");
+    check("/about, /about/ and /about.html are the same page", about.status == 200 && about.body == aboutFile.body && aboutSlash.body == aboutFile.body && containsText(about.body, "about"));
+    Fetched docs = new Fetched("GET", site + "/docs");
+    Fetched docsSlash = new Fetched("GET", site + "/docs/");
+    check("a folder's index.html answers /docs and /docs/", docs.status == 200 && containsText(docs.body, "docs index") && docsSlash.body == docs.body);
+    Fetched guide = new Fetched("GET", site + "/docs/guide");
+    check("a page in a folder", guide.status == 200 && containsText(guide.body, "guide"));
+    Fetched query = new Fetched("GET", site + "/style.css?v=3#top");
+    check("a query string and a fragment are ignored", query.status == 200 && query.body == css.body);
+    Fetched bare = new Fetched("GET", site);
+    check("the origin without a slash is /", bare.mine == 1 && bare.status == 200 && bare.body == index.body);
+    Fetched spaced = new Fetched("GET", site + "/weird%20name%20%C3%A9.txt");
+    check("percent-encoded names are decoded", spaced.status == 200 && containsText(spaced.body, "percent-encoded"));
+
+    // ---- what is NOT served ----
+    Fetched missing = new Fetched("GET", site + "/nope.html");
+    check("an unknown address is a 404, never the network", missing.mine == 1 && missing.status == 404);
+    Fetched up = new Fetched("GET", site + "/../index.html");
+    Fetched mid = new Fetched("GET", site + "/docs/../index.html");
+    Fetched encodedUp = new Fetched("GET", site + "/%2e%2e/index.html");
+    Fetched doubled = new Fetched("GET", site + "//index.html");
+    check("dot-dot and doubled slashes find nothing", up.status == 404 && mid.status == 404 && encodedUp.status == 404 && doubled.status == 404);
+    Fetched other = new Fetched("GET", "http://example.com/index.html");
+    Fetched lookalike = new Fetched("GET", "http://app.localhost.evil.example/index.html");
+    Fetched secure = new Fetched("GET", "https://app.localhost/index.html");
+    check("another origin is left to the network", other.mine == 0 && lookalike.mine == 0 && secure.mine == 0);
+    Fetched head = new Fetched("HEAD", site + "/data.json");
+    check("HEAD has the headers and no body", head.status == 200 && head.body.length() == 0 && head.header("Content-Length: " + intToString(json.body.length())));
+    Fetched post = new Fetched("POST", site + "/data.json");
+    Fetched put = new Fetched("PUT", site + "/index.html");
+    check("anything but GET and HEAD is 405", post.status == 405 && put.status == 405 && post.header("Allow: GET, HEAD"));
+
+    // ---- the bridge is in the pages the site serves: the window is given the init script, and the commands still work ----
+    app.command("ping", closure Command [] (Item args) {
+        return createString("pong");
+    });
+    check("the window is told it may navigate to the site", app_test_take_window_log(app.handle, log) == 1 && log == "navigation|http://app.localhost/");
+    app.close();
+    return 0;
+}

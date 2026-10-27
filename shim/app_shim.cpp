@@ -3,6 +3,7 @@
 // small integers. CeeLing runs the loop (app_next_call, then app_return), so no callback ever crosses into CeeLing.
 #include "app_native.h"
 #include "app_shim_internal.h"
+#include "assets.h"
 #include "queue.h"
 
 #include <atomic>
@@ -66,7 +67,7 @@ int onUi(int handle, std::function<void(webview::webview&)> op) {
 }
 }  // namespace
 
-int app_open(std::string title, int width, int height, std::string html, std::string init_js, int debug) {
+int app_open(std::string title, int width, int height, std::string html, std::string url, std::string init_js, int debug) {
     auto app = std::make_shared<App>();
     int handle = 0;
     {
@@ -76,7 +77,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
     }
     App* raw = app.get();
     app->nav->handle = handle;
-    app->ui = std::thread([raw, title, width, height, html, init_js, debug] {
+    app->ui = std::thread([raw, title, width, height, html, url, init_js, debug] {
         try {
             webview::webview w(debug != 0, nullptr);
             w.set_title(title);
@@ -86,10 +87,14 @@ int app_open(std::string title, int width, int height, std::string html, std::st
                 if (refused == 1 || refused == 2) w.resolve(id, 1, refusalJson(refused));
             }, nullptr);
 #ifdef _WIN32
+            const std::string site = assetStore()->origin();
+            if (!site.empty()) raw->nav->prefixes.push_back(site + "/");        // (no lock needed yet: nothing else has the window)
             app_nav_install(w.browser_controller().value(), raw->nav, debug);
+            app_assets_install(w.browser_controller().value(), assetStore());
 #endif
             if (!init_js.empty()) w.init(init_js);
-            w.set_html(html);
+            if (!url.empty()) w.navigate(url);
+            else w.set_html(html);
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(w.window().value());
             SetPropW(hwnd, L"app_cling", raw);

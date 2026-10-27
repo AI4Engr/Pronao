@@ -20,7 +20,7 @@ int main(int, char** argv) {
         await cling.invoke('report', { sum: sum, rejected: rejected });
       })();
     </script></body></html>)";
-    int h = app_open("shim test", 400, 300, html, bridge, 0);
+    int h = app_open("shim test", 400, 300, html, "", bridge, 0);
     if (h == 0) { std::printf("FAIL: window not created\n"); return 2; }
     int calls = 0, ok = 0;
     for (;;) {

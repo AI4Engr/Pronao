@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "../../shim/app_native.h"
+#include "../../shim/app_shim_internal.h"
+#include "../../shim/assets.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -147,4 +149,11 @@ int app_test_setenv(std::string name, std::string value) {
 #else
     return setenv(name.c_str(), value.c_str(), 1) == 0 ? 0 : 4;
 #endif
+}
+
+int app_test_fetch(std::string method, std::string url, int& status, std::string& headers, std::string& body) {
+    std::shared_ptr<const std::string> bytes;
+    if (!assetStore()->respond(method, url, status, headers, bytes)) return 0;
+    body = *bytes;
+    return 1;
 }

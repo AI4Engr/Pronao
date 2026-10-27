@@ -33,6 +33,9 @@ int app_test_helper(std::string& path);
 // the environment of this (test) process
 int app_test_setenv(std::string name, std::string value);
 
+// what the window would be given for an address (shim/assets.h): 1 if the address is the site's, with the status, the header text and the body
+int app_test_fetch(std::string method, std::string url, int& status, std::string& headers, std::string& body);
+
 // threads
 int app_test_sleep_ms(int ms);
 int app_test_gauge_enter();

@@ -1,0 +1,191 @@
+// app-cling -- the application's own web files: which short addresses stand for which file, and what type each file is.
+//
+// The files are compiled into the program (scripts/build.sh, ASSETS=<folder>) and served to the window from memory under an address of
+// their own, like http://app.localhost/. A browser engine needs real addresses for that (a page made of hundreds of files, with its
+// scripts, styles, images, fonts and data, cannot be one string), and the right origin: a page loaded from nowhere has no
+// localStorage, no relative URLs and no sensible CORS identity. The native layer only looks an address up in the table below; every
+// decision, including which spellings reach which file, is made here.
+#include "text.clh"
+
+ext_fn int app_asset_site(string origin, string csp);
+ext_fn int app_embedded_count();
+ext_fn int app_embedded_name(int index, ref string name);
+ext_fn int app_asset_add_embedded(string path, string mime, int index);
+ext_fn int app_asset_add_text(string path, string mime, string text);
+ext_fn int app_asset_alias(string from, string to);
+
+// The type a file is served as, by its extension (lower case). An unknown extension is application/octet-stream, which the browser
+// will not run as script or style.
+string mimeFor(string name) {
+    int dot = -1;
+    int i = 0;
+    while (i < name.length()) {
+        if (name[i] == '.') {
+            dot = i;
+        }
+        if (name[i] == '/') {
+            dot = -1;
+        }
+        i = i + 1;
+    }
+    if (dot < 0) {
+        return "application/octet-stream";
+    }
+    string ext = lowerAscii(name.substr(dot + 1, name.length() - dot - 1));
+    if (ext == "html" || ext == "htm") { return "text/html; charset=utf-8"; }
+    if (ext == "js" || ext == "mjs") { return "text/javascript; charset=utf-8"; }
+    if (ext == "css") { return "text/css; charset=utf-8"; }
+    if (ext == "json" || ext == "map") { return "application/json; charset=utf-8"; }
+    if (ext == "webmanifest") { return "application/manifest+json; charset=utf-8"; }
+    if (ext == "txt") { return "text/plain; charset=utf-8"; }
+    if (ext == "xml") { return "application/xml; charset=utf-8"; }
+    if (ext == "svg") { return "image/svg+xml"; }
+    if (ext == "png") { return "image/png"; }
+    if (ext == "jpg" || ext == "jpeg") { return "image/jpeg"; }
+    if (ext == "gif") { return "image/gif"; }
+    if (ext == "webp") { return "image/webp"; }
+    if (ext == "avif") { return "image/avif"; }
+    if (ext == "ico") { return "image/x-icon"; }
+    if (ext == "woff") { return "font/woff"; }
+    if (ext == "woff2") { return "font/woff2"; }
+    if (ext == "ttf") { return "font/ttf"; }
+    if (ext == "otf") { return "font/otf"; }
+    if (ext == "wasm") { return "application/wasm"; }
+    if (ext == "pdf") { return "application/pdf"; }
+    if (ext == "mp3") { return "audio/mpeg"; }
+    if (ext == "mp4") { return "video/mp4"; }
+    if (ext == "webm") { return "video/webm"; }
+    return "application/octet-stream";
+}
+
+// A name the packer produced: relative, forward slashes, well-formed UTF-8, no empty / "." / ".." part, no control character.
+bool assetNameOk(string name) {
+    if (name.length() == 0 || name.length() > 1000 || !plainText(name, 1000) || name[0] == '/' || name[name.length() - 1] == '/') {
+        return false;
+    }
+    std::vector<string> parts = splitOn(name, '/');
+    int i = 0;
+    while (i < parts.size()) {
+        string part = parts[i];
+        if (part.length() == 0 || part == "." || part == "..") {
+            return false;
+        }
+        int k = 0;
+        while (k < part.length()) {
+            char c = part[k];
+            if (c == '\\' || c == '?' || c == '#' || c == '%' || (int(c) >= 0 && int(c) < 32)) {
+                return false;
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Other addresses that stand for the same page, the way a static site is usually linked: "index.html" is "/"; "docs/index.html" is
+// "/docs/" and "/docs"; "local.html" is "/local" and "/local/". A name that is not a page has none.
+std::vector<string> pageAliases(string name) {
+    std::vector<string> aliases;
+    if (!endsWithText(name, ".html")) {
+        return aliases;
+    }
+    if (name == "index.html") {
+        aliases.push_back("/");
+        return aliases;
+    }
+    if (endsWithText(name, "/index.html")) {
+        string dir = name.substr(0, name.length() - 11);
+        aliases.push_back("/" + dir + "/");
+        aliases.push_back("/" + dir);
+        return aliases;
+    }
+    string stem = name.substr(0, name.length() - 5);
+    aliases.push_back("/" + stem);
+    aliases.push_back("/" + stem + "/");
+    return aliases;
+}
+
+// the addresses registered so far
+class Seen {
+public:
+    std::vector<string> items;
+    Seen() { }
+    bool has(string wanted) {
+        int i = 0;
+        while (i < items.size()) {
+            if (items[i] == wanted) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+};
+
+// What publishSite did: how many files it registered, how many names it refused, and the address to open first.
+struct SiteInfo {
+public:
+    int files;
+    int refused;
+    string start;
+    SiteInfo() {
+        files = 0;
+        refused = 0;
+        start = "";
+    }
+};
+
+// Registers every embedded file under `origin` (like "http://app.localhost", no trailing slash) with its type, and the page aliases
+// above where no real file of that name exists. `csp`, if not empty, is sent with every HTML file. The start address is
+// origin + "/" if there is an index.html, else the first page.
+SiteInfo publishSite(string origin, string csp) {
+    SiteInfo info = new SiteInfo();
+    if (app_asset_site(origin, csp) != 1) {
+        return info;
+    }
+    int count = app_embedded_count();
+    Seen paths = new Seen();
+    std::vector<string> names;
+    int i = 0;
+    while (i < count) {
+        string name = "";
+        app_embedded_name(i, name);
+        if (assetNameOk(name) && app_asset_add_embedded("/" + name, mimeFor(name), i) == 1) {
+            paths.items.push_back("/" + name);
+            names.push_back(name);
+            info.files = info.files + 1;
+        } else {
+            info.refused = info.refused + 1;
+        }
+        i = i + 1;
+    }
+    bool haveIndex = false;
+    string firstPage = "";
+    int n = 0;
+    while (n < names.size()) {
+        string name = names[n];
+        n = n + 1;
+        if (name == "index.html") {
+            haveIndex = true;
+        }
+        if (firstPage.length() == 0 && endsWithText(name, ".html")) {
+            firstPage = "/" + name;
+        }
+        std::vector<string> aliases = pageAliases(name);
+        int a = 0;
+        while (a < aliases.size()) {
+            if (!paths.has(aliases[a])) {
+                app_asset_alias(aliases[a], "/" + name);
+                paths.items.push_back(aliases[a]);
+            }
+            a = a + 1;
+        }
+    }
+    if (haveIndex) {
+        info.start = origin + "/";
+    } else if (firstPage.length() > 0) {
+        info.start = origin + firstPage;
+    }
+    return info;
+}

@@ -9,16 +9,22 @@ EXPECTED_FILES=123
 EXPECTED_PROGRAMS=15
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
-LIBS="cjson_item cjson_api cjson_parse cjson_print text core files app embedded"
+LIBS="cjson_item cjson_api cjson_parse cjson_print text core files assets app embedded"
+EXPECTED_SITE=29
 
 # the native layer and the test doubles (POSIX files), compiled from <repo dir> with <flags> into <prefix>*.o
-NATIVE_SRC="shim/watch.cpp shim/os.cpp shim/posix/fs.cpp shim/posix/proc.cpp shim/posix/watch.cpp tests/doubles/headless_shim.cpp tests/doubles/test_support.cpp"
+NATIVE_SRC="shim/watch.cpp shim/assets.cpp shim/os.cpp shim/posix/fs.cpp shim/posix/proc.cpp shim/posix/watch.cpp tests/doubles/headless_shim.cpp tests/doubles/test_support.cpp"
 native_objs() { # repo flags prefix
     local o="" f
     for f in $NATIVE_SRC; do
         g++ --std=c++17 $2 -c "$1/$f" -o "$3$(echo $f | tr '/' '_').o" || return 1
         o="$o $3$(echo $f | tr '/' '_').o"
     done
+    # the embedded web files: none, unless ASSETS_DIR holds a packed folder
+    local a="${ASSETS_DIR:-$1}"
+    g++ --std=c++17 $2 -c "$a/assets_embedded.cpp" -o "${3}embedded.o" || return 1
+    o="$o ${3}embedded.o"
+    [ -f "$a/assets_blob.o" ] && o="$o $a/assets_blob.o"
     echo "$o"
 }
 
@@ -56,6 +62,14 @@ for m in "headless_main $EXPECTED" "files_main $EXPECTED_FILES" "programs_main $
     if [ $rc -ne 0 ] || [ "$pass" -ne "$2" ] || [ "$bad" -ne 0 ]; then tail -30 $1.asan.out; fail=1; fi
 done
 
+echo "== ASan+UBSan: the program's own web files (packed here, looked up as the window does)"
+bash repo/scripts/pack_assets.sh repo/tests/site site_assets || { echo "PACK FAILED"; exit 1; }
+ASSETS_DIR="$PWD/site_assets" build_program work repo "$ASAN" site_main.asan site_main || { echo "BUILD FAILED"; exit 1; }
+APP_SITE_DIR="$PWD/repo/tests/site" ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1 ./site_main.asan > site_main.asan.out 2>&1
+rc=$?; pass=$(grep -c '^PASS ' site_main.asan.out); bad=$(grep -c '^FAIL ' site_main.asan.out)
+echo "   exit $rc, $pass passed, $bad failed"
+if [ $rc -ne 0 ] || [ "$pass" -ne $EXPECTED_SITE ] || [ "$bad" -ne 0 ]; then tail -30 site_main.asan.out; fail=1; fi
+
 echo "== ASan+UBSan: program launching (real child processes)"
 build_cpp_test proc_shim_test.cpp repo "$ASAN" proc.asan || exit 1
 APP_PROC_ECHO="$PWD/proc_helper" ASAN_OPTIONS=detect_leaks=1 ./proc.asan > proc.asan.out 2>&1; rc=$?
@@ -74,6 +88,16 @@ run_tsan watch.tsan watch.tsan.out; rc=$?
 races=$(grep -c 'WARNING: ThreadSanitizer' watch.tsan.out)
 echo "   exit $rc, $races TSan reports: $(grep 'watch shim test' watch.tsan.out | tail -1)"
 if [ $rc -ne 0 ] || [ "$races" -ne 0 ]; then grep -v '^PASS' watch.tsan.out | head -40; fail=1; fi
+
+echo "== ASan+UBSan and TSan: the asset table"
+g++ --std=c++17 $ASAN -pthread repo/tests/assets_test.cpp -o assets.asan || exit 1
+ASAN_OPTIONS=detect_leaks=1 ./assets.asan > assets.asan.out 2>&1; rc=$?
+echo "   ASan exit $rc: $(tail -1 assets.asan.out)"
+[ $rc -eq 0 ] || { grep -v '^PASS' assets.asan.out | head -20; fail=1; }
+g++ --std=c++17 $TSAN -pthread repo/tests/assets_test.cpp -o assets.tsan || exit 1
+run_tsan assets.tsan assets.tsan.out; rc=$?; races=$(grep -c 'WARNING: ThreadSanitizer' assets.tsan.out)
+echo "   TSan exit $rc, $races reports"
+[ $rc -eq 0 ] && [ "$races" -eq 0 ] || { head -30 assets.tsan.out; fail=1; }
 
 echo "== ASan+UBSan: queue stress"
 build_cpp_test queue_stress.cpp repo "$ASAN" stress.asan || exit 1

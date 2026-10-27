@@ -21,3 +21,8 @@ struct NavRules {
     bool loaded = false;
 };
 void app_nav_install(void* controller, std::shared_ptr<NavRules> rules, int debug);
+
+// The one table of the application's own files (shim/assets.h), and its hook into the browser engine (shim/win/assets.cpp).
+class AssetStore;
+std::shared_ptr<AssetStore> assetStore();
+void app_assets_install(void* controller, std::shared_ptr<AssetStore> store);

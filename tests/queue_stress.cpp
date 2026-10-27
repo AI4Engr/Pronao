@@ -16,7 +16,7 @@
 
 int main() {
     const int producers = 4, perProducer = 500, responders = 3;
-    int h = app_open("stress", 10, 10, "", "", 0);
+    int h = app_open("stress", 10, 10, "", "", "", 0);
     if (h == 0) { std::printf("FAIL: app_open\n"); return 2; }
 
     app_limits(h, 1 << 20, 1 << 30);          // the stress test queues thousands of calls before the consumer starts

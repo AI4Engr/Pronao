@@ -16,7 +16,7 @@ MAIN="$1"; OUT="$2"; MODE="${3:-window}"
 WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
-MODULES="text core files app"
+MODULES="text core files assets app"
 # EXTRA: more modules (paths to .clg files, space separated) that sit between the library and the main program
 EXTRA_NAMES=""
 for x in ${EXTRA:-}; do EXTRA_NAMES="$EXTRA_NAMES $(basename "$x" .clg)"; done
@@ -43,6 +43,9 @@ EMBED="$WORK/embedded.cpp"
     echo 'std::string app_page_html() { return std::string(R"CLING_EMBED('
     if [ -n "${PAGE:-}" ]; then cat "$PAGE"; fi
     echo ')CLING_EMBED"); }'
+    echo 'std::string app_extra_js() { return std::string(R"CLING_EMBED('
+    for x in ${EXTRA_JS:-}; do cat "$x"; echo; done
+    echo ')CLING_EMBED"); }'
 } > "$EMBED"
 
 CXXFLAGS="--std=c++17 -O1 -Wno-unknown-pragmas"
@@ -58,7 +61,9 @@ done
 
 # the native layer: shared files, the OS's files, and either the window or the test doubles
 SHIM="${SHIM:-$HERE/shim}"      # (tests/negative_controls.sh builds against a doctored copy)
-NATIVE=("$SHIM/watch.cpp" "$SHIM/os.cpp" "$SHIM/$PLAT/fs.cpp" "$SHIM/$PLAT/proc.cpp" "$SHIM/$PLAT/watch.cpp")
+# ASSETS=<folder>: the web files compiled into the program (served from memory; see scripts/pack_assets.sh)
+bash "$HERE/scripts/pack_assets.sh" "${ASSETS:--}" "$WORK/assets" || exit 1
+NATIVE=("$SHIM/watch.cpp" "$SHIM/assets.cpp" "$WORK/assets/assets_embedded.cpp" "$SHIM/os.cpp" "$SHIM/$PLAT/fs.cpp" "$SHIM/$PLAT/proc.cpp" "$SHIM/$PLAT/watch.cpp")
 if [ "$MODE" = "--headless" ]; then
     DOUBLES="${DOUBLES:-$HERE/tests/doubles}"
     NATIVE+=("$DOUBLES/headless_shim.cpp" "$DOUBLES/test_support.cpp")
@@ -69,6 +74,7 @@ else
     OBJS+=("$WORK/app_shim.o")
     NATIVE+=("$SHIM/$PLAT/dialog.cpp")
     [ -f "$SHIM/$PLAT/nav.cpp" ] && NATIVE+=("$SHIM/$PLAT/nav.cpp")
+    [ -f "$SHIM/$PLAT/assets.cpp" ] && NATIVE+=("$SHIM/$PLAT/assets.cpp")
     LINK="-static -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
 fi
 for n in "${NATIVE[@]}"; do
@@ -77,4 +83,5 @@ for n in "${NATIVE[@]}"; do
     OBJS+=("$o")
 done
 "$CXX" -c "$EMBED" -o "$WORK/embedded.o"
+[ -f "$WORK/assets/assets_blob.o" ] && OBJS+=("$WORK/assets/assets_blob.o")
 "$CXX" "${OBJS[@]}" "$WORK/embedded.o" $LINK -o "$OUT"

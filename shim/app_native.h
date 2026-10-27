@@ -7,8 +7,8 @@
 #include <vector>
 
 // ---- the window (app_shim.cpp) --------------------------------------------------------------------------------------
-// A window runs `html`, with `init_js` executed before the page's own scripts, on its own UI thread. Returns a handle (> 0) or 0.
-int app_open(std::string title, int width, int height, std::string html, std::string init_js, int debug);
+// A window runs `html` (or, if `url` is not empty, loads that address: see the site calls below), with `init_js` executed before the page's own scripts, on its own UI thread. Returns a handle (> 0) or 0.
+int app_open(std::string title, int width, int height, std::string html, std::string url, std::string init_js, int debug);
 // The next call from the page, or a record the shim queued itself (id empty). 1: got one (`request` is a JSON array text), 0: the
 // window closed and nothing is left, 2: timed out (timeout_ms < 0 waits forever).
 int app_next_call(int handle, int timeout_ms, std::string& id, std::string& request);
@@ -29,6 +29,17 @@ int app_window_guard(int handle, int on);
 int app_limits(int handle, int max_request, int max_queued);
 // After the application's own page, only addresses starting with one of these may load (and never a new window). Default: none.
 int app_navigation_allow(int handle, std::vector<std::string> prefixes);
+
+// ---- the application's own web files, served to the window from memory (Windows). Set up BEFORE app_open ----------------------
+// The window then loads its pages from `origin` (like "http://app.localhost"): that origin is answered from this table, never from the
+// network, and is allowed to navigate in. `csp`, if not empty, is sent as Content-Security-Policy with every HTML file. An address that
+// was not added is a 404. Paths start with "/". Files compiled into the program (scripts/build.sh ASSETS=dir) are added by index.
+int app_asset_site(std::string origin, std::string csp);
+int app_embedded_count();
+int app_embedded_name(int index, std::string& name);                         // relative path, forward slashes
+int app_asset_add_embedded(std::string path, std::string mime, int index);
+int app_asset_add_text(std::string path, std::string mime, std::string text);
+int app_asset_alias(std::string from, std::string to);                       // `from` answers with what `to` is
 
 // ---- files: open first, then ask where the open handle really points (`fin`, as the OS spells it), then act on it -----------
 // mode: 0 read a file | 1 a folder, to list | 2 attributes only, following a link | 3 attributes only, NOT following a final link

@@ -18,18 +18,19 @@ rm -rf "$BASE"; mkdir -p "$BASE/shim" "$BASE/tests"
 cp "$CJSON"/shim/cjson_num.h "$BASE/shim/"
 # the sources the WSL half compiles, laid out as in the repository (the files include each other by relative path)
 mkdir -p "$BASE/repo"
-cp -r "$HERE/shim" "$HERE/tests" "$BASE/repo/"
+cp -r "$HERE/shim" "$HERE/tests" "$HERE/scripts" "$BASE/repo/"
 rm -rf "$BASE/repo/shim_nolock"
+bash "$HERE/scripts/pack_assets.sh" - "$BASE/repo"          # (no embedded web files in these builds)
 
 # transpile everything twice: plain (work) and with the pooled allocator (work_pool)
-MAINS="headless_main files_main programs_main"
+MAINS="headless_main files_main programs_main site_main"
 for variant in work work_pool; do
     flags=""; [ "$variant" = "work_pool" ] && flags="--pool-shared"
     mkdir -p "$BASE/$variant"
     for f in cjson_item cjson_api cjson_parse cjson_print; do cp "$CJSON/src/$f.clg" "$BASE/$variant/"; done
-    for f in text core files app; do cp "$HERE/src/$f.clg" "$BASE/$variant/"; done
+    for f in text core files assets app; do cp "$HERE/src/$f.clg" "$BASE/$variant/"; done
     for m in $MAINS; do cp "$HERE/tests/$m.clg" "$BASE/$variant/"; done
-    for f in cjson_item cjson_api cjson_parse cjson_print text core files app $MAINS; do
+    for f in cjson_item cjson_api cjson_parse cjson_print text core files assets app $MAINS; do
         "$CLING" $flags --cpp "$BASE/$variant/$f.cpp" "$BASE/$variant/$f.clg" > "$BASE/$variant/$f.log" 2>&1 || { grep -v Detected "$BASE/$variant/$f.log"; echo "TRANSPILE FAILED: $variant/$f"; exit 1; }
         case " $MAINS " in *" $f "*) ;; *) "$CLING" $flags --cpp "$BASE/$variant/$f.h" "$BASE/$variant/$f.clg" >> "$BASE/$variant/$f.log" 2>&1 || { echo "TRANSPILE FAILED (header): $variant/$f"; exit 1; } ;; esac
     done
@@ -37,6 +38,7 @@ for variant in work work_pool; do
         echo '#include <string>'
         echo 'std::string app_bridge_js() { return ""; }'
         echo 'std::string app_page_html() { return ""; }'
+        echo 'std::string app_extra_js() { return ""; }'
     } > "$BASE/$variant/embedded.cpp"
 done
 

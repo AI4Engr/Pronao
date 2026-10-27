@@ -38,10 +38,15 @@ void logWindow(int handle, const std::string& line) {
 }
 }  // namespace
 
-int app_open(std::string, int, int, std::string, std::string, int) {
-    std::lock_guard<std::mutex> lock(g_tableMutex);
-    g_table.push_back(std::make_shared<App>());
-    return static_cast<int>(g_table.size());
+int app_open(std::string, int, int, std::string, std::string url, std::string, int) {
+    int handle;
+    {
+        std::lock_guard<std::mutex> lock(g_tableMutex);
+        g_table.push_back(std::make_shared<App>());
+        handle = static_cast<int>(g_table.size());
+    }
+    if (!url.empty()) logWindow(handle, "open|" + url);
+    return handle;
 }
 int app_next_call(int handle, int timeout_ms, std::string& id, std::string& request) {
     auto app = lookup(handle);

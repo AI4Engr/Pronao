@@ -225,6 +225,19 @@ string optionalString(Item args, string name, string fallback) {
     return v.valuestring;
 }
 
+// like optionalString, but a JSON null counts as absent (what a page sends for an optional value that is undefined or None)
+string optionalNullableString(Item args, string name) {
+    Item v = getObjectItem(objectArg(args), name);
+    if (v == nullptr || isNull(v)) {
+        return "";
+    }
+    if (!isString(v)) {
+        string message = "invalid_argument: `" + name + "` must be a string or null";
+        throw message;
+    }
+    return v.valuestring;
+}
+
 bool optionalBool(Item args, string name, bool fallback) {
     Item v = getObjectItem(objectArg(args), name);
     if (v == nullptr) {

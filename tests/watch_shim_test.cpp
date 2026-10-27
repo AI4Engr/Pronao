@@ -74,7 +74,7 @@ static void mkd(const std::string& p) { app_test_mkdir_raw(p); }
 static std::string join(const std::string& a, const std::string& b) { return a + PATHSEP + b; }
 
 int main() {
-    int h = app_open("watch test", 10, 10, "", "", 0);
+    int h = app_open("watch test", 10, 10, "", "", "", 0);
     if (h == 0) { std::printf("FAIL cannot open a headless window\n"); return 2; }
     std::string base;
     if (app_test_make_temp_dir(base) != 0) { std::printf("FAIL no temp dir\n"); return 2; }
