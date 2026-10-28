@@ -167,6 +167,7 @@ c.abort();                                        // p rejects at once with {cod
 ```
 app.setRequestLimits(4 * 1024 * 1024, 256);      // bytes per call, calls waiting; these are the defaults
 app.allowNavigation("http://localhost:5173/");   // optional, e.g. a dev server; before open
+app.allowOnlyCommands(names);                    // optional: this window's page may call only these (a std::vector<string>)
 ```
 - **Size and flood limits.** A call larger than the limit, or arriving while that many are already waiting, is answered at once
   with `{code: "too_large"}` / `{code: "busy"}` and never reaches a command, so a page cannot make the application buffer
@@ -178,6 +179,12 @@ app.allowNavigation("http://localhost:5173/");   // optional, e.g. a dev server;
   new window can open, and the right-click menu is off in a release build (`debug` false). Each refusal reaches the page as the
   event `window.navigationBlocked {url}` (`cling.window.onNavigationBlocked`). The real-window self-test tries a frame, a script
   navigation and a popup, and fails if the guard is removed. Windows only.
+- **A window's own command list.** `app.allowOnlyCommands(names)` (after the commands are registered) limits what this window's
+  page can call; anything else, registered or not, is answered `{code: "forbidden"}` (so names cannot be probed), and a name that
+  is not registered makes the call return false and change nothing. One `App` is one window; a second window will need its own.
+- **Developer tools off in release.** `RELEASE=1 scripts/build.sh ...` compiles the window with `-DAPP_RELEASE`: `open`'s `debug`
+  argument is then ignored (no developer tools, no right-click menu) because the switch is not in the binary, not because a
+  variable is unset. Without `RELEASE`, `debug` works as before.
 - **The environment of a program** is withheld: a program gets only `PATH`, `SystemRoot`, `SYSTEMDRIVE`, `windir`, `TEMP`, `TMP`,
   `TMPDIR`, `LANG`, `LC_ALL`, `HOME` and `USERPROFILE` (those that are set), plus whatever `app.passEnvironment("NAME")` adds.
   A token in the application's own environment is not handed to `git`. A program linked dynamically needs `PATH` to find its

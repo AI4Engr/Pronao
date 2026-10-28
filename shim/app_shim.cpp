@@ -68,6 +68,9 @@ int onUi(int handle, std::function<void(webview::webview&)> op) {
 }  // namespace
 
 int app_open(std::string title, int width, int height, std::string html, std::string url, std::string init_js, int debug) {
+#ifdef APP_RELEASE
+    debug = 0;      // a release build (scripts/build.sh with RELEASE=1) ignores the argument: no developer tools, no context menu, whatever the program asks
+#endif
     auto app = std::make_shared<App>();
     int handle = 0;
     {

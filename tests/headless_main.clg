@@ -1340,6 +1340,36 @@ int main() {
     app.gate.clear();
     app_test_remove_tree(cbase);
 
+    // ---- a window's own list of commands ----------------------------------------------------------------
+    App narrow = new App();
+    narrow.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    narrow.command("echo", closure Command [] (Item args) {
+        return args;
+    });
+    narrow.asyncCommand("aecho", closure AsyncCommand [] (Item args, string id, int handle) {
+        replyOk(handle, id, "\"async\"");
+    });
+    narrow.open("t5", 100, 100, "<html></html>", "", false);
+    check("before a list every registered command is open", roundTrip(narrow, "w1", "[\"echo\",1]") == "0 1");
+    std::vector<string> typo;
+    typo.push_back("add");
+    typo.push_back("ad");
+    check("a name that is not registered is refused, and nothing changes", !narrow.allowOnlyCommands(typo) && roundTrip(narrow, "w2", "[\"echo\",2]") == "0 2");
+    std::vector<string> two;
+    two.push_back("add");
+    two.push_back("aecho");
+    check("a list of registered names is accepted", narrow.allowOnlyCommands(two));
+    check("a listed command works", roundTrip(narrow, "w3", "[\"add\",[2,3]]") == "0 5");
+    check("a listed async command works", roundTrip(narrow, "w4", "[\"aecho\"]") == "0 \"async\"");
+    check("a registered command that is not listed is forbidden", roundTrip(narrow, "w5", "[\"echo\",3]") == "1 {\"code\":\"forbidden\",\"message\":\"this window may not call that command\"}");
+    check("an unknown name gets the same answer, so names cannot be probed", roundTrip(narrow, "w6", "[\"nope\",3]") == "1 {\"code\":\"forbidden\",\"message\":\"this window may not call that command\"}");
+    check("cancelling is always allowed", roundTrip(narrow, "w7", "[\"$cancel\",\"x\"]") == "0 null");
+    std::vector<string> nothing;
+    check("an empty list closes everything", narrow.allowOnlyCommands(nothing) && startsWith(roundTrip(narrow, "w8", "[\"add\",[1,1]]"), "1 {\"code\":\"forbidden\""));
+    narrow.close();
+
     // ---- window control -------------------------------------------------------------------------------
     app.enableWindowCommands();
     string wl = "";

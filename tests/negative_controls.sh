@@ -44,6 +44,7 @@ control "program name check" app.clg 'if (!programNameOk(name) || programs.index
 control "watch limit" app.clg 'if (book.states.size() >= 32) {' 'if (false) {' headless_main "at most 32 folders"
 control "dialog title check" app.clg 'if (!plainText(title, 200)) {' 'if (false) {' headless_main "an over-long title is refused"
 control "a call is answered once" shim/queue.h '    bool answer(const std::string& id) { std::lock_guard<std::mutex> l(m_); return pending_.erase(id) > 0; }' '    bool answer(const std::string& id) { return true; }' headless_main "and nothing else arrives"
+control "a window command list" app.clg '        if (!restricted) {' '        if (true) {' headless_main "a registered command that is not listed is forbidden"
 control "request size limit" shim/queue.h '        if (static_cast<int>(request.size()) > max_request) return 1;' '' headless_main "a call over the size limit is refused"
 control "queue length limit" shim/queue.h '        if (static_cast<int>(q_.size()) >= max_queued) return 2;' '        if (false) return 2;' headless_main "with 3 waiting"
 control "ids a page cannot have" shim/queue.h '        if (id.empty() || id.size() > 64) return 3;' '' headless_main "an id the page could not have been given"

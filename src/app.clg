@@ -64,8 +64,28 @@ public:
     std::vector<string> tags;
     std::vector<string> tagCalls;
 
+    // The commands this window's page may call, once restrict() has been used (before that: every registered command). Anything else
+    // is answered {code: "forbidden"}, whether or not such a command exists, so the page cannot probe for names.
+    std::vector<string> allowed;
+    bool restricted;
+
     Dispatcher() {
         defaultTimeoutMs = 0;
+        restricted = false;
+    }
+
+    bool mayCall(string name) {
+        if (!restricted) {
+            return true;
+        }
+        int i = 0;
+        while (i < allowed.size()) {
+            if (allowed[i] == name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
     }
 
     int timeoutFor(string name) {
@@ -228,6 +248,9 @@ public:
         Item tagItem = getArrayItem(parsed, 2);
         if (tagItem != nullptr && isString(tagItem) && tagItem.valuestring.length() <= 64) {
             tag = tagItem.valuestring;
+        }
+        if (!mayCall(nameItem.valuestring)) {
+            return new Reply(1, errorJson("forbidden", "this window may not call that command"));
         }
         int index = indexOf(nameItem.valuestring);
         int asyncIndex = indexOfAsync(nameItem.valuestring);
@@ -1833,6 +1856,23 @@ public:
             return false;
         }
         navigation.push_back(prefix);
+        return true;
+    }
+
+    // From now on the page may call only the commands named here (every name must be one that is registered by now, so a typo cannot
+    // silently leave a command open or closed). Others are answered {code: "forbidden"}, registered or not. Cancelling a call
+    // ($cancel) is always allowed. Calling it again replaces the list. One App serves one window, so this is that window's list.
+    // false (and nothing changes) if a name is not registered.
+    bool allowOnlyCommands(std::vector<string> names) {
+        int i = 0;
+        while (i < names.size()) {
+            if (dispatcher.indexOf(names[i]) < 0 && dispatcher.indexOfAsync(names[i]) < 0) {
+                return false;
+            }
+            i = i + 1;
+        }
+        dispatcher.allowed = names;
+        dispatcher.restricted = true;
         return true;
     }
 
