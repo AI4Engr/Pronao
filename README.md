@@ -359,7 +359,7 @@ sit side by side (`../CeeLing/build/cling.exe`, `../cjson-cling`) and `g++` is o
 (`--release`, `--headless`) and a README; `cd ../my-app && bash build.sh` builds `out/my-app.exe`. `tests/run_template.sh` checks that
 a fresh project builds in all three ways and its window starts.
 
-`third_party/` is not committed; `fetch.sh` recreates it. The window build links statically (about 3 MB).
+`third_party/` is not committed; `fetch.sh` recreates it. The window build links statically. Sizes of the hello example: 4.3 MB before, 4.1 MB with unused code dropped (`--gc-sections`, now always on), 1.6 MB with `RELEASE=1` (which also strips the symbols; `STRIP=1` strips without the other release switches). A stripped program has no function names for a debugger or a backtrace, so keep a plain build for debugging.
 
 ## Layout
 

@@ -7,7 +7,7 @@
 # Environment: CLING (compiler), CJSON (path of cjson-cling), CXX (all found automatically when the projects sit side by side), CLING_FLAGS, WORK, PAGE (an .html file to embed as
 # app_page_html(); empty if unset). src/bridge.js is always embedded as app_bridge_js().
 # RELEASE=1: the window ignores the debug argument of open (no developer tools, no context menu) and the program refuses a development
-# server (APP_DEV_URL): compiled out, not a runtime switch.
+# server (APP_DEV_URL): compiled out, not a runtime switch. It also strips the symbols (STRIP=1 does that alone).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$HERE/scripts/env.sh"      # CLING, CJSON, CXX: from the environment, else the side-by-side layout (see env.sh)
@@ -48,7 +48,12 @@ EMBED="$WORK/embedded.cpp"
     echo ')CLING_EMBED"); }'
 } > "$EMBED"
 
-CXXFLAGS="--std=c++17 -O1 -Wno-unknown-pragmas ${RELEASE:+-DAPP_RELEASE}"
+# -ffunction-sections / -fdata-sections + --gc-sections drop what nothing uses; RELEASE=1 (or STRIP=1) also strips the symbols
+# (smaller, but no backtraces or debugger names: keep a non-release build for that)
+SECTIONS="-ffunction-sections -fdata-sections"
+GC="-Wl,--gc-sections"
+STRIP_FLAG="${RELEASE:+-s}${STRIP:+-s}"
+CXXFLAGS="--std=c++17 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE}"
 OBJS=()
 for f in cjson_item cjson_api cjson_parse cjson_print $MODULES $EXTRA_NAMES "$MAIN_NAME"; do
     OBJS+=("$WORK/$f.o")
@@ -70,7 +75,7 @@ if [ "$MODE" = "--headless" ]; then
     LINK="-pthread"
 else
     INC="-I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
-    "$CXX" --std=c++14 -O1 -Wno-unknown-pragmas ${RELEASE:+-DAPP_RELEASE} $INC -c "$SHIM/app_shim.cpp" -o "$WORK/app_shim.o"
+    "$CXX" --std=c++14 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE} $INC -c "$SHIM/app_shim.cpp" -o "$WORK/app_shim.o"
     OBJS+=("$WORK/app_shim.o")
     NATIVE+=("$SHIM/$PLAT/dialog.cpp")
     [ -f "$SHIM/$PLAT/nav.cpp" ] && NATIVE+=("$SHIM/$PLAT/nav.cpp")
@@ -84,4 +89,4 @@ for n in "${NATIVE[@]}"; do
 done
 "$CXX" -c "$EMBED" -o "$WORK/embedded.o"
 [ -f "$WORK/assets/assets_blob.o" ] && OBJS+=("$WORK/assets/assets_blob.o")
-"$CXX" "${OBJS[@]}" "$WORK/embedded.o" $LINK -o "$OUT"
+"$CXX" "${OBJS[@]}" "$WORK/embedded.o" $GC $STRIP_FLAG $LINK -o "$OUT"
