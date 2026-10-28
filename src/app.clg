@@ -1071,6 +1071,55 @@ void finishLater(int handle, string id, int status, string payload) {
     }
 }
 
+// ---- work that goes through a Channel and needs the main thread ----------------------------------------------------------
+// A worker that needs something only the main thread may do (read a file through the file policy, say) sends a request on a Channel<T>
+// and waits for the answer on another; the main thread answers from a pump. The main loop sleeps in its own queue, so a send on a
+// Channel does not wake it: the worker calls wakeMain(handle, name) after sending, and the loop runs the pump registered under that name
+// (App.onPump), which drains the channel:
+//
+//     Channel<Job> toMain;                                    // struct Job { string path; Channel<string> reply; ... }
+//     app.onPump("files", closure Pump [toMain] (FileGate gate) {
+//         while (toMain.wait(0)) {                           // poll: never wait on the main thread
+//             Job j = toMain.take();
+//             j.reply.send(gate.read(j.path, 1048576).text);
+//         }
+//     });
+//     // in a worker (spawn): toMain.send(new Job(path, reply)); wakeMain(handle, "files"); reply.wait(5000) ...
+//
+// A pump must not throw (there is no page call to reject; the error is dropped) and must not wait: it runs on the thread that serves the window.
+class Pump {
+public:
+    Pump() { }
+    virtual void pump(FileGate gate) { }
+};
+
+class PumpBook {
+public:
+    std::vector<string> names;
+    std::vector<Pump> items;
+    PumpBook() { }
+    int indexOf(string name) {
+        int i = 0;
+        while (i < names.size()) {
+            if (names[i] == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+};
+
+// Runs on a worker: asks the main loop to run the pump called `name`. false if the main loop's queue is full (the pump will run on the next
+// wake, so a worker that must not stall should wake again later).
+bool wakeMain(int handle, string name) {
+    string record = "pump";
+    record.push_back(char(0));
+    record = record + name;
+    record.push_back(char(0));
+    return app_push(handle, "", record, 100000) == 1;
+}
+
 // ---- watching folders -----------------------------------------------------------------------------
 // fs.watch {path, recursive?} starts a watch and answers {id}; changes then arrive on the page as "fs.change" events
 //     {watch: id, kind: "created" | "modified" | "removed", path}              path is relative to the watched folder
@@ -1337,6 +1386,7 @@ public:
     Dispatcher dispatcher;
     ProgramRegistry programs;
     LaterBook laters;
+    PumpBook pumps;
     FileGate gate;
     Watches watches;
     WindowState window;
@@ -1350,6 +1400,7 @@ public:
         dispatcher = new Dispatcher();
         programs = new ProgramRegistry();
         laters = new LaterBook();
+        pumps = new PumpBook();
         gate = new FileGate();
         cling::setExitGraceMs(5000);
         watches = new Watches();
@@ -2022,6 +2073,22 @@ public:
         return open(title, width, height, "", app_bridge_js() + app_extra_js(), debug);
     }
 
+    // Registers the pump that wakeMain(handle, name) runs on the main thread (see Pump). The same name replaces the earlier pump.
+    // false for a name that is empty, over 64 bytes or not plain text.
+    bool onPump(string name, Pump p) {
+        if (name.length() == 0 || !plainText(name, 64)) {
+            return false;
+        }
+        int index = pumps.indexOf(name);
+        if (index >= 0) {
+            pumps.items[index] = p;
+        } else {
+            pumps.names.push_back(name);
+            pumps.items.push_back(p);
+        }
+        return true;
+    }
+
     // Expects a record from a worker for the page call `id`: when finishLater arrives, `l.done` runs on the main thread.
     void later(string id, Later l) {
         laters.ids.push_back(id);
@@ -2037,7 +2104,7 @@ public:
         return run;
     }
 
-    // A record the native layer queued itself (empty id): "watch", "pick", "window" or "later".
+    // A record the native layer queued itself (empty id): "watch", "pick", "window", "later" or "pump".
     void onInternalRecord(string request) {
         std::vector<string> f = splitFields(request);
         if (f.size() == 0) {
@@ -2049,6 +2116,16 @@ public:
             onPickRecord(f);
         } else if (f[0] == "window") {
             onWindowRecord(f);
+        } else if (f[0] == "pump" && f.size() >= 2) {
+            int index = pumps.indexOf(f[1]);
+            if (index >= 0) {
+                Pump p = pumps.items[index];
+                try {
+                    p.pump(gate);
+                } catch (string message) {
+                    // nothing to answer: a pump has no page call (see Pump)
+                }
+            }
         } else if (f[0] == "later" && f.size() >= 4) {
             int index = laters.indexOf(f[1]);
             if (index < 0) {

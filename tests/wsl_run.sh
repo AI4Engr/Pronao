@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$1"
 fail=0
-EXPECTED=236
+EXPECTED=240
 EXPECTED_FILES=123
 EXPECTED_PROGRAMS=15
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
@@ -135,4 +135,10 @@ run_tsan headless.nolockret headless.nolockret.out
 races=$(grep -c 'WARNING: ThreadSanitizer' headless.nolockret.out)
 echo "   $races TSan reports"
 if [ "$races" -eq 0 ]; then echo "   NEGATIVE CONTROL DID NOT FAIL -- the TSan run of the CeeLing tests proves nothing"; fail=1; fi
+echo "== TSan negative control 3: Channel::send without its lock (a producer thread and the consumer; must report a race)"
+build_program work_nochannel repo "$TSAN" headless.nochannel headless_main || { echo "BUILD FAILED"; exit 1; }
+run_tsan headless.nochannel headless.nochannel.out
+races=$(grep -c 'WARNING: ThreadSanitizer' headless.nochannel.out)
+echo "   $races TSan reports"
+if [ "$races" -eq 0 ]; then echo "   NEGATIVE CONTROL DID NOT FAIL -- the TSan run of the Channel checks proves nothing"; fail=1; fi
 exit $fail

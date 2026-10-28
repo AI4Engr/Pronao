@@ -5,7 +5,7 @@
 # Fails if any check prints FAIL, if fewer than the expected number of checks ran, or if a program does not exit 0.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_HEADLESS=236
+EXPECTED_HEADLESS=240
 EXPECTED_FILES=139
 EXPECTED_PROGRAMS=18
 EXPECTED_TAURIPORT=50

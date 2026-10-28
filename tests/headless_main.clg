@@ -177,6 +177,14 @@ string demoJson(string count, string tags, string spotY, string more) {
     return "{\"name\":\"n\",\"count\":" + count + ",\"flag\":true,\"ratio\":0.5,\"tags\":" + tags + ",\"spot\":{\"x\":1,\"y\":" + spotY + "},\"more\":" + more + ",\"extra\":[1]}";
 }
 
+// A worker asks the main thread for something and waits for the answer on the channel it brings along.
+struct FileAsk {
+public:
+    string path;
+    Channel<string> reply;
+    FileAsk(string p, Channel<string> r) { path = p; reply = r; }
+};
+
 // decodeDemoArgs is not written anywhere: a call to decode<StructName> asks the compiler for it (CeeLing's struct_json)
 struct DemoSpot {
 public:
@@ -223,6 +231,33 @@ int main() {
             text = text + ":flag";
         }
         return createString(text);
+    });
+    // a worker reads a file THROUGH THE MAIN THREAD: request on a Channel, pump answers on the reply Channel it was given
+    Channel<FileAsk> toMain;
+    app.onPump("files", closure Pump [toMain] (FileGate gate) {
+        while (toMain.wait(0)) {
+            FileAsk ask = toMain.take();
+            FsResult r = gate.read(ask.path, 100000);
+            if (r.status == 0) {
+                ask.reply.send(r.text);
+            } else {
+                ask.reply.send("ERR");
+            }
+        }
+    });
+    app.asyncCommand("viapump", closure AsyncCommand [toMain] (Item args, string id, int handle) {
+        string path = stringAt(args, 0);
+        Channel<FileAsk> asks = toMain;      // (a nested closure can capture a local, not the outer closure's own captures)
+        spawn(closure Job [asks, path, id, handle] () {
+            Channel<string> reply;
+            asks.send(new FileAsk(path, reply));
+            wakeMain(handle, "files");
+            string answer = "timeout";
+            if (reply.wait(5000)) {
+                answer = reply.take();
+            }
+            replyOk(handle, id, "\"" + answer + "\"");
+        });
     });
     // async commands: the worker rebuilds its own JSON tree from a string and answers the page itself
     app.asyncCommand("aecho", closure AsyncCommand [] (Item args, string id, int handle) {
@@ -1387,6 +1422,41 @@ int main() {
     check("a struct inside an array is named with its path", roundTrip(app, "d8", "[\"decoded\"," + demoJson("3", okTags, "2", "[{\"x\":5}]") + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`more[0].y` must be a number\"}");
     check("arguments that are not an object are refused", roundTrip(app, "d9", "[\"decoded\",[1]]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
     check("no arguments at all are refused", roundTrip(app, "d10", "[\"decoded\"]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
+
+    // ---- a worker asks the main thread through Channels ---------------------------------------------------
+    string pumpDir = "";
+    app_test_make_temp_dir(pumpDir);
+    app.allowFolder(pumpDir);
+    app_test_write_raw(pumpDir + "/note.txt", "pumped text");
+    Item pumpArgs = createArray();
+    addItemToArray(pumpArgs, createString(pumpDir + "/note.txt"));
+    check("a worker reads an allowed file through the main thread's pump", roundTrip(app, "p1", requestText("viapump", pumpArgs)) == "0 \"pumped text\"");
+    Item pumpOutside = createArray();
+    addItemToArray(pumpOutside, createString(pumpDir + "/../nope.txt"));
+    check("the pump applies the file policy: a path outside the allowed folders is refused", roundTrip(app, "p2", requestText("viapump", pumpOutside)) == "0 \"ERR\"");
+    check("pumps are registered by a plain name; an empty one is refused", app.onPump("other", closure Pump [] (FileGate gate) { }) && !app.onPump("", closure Pump [] (FileGate gate) { }));
+    app_test_remove_tree(pumpDir);
+
+    // a producer thread and this thread use one Channel at the same time (TSan watches this one: see tests/run_sanitizers.sh, control 3)
+    Channel<int> stream;
+    spawn(closure Job [stream] () {
+        int n = 0;
+        while (n < 500) {
+            while (!stream.send(n)) {
+                app_test_sleep_ms(1);
+            }
+            n = n + 1;
+        }
+        stream.close();
+    });
+    int streamed = 0;
+    int streamSum = 0;
+    while (stream.wait(5000)) {
+        streamSum = streamSum + stream.take();
+        streamed = streamed + 1;
+    }
+    check("a Channel carries 500 values from a producer thread, in order, with no loss", streamed == 500 && streamSum == 124750);
+
 
     // ---- development server addresses ---------------------------------------------------------------------
     check("localhost with a port is a development server", devServerOrigin("http://localhost:5173/") == "http://localhost:5173");

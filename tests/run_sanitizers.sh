@@ -61,6 +61,25 @@ t2 = t.replace(key, '{ app->replies.push_back(')
 open(d, 'w', encoding='utf-8', newline='').write(t2)
 PYEOF
 [ $? -eq 0 ] || { echo "NEGATIVE CONTROL SETUP FAILED"; exit 1; }
+# control 3: the same transpiled program with the lock taken out of Channel::send in every generated file (the runtime template is
+# emitted into each .cpp); the producer / consumer check in headless_main then races on the queue and TSan must say so
+rm -rf "$BASE/work_nochannel"; cp -r "$BASE/work" "$BASE/work_nochannel"
+python3 - "$BASE/work_nochannel" <<'PYEOF'
+import glob, sys
+lock = "std::lock_guard<std::mutex> lock(s_->m);"
+tail = "if (s_->closed || s_->items.size() >= s_->capacity) return false;"
+n = 0
+for p in glob.glob(sys.argv[1] + "/*.cpp"):
+    s = open(p, encoding='utf-8', newline='').read()
+    i = s.find(tail)
+    j = s.rfind(lock, 0, i) if i >= 0 else -1
+    if j >= 0:
+        s = s[:j] + "/* lock removed */" + s[j + len(lock):]
+        open(p, 'w', encoding='utf-8', newline='').write(s)
+        n += 1
+assert n > 0, "no generated file carries the Channel template"
+PYEOF
+[ $? -eq 0 ] || { echo "NEGATIVE CONTROL 3 SETUP FAILED"; exit 1; }
 cp "$HERE/tests/wsl_run.sh" "$BASE/"
 
 if command -v cygpath >/dev/null 2>&1; then
