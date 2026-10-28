@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>__NAME__</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  input, button { font-size: 1em; padding: .3em; }
+  pre { background: #f4f4f4; padding: 1em; }
+</style></head>
+<body>
+<h1>__NAME__</h1>
+<p><input id="name" value="world"> <input id="times" type="number" value="1" min="1" max="5" style="width:4em">
+<button id="go">greet</button></p>
+<pre id="out">(the answer of the CeeLing command appears here)</pre>
+<script>
+  // cling.invoke(command, args) calls a command written in main.clg and returns a promise.
+  document.getElementById('go').onclick = () => {
+    cling.invoke('greet', { name: document.getElementById('name').value, times: Number(document.getElementById('times').value) })
+      .then(v => { out.textContent = v; }, e => { out.textContent = 'refused: ' + e.code + ' - ' + e.message; });
+  };
+  const out = document.getElementById('out');
+</script>
+</body>
+</html>

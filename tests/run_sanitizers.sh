@@ -10,10 +10,10 @@
 # Only the native layer, the test doubles and the CeeLing layer are covered; webview and the browser engine are not built here.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export PATH="/c/apps/msys64/mingw64/bin:$PATH"
-CLING="${CLING:-c:/project/CeeLing/build/cling.exe}"
-CJSON="${CJSON:-/c/project/cjson-cling}"
-BASE="${BASE:-/c/tmp/app-cling-san}"
+. "$HERE/scripts/env.sh"
+# the sources are copied under BASE, which WSL must see: a Windows folder is reached as /mnt/<drive>/... (wslpath converts)
+BASE="${BASE:-${TMPDIR:-/tmp}/app-cling-san}"
+WSL_DISTRO="${WSL_DISTRO:-}"             # empty: WSL's default distribution
 rm -rf "$BASE"; mkdir -p "$BASE/shim" "$BASE/tests"
 cp "$CJSON"/shim/cjson_num.h "$BASE/shim/"
 # the sources the WSL half compiles, laid out as in the repository (the files include each other by relative path)
@@ -63,7 +63,14 @@ PYEOF
 [ $? -eq 0 ] || { echo "NEGATIVE CONTROL SETUP FAILED"; exit 1; }
 cp "$HERE/tests/wsl_run.sh" "$BASE/"
 
-MSYS_NO_PATHCONV=1 wsl -d Ubuntu-22.04 -- bash /mnt/c/tmp/app-cling-san/wsl_run.sh /mnt/c/tmp/app-cling-san
+if command -v cygpath >/dev/null 2>&1; then
+    # Windows: the sanitizer half runs in WSL, which reaches the folder as /mnt/<drive>/... (asked of WSL itself, so any drive works)
+    WSL_BASE="$(MSYS_NO_PATHCONV=1 wsl ${WSL_DISTRO:+-d "$WSL_DISTRO"} -- wslpath -a "$(cygpath -m "$BASE")" | tr -d '')"
+    [ -n "$WSL_BASE" ] || { echo "WSL did not translate $BASE (is WSL installed? set WSL_DISTRO=<name> to choose a distribution)"; exit 1; }
+    MSYS_NO_PATHCONV=1 wsl ${WSL_DISTRO:+-d "$WSL_DISTRO"} -- bash "$WSL_BASE/wsl_run.sh" "$WSL_BASE"
+else
+    bash "$BASE/wsl_run.sh" "$BASE"          # Linux: no WSL needed
+fi
 rc=$?
 if [ $rc -eq 0 ]; then echo "sanitizers: ALL OK"; else echo "sanitizers: FAILED"; fi
 exit $rc

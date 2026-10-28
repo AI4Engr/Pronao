@@ -27,7 +27,8 @@ rm -rf third_party/webview third_party/webview2
 mkdir -p third_party/webview third_party/webview2
 tar xzf third_party/_dl/webview-0.12.0.tar.gz -C third_party/webview --strip-components=1 \
     webview-0.12.0/core webview-0.12.0/LICENSE
-PY="${PYTHON:-/c/apps/miniforge3/python.exe}"
+PY="${PYTHON:-$(command -v python3 || command -v python || true)}"
+[ -n "$PY" ] || { echo "fetch.sh needs Python 3 on PATH (or PYTHON=<path>) to unpack the WebView2 package" >&2; exit 1; }
 "$PY" -I - <<'PYEOF'
 import zipfile
 z = zipfile.ZipFile("third_party/_dl/webview2-1.0.1150.38.nupkg")

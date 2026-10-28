@@ -4,15 +4,13 @@
 # Every .clg (cjson-cling's library, src/*.clg, the main) is transpiled to its own .cpp/.h, compiled separately and linked
 # with the native layer in shim/ (shim/win or shim/posix for the OS). --headless links the test doubles in tests/doubles
 # instead of the window and the dialogs (no webview, no window).
-# Environment: CLING (compiler), CJSON (path of cjson-cling), CXX, CLING_FLAGS, WORK, PAGE (an .html file to embed as
+# Environment: CLING (compiler), CJSON (path of cjson-cling), CXX (all found automatically when the projects sit side by side), CLING_FLAGS, WORK, PAGE (an .html file to embed as
 # app_page_html(); empty if unset). src/bridge.js is always embedded as app_bridge_js().
 # RELEASE=1: the window ignores the debug argument of open (no developer tools, no context menu) and the program refuses a development
 # server (APP_DEV_URL): compiled out, not a runtime switch.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLING="${CLING:-c:/project/CeeLing/build/cling.exe}"
-CJSON="${CJSON:-/c/project/cjson-cling}"
-CXX="${CXX:-g++}"
+. "$HERE/scripts/env.sh"      # CLING, CJSON, CXX: from the environment, else the side-by-side layout (see env.sh)
 CLING_FLAGS="${CLING_FLAGS---pool-shared}"
 MAIN="$1"; OUT="$2"; MODE="${3:-window}"
 WORK="${WORK:-$(mktemp -d)}"

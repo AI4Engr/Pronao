@@ -1,0 +1,46 @@
+// __NAME__ -- an app-cling program: CeeLing commands behind a web page. Build with `bash build.sh`.
+//   APP_DEV_URL=http://localhost:5173/  loads a front-end dev server instead of index.html (not in a --release build)
+//   APP_DEBUG=1                         turns the developer tools on
+#include "app.clh"
+
+// The page sends {name: "...", times: 2}; the compiler writes decodeGreetArgs because this is a struct (see the README, "Arguments into a struct").
+struct GreetArgs {
+public:
+    string name;
+    int times;
+    GreetArgs(string n, int t) { name = n; times = t; }
+};
+
+int main() {
+    App app = new App();
+    app.command("greet", closure Command [] (Item args) {
+        GreetArgs a = decodeGreetArgs(args);
+        if (a.name.length() == 0 || a.times < 1 || a.times > 5) {
+            throw "invalid_argument: name must not be empty and times must be 1 to 5";
+        }
+        string text = "";
+        int i = 0;
+        while (i < a.times) {
+            text = text + "hello, " + a.name + "! ";
+            i = i + 1;
+        }
+        return createString(text);
+    });
+
+    string debugText = "";
+    bool debug = app_os_env("APP_DEBUG", debugText) == 1 && debugText == "1";
+    bool opened = false;
+    string devUrl = app.devServerFromEnvironment();
+    if (devUrl.length() > 0) {
+        opened = app.openDevServer("__NAME__", 720, 480, devUrl);
+    } else {
+        opened = app.openPage("__NAME__", 720, 480, debug);
+    }
+    if (!opened) {
+        std::cout << "could not open the window" << std::endl;
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

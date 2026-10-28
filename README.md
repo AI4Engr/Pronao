@@ -349,8 +349,15 @@ bash tests/run_tauriport_window.sh     # the tauriport port in a real window, ag
 bash tests/run_tauriport_frontend.sh   # tauriport's own compiled front end, served from memory, in a real window
 ```
 
-Requirements: the CeeLing compiler (`CLING`, default `c:/project/CeeLing/build/cling.exe`), cjson-cling (`CJSON`), MinGW
-g++, the WebView2 runtime for window runs, WSL with g++ for the sanitizers. Windows is the only platform tried.
+Requirements: the CeeLing compiler, cjson-cling, a C++ compiler (MinGW-w64 on Windows), the WebView2 runtime for window runs, WSL with
+g++ for the sanitizers. Windows is the only platform tried. The scripts find the tools themselves when CeeLing, cjson-cling and app-cling
+sit side by side (`../CeeLing/build/cling.exe`, `../cjson-cling`) and `g++` is on `PATH`; otherwise set `CLING`, `CJSON`, `CXX`
+(`scripts/env.sh` says what is missing). `WSL_DISTRO` picks the WSL distribution for the sanitizer run (default: WSL's default);
+`TMPDIR` is where the test scripts work.
+
+**A new project:** `bash scripts/new_project.sh ../my-app` makes a folder with a page, a `main.clg` with one command, a `build.sh`
+(`--release`, `--headless`) and a README; `cd ../my-app && bash build.sh` builds `out/my-app.exe`. `tests/run_template.sh` checks that
+a fresh project builds in all three ways and its window starts.
 
 `third_party/` is not committed; `fetch.sh` recreates it. The window build links statically (about 3 MB).
 
