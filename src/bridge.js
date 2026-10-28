@@ -9,9 +9,26 @@
 (function () {
   if (window.cling) return;
   var listeners = {};
+  var tags = 0;
   window.cling = {
-    invoke: function (command, args) {
-      return window.__cling_invoke(String(command), args === undefined ? null : args);
+    // invoke(command, args, {signal}): with an AbortSignal, aborting it rejects the promise at once with {code: "cancelled"} and tells the
+    // program to stop the work (a program the command started is killed). Only async commands can be stopped; others simply finish.
+    invoke: function (command, args, options) {
+      var a = args === undefined ? null : args;
+      var signal = options && options.signal;
+      if (!signal) return window.__cling_invoke(String(command), a);
+      if (signal.aborted) return Promise.reject({ code: 'cancelled', message: 'aborted before it started' });
+      var tag = 't' + (++tags) + '-' + Math.random().toString(36).slice(2, 10);
+      var call = window.__cling_invoke(String(command), a, tag);
+      return new Promise(function (resolve, reject) {
+        var onAbort = function () {
+          reject({ code: 'cancelled', message: 'aborted' });
+          window.__cling_invoke('$cancel', tag);
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        call.then(function (v) { signal.removeEventListener('abort', onAbort); resolve(v); },
+                  function (e) { signal.removeEventListener('abort', onAbort); reject(e); });
+      });
     },
     on: function (name, fn) {
       name = String(name);

@@ -12,6 +12,9 @@
 
 ext_fn int app_return(int handle, string id, int status, string json);
 ext_fn int app_eval(int handle, string js);
+ext_fn int app_cancel_forget(int handle, string call);
+ext_fn int app_cancelled(int handle, string call);
+ext_fn int app_sleep_ms(int ms);
 
 // What a handler produces. status 0 resolves the page's promise with `json`; 1 rejects it.
 class Reply {
@@ -166,10 +169,18 @@ public:
 // Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
 void replyOk(int handle, string id, string json) {
     app_return(handle, id, 0, json);
+    app_cancel_forget(handle, id);
 }
 
 void replyError(int handle, string id, string code, string message) {
     app_return(handle, id, 1, errorJson(code, message));
+    app_cancel_forget(handle, id);
+}
+
+// True once the page gave up on call `id` (its AbortSignal fired, or its timeout passed) or the window is closing. A job that runs for a
+// long time checks this between its steps and stops; a program it started is killed by the runner without the job doing anything.
+bool callCancelled(int handle, string id) {
+    return app_cancelled(handle, id) == 1;
 }
 
 // ---- events: CeeLing -> page -------------------------------------------------------------------

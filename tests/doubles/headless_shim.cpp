@@ -58,7 +58,7 @@ int app_push(int handle, std::string id, std::string request, int max_queued) {
 }
 int app_return(int handle, std::string id, int status, std::string json) {
     auto app = lookup(handle);
-    if (!app) return 0;
+    if (!app || !app->calls.answer(id)) return 0;
     { std::lock_guard<std::mutex> lock(app->m); app->replies.push_back(Reply{std::move(id), status, std::move(json)}); }
     app->cv.notify_all();
     return 1;
@@ -80,6 +80,14 @@ int app_ui_call(int handle, const std::function<void(void*)>& fn) {
     if (!lookup(handle)) return 0;
     fn(nullptr);
     return 1;
+}
+int app_pending(int handle, std::string call) {
+    auto app = lookup(handle);
+    return app && app->calls.waiting(call) ? 1 : 0;
+}
+int app_window_closed(int handle) {
+    auto app = lookup(handle);
+    return !app || app->calls.closed() ? 1 : 0;
 }
 int app_close(int handle) {
     auto app = lookup(handle);
@@ -120,7 +128,10 @@ int app_test_inject(int handle, std::string id, std::string request) {
     if (!app) return 3;
     int refused;
     { std::lock_guard<std::mutex> lock(app->m); refused = app->calls.admit(id, request, app->maxRequest, app->maxQueued); }
-    if (refused == 1 || refused == 2) app_return(handle, id, 1, refusalJson(refused));
+    if (refused == 1 || refused == 2) {      // answered at once, as the page's bind callback does (the call was never pending)
+        { std::lock_guard<std::mutex> lock(app->m); app->replies.push_back(Reply{id, 1, refusalJson(refused)}); }
+        app->cv.notify_all();
+    }
     return refused;
 }
 int app_test_take_response(int handle, std::string& id, int& status, std::string& json) {

@@ -44,6 +44,15 @@
     const ev = await changed;                                           // arrives from the watcher thread via the main loop
     await cling.fs.unwatch({ id: watch.id });
     r.watch = [ev.kind === 'created' || ev.kind === 'modified', ev.watch === watch.id];
+    // the page abandons a slow program (an AbortSignal): the promise rejects at once with {code: 'cancelled'}; a call with a deadline is answered 'timed_out'
+    const controller = new AbortController();
+    const slow = cling.invoke('proc.run', { program: 'slow', args: { n: 30 } }, { signal: controller.signal });
+    setTimeout(function () { controller.abort(); }, 500);
+    const abortStart = Date.now();
+    let abortCode = null;
+    try { await slow; } catch (e) { abortCode = e.code; }
+    r.abort = [abortCode, Date.now() - abortStart < 3000];
+    try { await cling.invoke('aforever'); } catch (e) { r.deadline = e.code; }
     const ran = await cling.proc.run({ program: 'host' });            // a real program, named by the page, templated by the app
     r.proc = [ran.exitCode, ran.stdout.length > 0, ran.timedOut];
     try { await cling.proc.run({ program: 'cmd' }); } catch (e) { r.noShell = e.code; }   // never registered

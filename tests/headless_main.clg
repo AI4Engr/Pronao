@@ -7,6 +7,8 @@ ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref
 ext_fn int app_test_close_window(int handle);
 ext_fn int app_test_take_eval(int handle, ref string js);
 ext_fn int app_test_response_ready(int handle);
+ext_fn double app_now_ms();
+ext_fn int app_test_exists(string path);
 ext_fn int app_limits(int handle, int maxRequest, int maxQueued);
 ext_fn int app_test_setenv(string name, string value);
 ext_fn int app_test_push_internal(int handle, string request);
@@ -86,6 +88,11 @@ int countText(string text, string needle) {
         }
     }
     return n;
+}
+
+// the window's calls are all cancelled once it has closed (what a job polls through callCancelled)
+bool app_cancelled_after_close(int handle) {
+    return callCancelled(handle, "any call at all");
 }
 
 bool startsWith(string text, string prefix) {
@@ -247,6 +254,27 @@ int main() {
             app_test_sleep_ms(ms);
             app_test_gauge_leave();
             replyOk(handle, id, "1");
+        });
+    });
+    // answers twice: the page's promise must settle once
+    app.asyncCommand("adouble", closure AsyncCommand [] (Item args, string id, int handle) {
+        spawn(closure Job [id, handle] () {
+            replyOk(handle, id, "\"first\"");
+            replyOk(handle, id, "\"second\"");
+            replyError(handle, id, "late", "a third answer");
+        });
+    });
+    // works in small steps until the call is abandoned, then leaves a mark (args: the mark's path)
+    app.asyncCommand("acoop", closure AsyncCommand [] (Item args, string id, int handle) {
+        string mark = stringAt(args, 0);
+        spawn(closure Job [mark, id, handle] () {
+            int steps = 0;
+            while (!callCancelled(handle, id) && steps < 600) {
+                app_test_sleep_ms(10);
+                steps = steps + 1;
+            }
+            app_test_write_raw(mark, intToString(steps));
+            replyOk(handle, id, "\"stopped\"");
         });
     });
     // emits from a worker thread through emitEvent, then replies
@@ -1219,6 +1247,98 @@ int main() {
     app_test_take_eval(app.handle, blockedEvent);
     check("a refused navigation reaches the application as an event", startsWith(blockedEvent, "window.__cling_emit([\"window.navigationBlocked\",{\"url\":\"https://evil.example/") &&
           containsText(blockedEvent, "\\\"><script>"));
+
+    // ---- one answer per call, cancelling, timeouts, shutdown ---------------------------------------------
+    check("a page call is answered once: the second and third answers are dropped", roundTrip(app, "z1", "[\"adouble\"]") == "0 \"first\"");
+    app_test_sleep_ms(200);
+    check("and nothing else arrives", app_test_response_ready(app.handle) == 0);
+    check("an answer for a call nobody made is dropped", app_return(app.handle, "never-asked", 0, "1") == 0);
+
+    string cbase = "";
+    app_test_make_temp_dir(cbase);
+    app.allowFolder(cbase);
+    std::vector<string> pNap;
+    pNap.push_back("--sleep");
+    pNap.push_back("{ms:int:0:60000}");
+    pNap.push_back("@cwd={dir:folder}");
+    check("a program that can run for a long time", app.allowProgram("napper", helper, pNap, 30000, 1000));
+    Item napArgs = createObject();
+    addNumberToObject(napArgs, "ms", 20000.0);
+    addStringToObject(napArgs, "dir", cbase);
+    Item napReq = createObject();
+    addStringToObject(napReq, "program", "napper");
+    addItemToObject(napReq, "args", napArgs);
+    string napBody = requestText("proc.run", napReq);
+
+    // the page abandons a call (its AbortSignal): the program is killed and the call ends {code: cancelled}
+    string tagged = napBody.substr(0, napBody.length() - 1) + ",\"tag-1\"]";
+    double cancelStarted = app_now_ms();
+    app_test_inject(app.handle, "n1", tagged);
+    app.serveOne(300);
+    app_test_inject(app.handle, "n2", "[\"$cancel\",\"tag-1\"]");
+    int waitedFor = 0;
+    while (app_test_response_ready(app.handle) == 0 && waitedFor < 200) {
+        app.serveOne(50);
+        waitedFor = waitedFor + 1;
+    }
+    string cancelFirstId = "";
+    int cancelFirstStatus = 0;
+    string cancelFirstBody = "";
+    app_test_take_response(app.handle, cancelFirstId, cancelFirstStatus, cancelFirstBody);
+    drain(app, 200);
+    string cancelSecondId = "";
+    int cancelSecondStatus = 0;
+    string cancelSecondBody = "";
+    if (app_test_response_ready(app.handle) == 1) {
+        app_test_take_response(app.handle, cancelSecondId, cancelSecondStatus, cancelSecondBody);
+    }
+    bool cancelAnswered = (cancelFirstId == "n1" && startsWith(cancelFirstBody, "{\"code\":\"cancelled\"")) || (cancelSecondId == "n1" && startsWith(cancelSecondBody, "{\"code\":\"cancelled\""));
+    check("$cancel ends a running program's call with {code: cancelled}, long before the program would have", cancelAnswered && app_now_ms() - cancelStarted < 8000.0);
+    check("an unknown tag is ignored", roundTrip(app, "n3", "[\"$cancel\",\"no-such-tag\"]") == "0 null");
+
+    // a deadline: answered timed_out, the program is killed, the late answer is dropped
+    check("a timeout is a sensible number", !app.setAsyncTimeout("proc.run", 10) && !app.setAsyncTimeout("proc.run", -1) && app.setAsyncTimeout("proc.run", 500));
+    cancelStarted = app_now_ms();
+    string timedOut = roundTrip(app, "t1", napBody);
+    check("a call over its deadline is answered timed_out", startsWith(timedOut, "1 {\"code\":\"timed_out\"") && app_now_ms() - cancelStarted < 8000.0);
+    app_test_sleep_ms(400);
+    drain(app, 200);
+    check("and the program's own late answer is not delivered", app_test_response_ready(app.handle) == 0);
+    app.setAsyncTimeout("proc.run", 0);
+
+    // cooperative work stops on its own when the call times out, and says so
+    string mark = cbase + "/cooperative.mark";
+    app.setAsyncTimeout("acoop", 300);
+    Item coopArgs = createArray();
+    addItemToArray(coopArgs, createString(mark));
+    string coop = roundTrip(app, "c1", requestText("acoop", coopArgs));
+    check("work that checks callCancelled is answered timed_out", startsWith(coop, "1 {\"code\":\"timed_out\""));
+    int markWait = 0;
+    while (app_test_exists(mark) == 0 && markWait < 100) {
+        app_test_sleep_ms(20);
+        markWait = markWait + 1;
+    }
+    check("and stopped by itself soon after (it left its mark long before its 6 s)", app_test_exists(mark) == 1);
+    drain(app, 100);
+    app.setAsyncTimeout("acoop", 0);
+
+    // closing the window while a program runs: it is killed, the jobs end, nothing waits for 20 seconds
+    App closing = new App();
+    closing.open("t4", 100, 100, "<html></html>", "", false);
+    closing.allowFolder(cbase);
+    closing.allowProgram("napper", helper, pNap, 30000, 1000);
+    closing.enableProcessCommands();
+    app_test_inject(closing.handle, "k1", napBody);
+    closing.serveOne(300);
+    cancelStarted = app_now_ms();
+    app_test_close_window(closing.handle);
+    closing.run();
+    check("closing the window ends the loop and cancels what was running", app_cancelled_after_close(closing.handle));
+    closing.close();
+    app_test_sleep_ms(1500);
+    check("the program that was running is already dead (the job ended long before 20 s)", app_now_ms() - cancelStarted < 8000.0);
+    app.gate.clear();
+    app_test_remove_tree(cbase);
 
     // ---- window control -------------------------------------------------------------------------------
     app.enableWindowCommands();

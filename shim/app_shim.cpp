@@ -139,7 +139,7 @@ int app_push(int handle, std::string id, std::string request, int max_queued) {
 
 int app_return(int handle, std::string id, int status, std::string json) {
     auto app = lookup(handle);
-    if (!app) return 0;
+    if (!app || !app->calls.answer(id)) return 0;     // (a page call is answered once: a late second answer is dropped)
     std::lock_guard<std::mutex> lock(app->m);
     // resolve() posts to the UI thread itself, so calling it from this thread is safe
     return app->w != nullptr && app->w->resolve(id, status, json).ok() ? 1 : 0;
@@ -183,6 +183,16 @@ int app_window_guard(int handle, int on) {
 #else
     return -1;
 #endif
+}
+
+int app_pending(int handle, std::string call) {
+    auto app = lookup(handle);
+    return app && app->calls.waiting(call) ? 1 : 0;
+}
+
+int app_window_closed(int handle) {
+    auto app = lookup(handle);
+    return !app || app->calls.closed() ? 1 : 0;
 }
 
 int app_limits(int handle, int max_request, int max_queued) {

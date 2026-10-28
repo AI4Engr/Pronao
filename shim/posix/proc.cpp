@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "../app_native.h"
+#include "../cancel.h"
 
 int app_os_env(std::string name, std::string& out) {
     const char* v = name.find('\0') == std::string::npos ? std::getenv(name.c_str()) : nullptr;
@@ -31,8 +32,8 @@ int app_os_path_kind(std::string path) {
 
 // Runs `exe` in `cwd` (both absolute) with exactly the environment `env`: no stdin, in its own process group so that everything it
 // starts dies with it. flags: 1 timed out, 2 stdout cut at max_bytes, 4 stderr cut.
-int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env, int timeout_ms,
-                 int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
+int app_proc_run(int handle, std::string call, std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env,
+                 int timeout_ms, int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
     out.clear(); err.clear(); exit_code = -1; flags = 0;
     if (exe.empty() || exe[0] != '/' || cwd.empty() || cwd[0] != '/' || exe.find('\0') != std::string::npos || cwd.find('\0') != std::string::npos) return 5;
     for (const auto& a : args) if (a.find('\0') != std::string::npos) return 5;
@@ -91,6 +92,7 @@ int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd
             if (static_cast<size_t>(n) > room) flags |= isOut ? 2 : 4;
         }
         if (!exited && waitpid(pid, &wstatus, WNOHANG) == pid) { exited = true; exitedAt = Clock::now(); }
+        if (!killed && !exited && cancelRegistry().cancelled(handle, call)) { flags |= 8; killpg(pid, SIGKILL); killed = true; }
         if (!killed && !exited && Clock::now() >= deadline) { flags |= 1; killpg(pid, SIGKILL); killed = true; }
         // the child is gone but something it started still holds the pipes: one second, then kill the rest
         if (exited && !killed && Clock::now() - exitedAt > std::chrono::seconds(1)) { killpg(pid, SIGKILL); killed = true; }
@@ -100,7 +102,7 @@ int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd
     killpg(pid, SIGKILL);                            // anything that outlived the child in its group
     close(outPipe[0]); close(errPipe[0]);
     if (execFailed) return execErr == ENOENT ? 2 : 4;
-    if (flags & 1) exit_code = -1;
+    if (flags & 9) exit_code = -1;
     else if (WIFEXITED(wstatus)) exit_code = WEXITSTATUS(wstatus);
     else if (WIFSIGNALED(wstatus)) exit_code = 128 + WTERMSIG(wstatus);
     return 0;

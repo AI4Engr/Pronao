@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #include <vector>
 
 static int g_failed = 0;
@@ -39,10 +40,10 @@ static std::vector<std::string> baseEnv() {
 }
 
 static Result run(const std::string& exe, const std::vector<std::string>& args, const std::string& cwd, int timeoutMs = 10000, int maxBytes = 1 << 20,
-                  std::vector<std::string> env = baseEnv()) {
+                  std::vector<std::string> env = baseEnv(), int handle = 0, const std::string& call = "") {
     Result r;
     auto t0 = std::chrono::steady_clock::now();
-    r.status = app_proc_run(exe, args, cwd, env, timeoutMs, maxBytes, r.out, r.err, r.code, r.flags);
+    r.status = app_proc_run(handle, call, exe, args, cwd, env, timeoutMs, maxBytes, r.out, r.err, r.code, r.flags);
     r.ms = millis(t0);
     return r;
 }
@@ -138,21 +139,37 @@ int main() {
         check("a cap of zero discards but still drains", r.status == 0 && r.out.empty() && (r.flags & 2) && r.code == 0);
     }
 
+    // ---- cancelling ----
+    {
+        std::thread later([] { std::this_thread::sleep_for(std::chrono::milliseconds(300)); app_cancel(7, "call-a"); });
+        Result r = run(exe, {"--sleep", "20000"}, cwd, 20000, 1 << 20, baseEnv(), 7, "call-a");
+        later.join();
+        check("a cancelled call kills its program within a moment", r.status == 0 && (r.flags & 8) && !(r.flags & 1) && r.code == -1 && r.ms < 4000);
+        Result other = run(exe, {"--sleep", "100"}, cwd, 5000, 1 << 20, baseEnv(), 7, "call-b");
+        check("another call of the same window is not affected", other.status == 0 && !(other.flags & 8) && other.out.find("woke") != std::string::npos);
+        check("a call that ended can be forgotten", app_cancelled(7, "call-a") == 1 && app_cancel_forget(7, "call-a") == 1 && app_cancelled(7, "call-a") == 0);
+        app_cancel_all(8);
+        Result closing = run(exe, {"--sleep", "20000"}, cwd, 20000, 1 << 20, baseEnv(), 8, "later-call");
+        check("when the window is closing a call that starts afterwards is killed at once", closing.status == 0 && (closing.flags & 8) && closing.ms < 4000);
+        Result untouched = run(exe, {"--sleep", "100"}, cwd, 5000, 1 << 20, baseEnv(), 9, "x");
+        check("other windows are not affected", untouched.status == 0 && !(untouched.flags & 8));
+    }
+
     // ---- refused input ----
     {
         Result r;
         std::vector<std::string> withNul = {std::string("a\0b", 3)};
-        r.status = app_proc_run(exe, withNul, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(0, "", exe, withNul, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("an argument with a NUL", r.status == 5);
-        r.status = app_proc_run(exe, {}, cwd, {"NO_EQUALS_SIGN"}, 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(0, "", exe, {}, cwd, {"NO_EQUALS_SIGN"}, 1000, 1000, r.out, r.err, r.code, r.flags);
         check("an environment entry without =", r.status == 5);
-        r.status = app_proc_run(exe, {}, "relative/dir", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(0, "", exe, {}, "relative/dir", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a relative working folder", r.status == 5);
-        r.status = app_proc_run(exe, {}, cwd + "/no-such-folder", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(0, "", exe, {}, cwd + "/no-such-folder", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a missing working folder", r.status == 2);
-        r.status = app_proc_run(cwd + "/missing-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(0, "", cwd + "/missing-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a missing program", r.status == 2);
-        r.status = app_proc_run("relative-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
+        r.status = app_proc_run(0, "", "relative-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a relative program", r.status == 5);
     }
 

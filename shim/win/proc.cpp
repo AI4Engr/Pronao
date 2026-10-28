@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "../app_native.h"
+#include "../cancel.h"
 #include "util.h"
 
 namespace {
@@ -72,8 +73,8 @@ int app_os_path_kind(std::string path) {
 
 // Runs `exe` in `cwd` (both absolute) with exactly the environment `env`: no stdin, no console window, only three handles inherited,
 // inside a job object so that everything it starts dies with it. flags: 1 timed out, 2 stdout cut at max_bytes, 4 stderr cut.
-int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env, int timeout_ms,
-                 int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
+int app_proc_run(int handle, std::string call, std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env,
+                 int timeout_ms, int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
     out.clear(); err.clear(); exit_code = -1; flags = 0;
     const std::wstring wexe = widen(exe), wcwd = widen(cwd);
     if (!absolute(wexe) || !absolute(wcwd)) return 5;
@@ -127,10 +128,19 @@ int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd
     Reader* rOut = new Reader{outR, &out, cap};
     Reader* rErr = new Reader{errR, &err, cap};
     HANDLE readers[2] = {CreateThread(nullptr, 0, readerMain, rOut, 0, nullptr), CreateThread(nullptr, 0, readerMain, rErr, 0, nullptr)};
-    if (WaitForSingleObject(process, static_cast<DWORD>(timeout_ms)) == WAIT_TIMEOUT) {
-        flags |= 1;
-        TerminateJobObject(job, 1);
-        WaitForSingleObject(process, 5000);
+    // wait in slices, so that a cancel (the call was abandoned, the window is closing) is noticed within 50 ms
+    const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(timeout_ms);
+    bool exited = false;
+    while (!exited) {
+        const bool cancelled = cancelRegistry().cancelled(handle, call);
+        const bool late = GetTickCount64() >= deadline;
+        if (cancelled || late) {
+            flags |= cancelled ? 8 : 1;
+            TerminateJobObject(job, 1);
+            WaitForSingleObject(process, 5000);
+            break;
+        }
+        exited = WaitForSingleObject(process, 50) == WAIT_OBJECT_0;
     }
     // The child is gone. Something it started may still hold the pipes: give the readers a second, then kill the rest.
     bool finished = readers[0] && readers[1] && WaitForMultipleObjects(2, readers, TRUE, 1000) == WAIT_OBJECT_0;
@@ -141,7 +151,7 @@ int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd
     }
     DWORD code = 0;
     GetExitCodeProcess(process, &code);
-    exit_code = (flags & 1) ? -1 : static_cast<int>(code);
+    exit_code = (flags & 9) ? -1 : static_cast<int>(code);
     if (rOut->truncated) flags |= 2;
     if (rErr->truncated) flags |= 4;
     if (finished) {                     // else (a reader that could not be woken): leaked rather than freed under it

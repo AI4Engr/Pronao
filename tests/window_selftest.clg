@@ -45,6 +45,15 @@ int main() {
         std::cout << "selftest FAILED: hostname not found" << std::endl;
         return 2;
     }
+    std::vector<string> slowArgs;
+    slowArgs.push_back("-n");
+    slowArgs.push_back("{n:int:1:60}");
+    slowArgs.push_back("127.0.0.1");
+    if (!app.allowProgram("slow", "ping", slowArgs, 60000, 100000)) {
+        std::cout << "selftest FAILED: ping not found" << std::endl;
+        return 2;
+    }
+    app.setAsyncTimeout("aforever", 1000);
     app.enableProcessCommands();
     if (!app.openPage("app-cling selftest", 480, 320, false)) {
         std::cout << "selftest FAILED: no window" << std::endl;
@@ -58,12 +67,21 @@ int main() {
             replyOk(handle, id, printUnformatted(mine));
         });
     });
+    app.asyncCommand("aforever", closure AsyncCommand [] (Item args, string id, int handle) {
+        spawn(closure Job [id, handle] () {
+            int steps = 0;
+            while (!callCancelled(handle, id) && steps < 200) {
+                app_sleep_ms(25);
+                steps = steps + 1;
+            }
+        });
+    });
     app.command("emit_hello", closure Command [handle] (Item args) {
         emitEvent(handle, "hello", "{\"x\":[1,\"two\"]}");
         return createNull();
     });
     app.command("selftest", closure Command [verdict, handle] (Item args) {
-        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"file\":{\"text\":\"hi é\"},\"escape\":\"forbidden\",\"missing\":\"not_found\",\"window\":true,\"guard\":true,\"nav\":[true,true,true],\"msg\":{\"button\":\"ok\"},\"open\":null,\"watch\":[true,true],\"proc\":[0,true,false],\"noShell\":\"unknown_program\",\"event\":{\"x\":[1,\"two\"]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
+        string expected = "{\"ping\":\"pong\",\"sum\":5,\"echo\":{\"a\":[1,\"x\",null]},\"async\":{\"n\":[1,2]},\"file\":{\"text\":\"hi é\"},\"escape\":\"forbidden\",\"missing\":\"not_found\",\"window\":true,\"guard\":true,\"nav\":[true,true,true],\"msg\":{\"button\":\"ok\"},\"open\":null,\"watch\":[true,true],\"abort\":[\"cancelled\",true],\"deadline\":\"timed_out\",\"proc\":[0,true,false],\"noShell\":\"unknown_program\",\"event\":{\"x\":[1,\"two\"]},\"rejected\":{\"code\":\"command_failed\",\"message\":\"this command always fails\"},\"unknown\":{\"code\":\"unknown_command\",\"message\":\"no command named nope\"}}";
         string got = printUnformatted(args);
         verdict.set(got == expected);
         if (got != expected) {

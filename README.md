@@ -134,6 +134,34 @@ bytes. Compressing would need an inflate in the program (zlib-cling has one). On
 WebKitGTK is the Linux way), no range requests, no streaming. The origin is yours to choose: tauriport uses `http://tauri.localhost`
 because its server's CORS list already contains it.
 
+## Cancelling, deadlines and closing
+
+```
+app.setAsyncTimeout("proc.run", 120000);         // "" = every async command without a setting of its own; 0 = no deadline (the default)
+app.setShutdownGrace(5000);                       // the default
+```
+```js
+const c = new AbortController();
+const p = cling.invoke('proc.run', { program: 'git.log', args: { ... } }, { signal: c.signal });
+c.abort();                                        // p rejects at once with {code: 'cancelled'}; the program is killed
+```
+- **A page call is answered once.** The native layer remembers which calls are waiting; the first answer settles the page's promise and any
+  later one (a job that kept going after a deadline, a second `replyOk`, an id a worker made up) is dropped. So an answer sent by a timeout
+  and the job's own late answer cannot both reach the page.
+- **Abandoning.** `cling.invoke(..., {signal})` tags the call; aborting rejects the promise immediately and sends `$cancel`. The call
+  counts as *cancelled*: a program the call started (`proc.run`, anything run with a `ToolRun`) is killed together with everything it started,
+  within about 50 ms, and a job of your own can check `callCancelled(handle, id)` between its steps and stop. Cancelling is a request, not an
+  interruption: CeeLing cannot stop a loop that never checks, and a dialog stays open until the person answers. Only async commands can be
+  abandoned; a sync command has finished before the cancel could arrive.
+- **Deadlines.** After `setAsyncTimeout` milliseconds the call is answered `{code: 'timed_out'}`, counts as cancelled, and its late answer is
+  dropped. Do not set one on the dialog commands, which wait for a person.
+- **Closing.** When the window closes (or `app.close()` runs) every call of it is cancelled, in flight and later: running programs are
+  killed, watchers are stopped, and jobs that check `callCancelled` stop. After `main` returns the jobs still running get `setShutdownGrace`
+  milliseconds; then the process ends without them (a message on stderr says how many, status 0; nothing is unwound). Without the grace
+  period a job that never ends keeps the process alive for ever, which is CeeLing's default (`cling::setExitGraceMs`).
+- **Not done**: a job that blocks in a call this layer does not know about (an `ext_fn` of yours) cannot be interrupted, only abandoned at
+  exit; there is no cancel for a running dialog; `Channel<T>` (results without going through an `ext_fn`) needs the compiler.
+
 ## What a page may send, and where the window may go
 
 ```
@@ -294,7 +322,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 192 end-to-end + 139 file policy and text + 18 program lookup + 50 tauriport (needs lore) + 28 process + 26 watcher, no window
+bash tests/run_headless.sh            # 205 end-to-end + 139 file policy and text + 18 program lookup + 50 tauriport (needs lore) + 33 process + 26 watcher, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # removes one check at a time from src/ and shows the tests fail

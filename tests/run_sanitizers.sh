@@ -44,12 +44,12 @@ done
 
 # negative controls: the same tree with one lock removed
 for c in nolock nolock_ret; do rm -rf "$BASE/$c"; cp -r "$BASE/repo" "$BASE/$c"; done
-# producer side: the queue's push (shared by the real window and the test double) without its mutex
+# producer side: the queue's admit (what the page's calls go through; shared by the real window and the test double) without its mutex
 python3 - "$BASE/nolock/shim/queue.h" "$BASE/nolock_ret/tests/doubles/headless_shim.cpp" <<'PYEOF'
 import sys
 q, d = sys.argv[1], sys.argv[2]
 s = open(q, encoding='utf-8', newline='').read()
-a = s.index('int push(')
+a = s.index('int admit(')
 b = s.index('std::lock_guard<std::mutex> lock(m_);', a)
 s2 = s[:b] + '/* lock removed */' + s[b + len('std::lock_guard<std::mutex> lock(m_);'):]
 assert s2 != s

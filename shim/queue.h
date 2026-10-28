@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -19,6 +20,7 @@ class CallQueue {
     std::condition_variable cv_;
     std::deque<std::pair<std::string, std::string>> q_;
     bool closed_ = false;
+    std::set<std::string> pending_;     // page calls that have not been answered yet
 public:
     // 1 queued, 0 if `max_queued` are already waiting
     int push(std::string id, std::string request, int max_queued) {
@@ -35,8 +37,18 @@ public:
     int admit(const std::string& id, const std::string& request, int max_request, int max_queued) {
         if (id.empty() || id.size() > 64) return 3;
         if (static_cast<int>(request.size()) > max_request) return 1;
-        return push(id, request, max_queued) == 1 ? 0 : 2;
+        std::lock_guard<std::mutex> lock(m_);
+        if (pending_.count(id) > 0) return 3;
+        if (static_cast<int>(q_.size()) >= max_queued) return 2;
+        pending_.insert(id);
+        q_.emplace_back(id, request);
+        cv_.notify_all();
+        return 0;
     }
+    // A page call is answered ONCE: true the first time for an id that is waiting for an answer, false for a second answer, an unknown id
+    // or one made up by a worker. The window's promise then settles exactly once, whatever the jobs do.
+    bool answer(const std::string& id) { std::lock_guard<std::mutex> l(m_); return pending_.erase(id) > 0; }
+    bool waiting(const std::string& id) { std::lock_guard<std::mutex> l(m_); return pending_.count(id) > 0; }
     // 1 got one, 0 closed and drained, 2 timed out (timeout_ms < 0 waits forever)
     int pop(int timeout_ms, std::string& id, std::string& request) {
         std::unique_lock<std::mutex> lock(m_);

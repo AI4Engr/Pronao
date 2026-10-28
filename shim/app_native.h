@@ -12,11 +12,14 @@ int app_open(std::string title, int width, int height, std::string html, std::st
 // The next call from the page, or a record the shim queued itself (id empty). 1: got one (`request` is a JSON array text), 0: the
 // window closed and nothing is left, 2: timed out (timeout_ms < 0 waits forever).
 int app_next_call(int handle, int timeout_ms, std::string& id, std::string& request);
-int app_return(int handle, std::string id, int status, std::string json);   // status 0 resolves the page's promise, else rejects it
+int app_return(int handle, std::string id, int status, std::string json);   // status 0 resolves the page's promise, else rejects it. A page call
+                                                                            // is answered ONCE: 1 if this answer was delivered, 0 if the call was
+                                                                            // already answered (a timeout got there first), is unknown, or the window is gone
 int app_eval(int handle, std::string js);                                   // runs a script in the page
 int app_push(int handle, std::string id, std::string request, int max_queued);  // queues a record for app_next_call (id empty = the
                                                                                  // shim's own, never a page's); 1, 0 if max_queued wait, -1 no window
-int app_terminate(int handle);                                              // ends the message loop; the window closes
+int app_terminate(int handle);
+int app_window_closed(int handle);                                         // 1 once the window has closed (or never existed): long jobs poll this to stop early                                              // ends the message loop; the window closes
 int app_close(int handle);                                                  // terminates if needed, joins the UI thread, frees the handle
 // Window control (Windows; -1 elsewhere). state: 0 restore, 1 minimize, 2 maximize, 3 bring to front. guard 1: closing the window
 // (X, Alt+F4) no longer closes it but queues the record "window" "close_requested" for the main loop.
@@ -57,13 +60,22 @@ int app_fs_mkdir(std::string path);                                       // one
 int app_fs_delete(int h);                                                 // a file, a link or an EMPTY folder (7 otherwise)
 
 // ---- programs and the environment -----------------------------------------------------------------------------------------
+int app_sleep_ms(int ms);                                                 // pauses the calling thread (a job polling for a cancel, a retry loop)
 double app_now_ms();                                                      // milliseconds since the process started (monotonic)
 int app_os_env(std::string name, std::string& out);                       // 1 and the value, or 0 if unset
 int app_os_path_kind(std::string path);                                   // 0 nothing, 1 file (+4 executable), 2 folder
 // `exe` and `cwd` absolute, `args` already vetted, `env` the child's WHOLE environment as NAME=value (nothing is inherited). 0 ran, 2 no such program or folder, 4 could not start, 5 cannot be passed.
-// flags: 1 timed out (everything it started is killed), 2 stdout / 4 stderr cut at max_bytes (still drained).
-int app_proc_run(std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env, int timeout_ms,
-                 int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags);
+// flags: 1 timed out (everything it started is killed), 2 stdout / 4 stderr cut at max_bytes (still drained), 8 CANCELLED: app_cancel(handle, call)
+// was called for `call` (or the window is closing), the child and everything it started were killed, the output so far is returned.
+int app_proc_run(int handle, std::string call, std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env,
+                 int timeout_ms, int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags);
+
+// ---- cancelling: the registry only remembers; blocking primitives that are given a call id poll it ----------------------------------
+int app_cancel(int handle, std::string call);          // asks for the call to stop (a page's AbortSignal, a timeout)
+int app_cancel_all(int handle);                        // the window is closing: every call of it, now and later
+int app_cancel_forget(int handle, std::string call);   // the call is over; its request is no longer needed
+int app_cancelled(int handle, std::string call);       // 1 if `call` was cancelled or the window is closing: a long job checks this between steps
+int app_pending(int handle, std::string call);         // 1 if the page is still waiting for an answer to `call`
 
 // ---- dialogs: shown on the window's UI thread, the calling thread waits, so call from a worker --------------------------------
 // mode 0 open a file, 1 save as, 2 pick a folder. `filters` = label, pattern, label, pattern ... ("*.txt;*.md"). 1 chose (path set),
