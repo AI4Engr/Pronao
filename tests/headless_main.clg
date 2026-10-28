@@ -173,6 +173,32 @@ public:
     }
 };
 
+string demoJson(string count, string tags, string spotY, string more) {
+    return "{\"name\":\"n\",\"count\":" + count + ",\"flag\":true,\"ratio\":0.5,\"tags\":" + tags + ",\"spot\":{\"x\":1,\"y\":" + spotY + "},\"more\":" + more + ",\"extra\":[1]}";
+}
+
+// decodeDemoArgs is not written anywhere: a call to decode<StructName> asks the compiler for it (CeeLing's struct_json)
+struct DemoSpot {
+public:
+    int x;
+    int y;
+    DemoSpot(int a, int b) { x = a; y = b; }
+};
+
+struct DemoArgs {
+public:
+    string name;
+    int count;
+    bool flag;
+    double ratio;
+    std::vector<string> tags;
+    DemoSpot spot;
+    std::vector<DemoSpot> more;
+    DemoArgs(string n, int c, bool f, double r, std::vector<string> t, DemoSpot s, std::vector<DemoSpot> m) {
+        name = n; count = c; flag = f; ratio = r; tags = t; spot = s; more = m;
+    }
+};
+
 int main() {
     App app = new App();
     app.command("add", closure Command [] (Item args) {
@@ -189,6 +215,14 @@ int main() {
     });
     app.command("field", closure Command [] (Item args) {
         return duplicate(fieldOf(args, "x"), true);
+    });
+    app.command("decoded", closure Command [] (Item args) {
+        DemoArgs a = decodeDemoArgs(args);
+        string text = a.name + ":" + intToString(a.count) + ":" + intToString(a.tags.size()) + ":" + intToString(a.spot.y) + ":" + intToString(a.more.size());
+        if (a.flag) {
+            text = text + ":flag";
+        }
+        return createString(text);
     });
     // async commands: the worker rebuilds its own JSON tree from a string and answers the page itself
     app.asyncCommand("aecho", closure AsyncCommand [] (Item args, string id, int handle) {
@@ -1339,6 +1373,20 @@ int main() {
     check("the program that was running is already dead (the job ended long before 20 s)", app_now_ms() - cancelStarted < 8000.0);
     app.gate.clear();
     app_test_remove_tree(cbase);
+
+    // ---- arguments decoded into a struct by the compiler ------------------------------------------------
+    string okTags = "[\"a\",\"b\"]";
+    string okMore = "[{\"x\":5,\"y\":6}]";
+    check("a struct is filled from the page's object (extra keys ignored)", roundTrip(app, "d1", "[\"decoded\"," + demoJson("3", okTags, "2", okMore) + "]") == "0 \"n:3:2:2:1:flag\"");
+    check("a missing field is refused by name", roundTrip(app, "d2", "[\"decoded\",{\"count\":1}]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`name` must be a string\"}");
+    check("a field of the wrong type is refused", roundTrip(app, "d3", "[\"decoded\"," + demoJson("\"3\"", okTags, "2", okMore) + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`count` must be a number\"}");
+    check("a fractional number is not an int", startsWith(roundTrip(app, "d4", "[\"decoded\"," + demoJson("1.5", okTags, "2", okMore) + "]"), "1 {\"code\":\"invalid_argument\",\"message\":\"`count` must be a whole number"));
+    check("a number beyond int is refused, not wrapped", startsWith(roundTrip(app, "d5", "[\"decoded\"," + demoJson("1e20", okTags, "2", okMore) + "]"), "1 {\"code\":\"invalid_argument\",\"message\":\"`count` must be a whole number"));
+    check("an array element of the wrong type is named", roundTrip(app, "d6", "[\"decoded\"," + demoJson("3", "[\"a\",7]", "2", okMore) + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`tags[]` must be a string\"}");
+    check("a nested field is named with its path", roundTrip(app, "d7", "[\"decoded\"," + demoJson("3", okTags, "false", okMore) + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`spot.y` must be a number\"}");
+    check("a struct inside an array is named with its path", roundTrip(app, "d8", "[\"decoded\"," + demoJson("3", okTags, "2", "[{\"x\":5}]") + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`more[].y` must be a number\"}");
+    check("arguments that are not an object are refused", roundTrip(app, "d9", "[\"decoded\",[1]]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
+    check("no arguments at all are refused", roundTrip(app, "d10", "[\"decoded\"]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
 
     // ---- a window's own list of commands ----------------------------------------------------------------
     App narrow = new App();
