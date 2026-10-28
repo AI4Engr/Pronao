@@ -186,7 +186,7 @@ app.allowOnlyCommands(names);                    // optional: this window's page
   takes its fields in declaration order and write `Args a = decodeArgs(args);`. There is no `decodeArgs` function in your program; the
   compiler writes it (see CeeLing's `struct_json`). Fields may be `int`, `int64`, `double`, `float`, `bool`, `string`, `byte`, vectors of
   those, structs and vectors of structs. A missing field or one of the wrong type is refused as `invalid_argument` naming the field
-  (`spot.y`, `tags[]`); an `int` must be a whole number in range; extra keys are ignored. It checks shape, not meaning: lengths, paths and
+  (`spot.y`, `tags[1]`); an `int` must be a whole number in range; extra keys are ignored. It checks shape, not meaning: lengths, paths and
   names still go through your own checks.
 - **Developer tools off in release.** `RELEASE=1 scripts/build.sh ...` compiles the window with `-DAPP_RELEASE`: `open`'s `debug`
   argument is then ignored (no developer tools, no right-click menu) because the switch is not in the binary, not because a

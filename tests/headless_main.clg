@@ -1382,9 +1382,9 @@ int main() {
     check("a field of the wrong type is refused", roundTrip(app, "d3", "[\"decoded\"," + demoJson("\"3\"", okTags, "2", okMore) + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`count` must be a number\"}");
     check("a fractional number is not an int", startsWith(roundTrip(app, "d4", "[\"decoded\"," + demoJson("1.5", okTags, "2", okMore) + "]"), "1 {\"code\":\"invalid_argument\",\"message\":\"`count` must be a whole number"));
     check("a number beyond int is refused, not wrapped", startsWith(roundTrip(app, "d5", "[\"decoded\"," + demoJson("1e20", okTags, "2", okMore) + "]"), "1 {\"code\":\"invalid_argument\",\"message\":\"`count` must be a whole number"));
-    check("an array element of the wrong type is named", roundTrip(app, "d6", "[\"decoded\"," + demoJson("3", "[\"a\",7]", "2", okMore) + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`tags[]` must be a string\"}");
+    check("an array element of the wrong type is named", roundTrip(app, "d6", "[\"decoded\"," + demoJson("3", "[\"a\",7]", "2", okMore) + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`tags[1]` must be a string\"}");
     check("a nested field is named with its path", roundTrip(app, "d7", "[\"decoded\"," + demoJson("3", okTags, "false", okMore) + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`spot.y` must be a number\"}");
-    check("a struct inside an array is named with its path", roundTrip(app, "d8", "[\"decoded\"," + demoJson("3", okTags, "2", "[{\"x\":5}]") + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`more[].y` must be a number\"}");
+    check("a struct inside an array is named with its path", roundTrip(app, "d8", "[\"decoded\"," + demoJson("3", okTags, "2", "[{\"x\":5}]") + "]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`more[0].y` must be a number\"}");
     check("arguments that are not an object are refused", roundTrip(app, "d9", "[\"decoded\",[1]]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
     check("no arguments at all are refused", roundTrip(app, "d10", "[\"decoded\"]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
 
