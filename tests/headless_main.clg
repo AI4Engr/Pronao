@@ -1388,6 +1388,22 @@ int main() {
     check("arguments that are not an object are refused", roundTrip(app, "d9", "[\"decoded\",[1]]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
     check("no arguments at all are refused", roundTrip(app, "d10", "[\"decoded\"]") == "1 {\"code\":\"invalid_argument\",\"message\":\"expected an object\"}");
 
+    // ---- development server addresses ---------------------------------------------------------------------
+    check("localhost with a port is a development server", devServerOrigin("http://localhost:5173/") == "http://localhost:5173");
+    check("the path after the host does not matter", devServerOrigin("http://127.0.0.1:3000/app/index.html?x=1") == "http://127.0.0.1:3000");
+    check("no port is fine", devServerOrigin("http://localhost") == "http://localhost");
+    check("IPv6 loopback", devServerOrigin("http://[::1]:8080/") == "http://[::1]:8080");
+    check("another host is refused", devServerOrigin("http://example.com/") == "");
+    check("a host that merely starts with localhost is refused", devServerOrigin("http://localhost.evil.test:80/") == "");
+    check("a user name in front of the host is refused", devServerOrigin("http://localhost@evil.test/") == "");
+    check("https is refused", devServerOrigin("https://localhost:5173/") == "");
+    check("a port out of range is refused", devServerOrigin("http://localhost:70000/") == "" && devServerOrigin("http://localhost:0/") == "" && devServerOrigin("http://localhost:abc/") == "");
+    check("an empty port is refused", devServerOrigin("http://localhost:/") == "");
+    App dev = new App();
+    check("openDevServer refuses a stranger's address", !dev.openDevServer("t", 100, 100, "http://example.com/"));
+    check("openDevServer opens a local one", dev.openDevServer("t", 100, 100, "http://localhost:5173/"));
+    dev.close();
+
     // ---- a window's own list of commands ----------------------------------------------------------------
     App narrow = new App();
     narrow.command("add", closure Command [] (Item args) {

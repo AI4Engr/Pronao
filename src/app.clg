@@ -37,6 +37,7 @@ ext_fn int app_watch_start(int handle, string root, int recursive, ref int watch
 ext_fn int app_watch_stop(int handle, int watchId);
 ext_fn int app_os_windows();
 ext_fn int app_os_env(string name, ref string out);
+ext_fn int app_release_build();
 ext_fn int app_os_path_kind(string path);
 ext_fn double app_now_ms();
 ext_fn int app_proc_run(int handle, string call, string exe, std::vector<string> args, string cwd, std::vector<string> env, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
@@ -1287,6 +1288,49 @@ public:
 };
 
 // A running application: a window plus a command table.
+// The origin ("http://localhost:5173") of a development server address, or "" if the address is not one we load. Only the machine's own
+// loopback names are accepted, over plain http, with an optional port and no user name: a development server is a program on this machine
+// that serves the page while it is being written, and nothing else may be given the application's commands.
+string devServerOrigin(string url) {
+    if (url.length() > 300 || !plainText(url, 300) || !startsWithText(url, "http://")) {
+        return "";
+    }
+    string rest = url.substr(7, url.length() - 7);
+    int slash = indexOfChar(rest, '/');
+    string hostPort = rest;
+    if (slash >= 0) {
+        hostPort = rest.substr(0, slash);
+    }
+    string host = hostPort;
+    string port = "";
+    int colon = indexOfChar(hostPort, ':');
+    if (startsWithText(hostPort, "[")) {
+        int close = indexOfChar(hostPort, ']');
+        if (close < 0) {
+            return "";
+        }
+        host = hostPort.substr(0, close + 1);
+        if (close + 1 < hostPort.length()) {
+            if (hostPort[close + 1] != ':') {
+                return "";
+            }
+            port = hostPort.substr(close + 2, hostPort.length() - close - 2);
+        }
+    } else if (colon >= 0) {
+        host = hostPort.substr(0, colon);
+        port = hostPort.substr(colon + 1, hostPort.length() - colon - 1);
+    }
+    if (host != "localhost" && host != "127.0.0.1" && host != "[::1]") {
+        return "";
+    }
+    if (hostPort.length() > host.length()) {
+        if (port.length() == 0 || port.length() > 5 || !isDigits(port) || decimalValue(port) < 1.0 || decimalValue(port) > 65535.0) {
+            return "";
+        }
+    }
+    return "http://" + hostPort;
+}
+
 class App {
 public:
     int handle;
@@ -1923,6 +1967,40 @@ public:
             }
         }
         return handle != 0;
+    }
+
+    // The development server address the program was asked to load (environment variable APP_DEV_URL), or "" if there is none, it is not a
+    // loopback address (see devServerOrigin) or this is a release build.
+    string devServerFromEnvironment() {
+        if (app_release_build() == 1) {
+            return "";
+        }
+        string url = "";
+        if (app_os_env("APP_DEV_URL", url) != 1) {
+            return "";
+        }
+        string origin = devServerOrigin(url);
+        if (origin.length() == 0) {
+            return "";
+        }
+        return url;
+    }
+
+    // Opens the window on a development server (Vite, webpack, `python -m http.server`...) running on this machine, with the bridge
+    // injected and the developer tools on. The page reloads itself the way the dev server arranges (hot module replacement); this
+    // program's commands stay the compiled ones. Refused (false) for an address that is not http on localhost / 127.0.0.1 / [::1], and in
+    // a release build, where nothing may load a server. The window may navigate within that origin and nowhere else.
+    bool openDevServer(string title, int width, int height, string url) {
+        if (app_release_build() == 1) {
+            return false;
+        }
+        string origin = devServerOrigin(url);
+        if (origin.length() == 0) {
+            return false;
+        }
+        siteStart = url;
+        navigation.push_back(origin + "/");
+        return open(title, width, height, "", app_bridge_js() + app_extra_js(), true);
     }
 
     // Opens the window on the page embedded at build time, with the standard bridge script.

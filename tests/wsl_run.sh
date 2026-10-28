@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$1"
 fail=0
-EXPECTED=224
+EXPECTED=236
 EXPECTED_FILES=123
 EXPECTED_PROGRAMS=15
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"

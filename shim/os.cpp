@@ -5,6 +5,15 @@
 #include "app_native.h"
 #include "cancel.h"
 
+// 1 in a build made with RELEASE=1 (-DAPP_RELEASE): there the program refuses to load a development server (see App.openDevServer)
+int app_release_build() {
+#ifdef APP_RELEASE
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 double app_now_ms() {
     static const auto start = std::chrono::steady_clock::now();
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

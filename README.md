@@ -188,6 +188,12 @@ app.allowOnlyCommands(names);                    // optional: this window's page
   those, structs and vectors of structs. A missing field or one of the wrong type is refused as `invalid_argument` naming the field
   (`spot.y`, `tags[1]`); an `int` must be a whole number in range; extra keys are ignored. It checks shape, not meaning: lengths, paths and
   names still go through your own checks.
+- **Development server.** While the front end is being written, run its dev server (Vite, webpack, `python -m http.server`) and start the
+  program with `APP_DEV_URL=http://localhost:5173/` (`app.devServerFromEnvironment()` reads it, `app.openDevServer(title, w, h, url)`
+  opens it): the window loads that server, the bridge is injected into every document (so it survives a reload), the developer tools are
+  on, and the server's own hot reload works as usual. Only `http` on `localhost`, `127.0.0.1` or `[::1]` is accepted (a page from
+  anywhere else must never get the commands), and the window may navigate within that origin only. A `RELEASE=1` build refuses it
+  altogether. `tests/run_dev_window.sh` runs a real window against a local server and checks that the release build refuses.
 - **Developer tools off in release.** `RELEASE=1 scripts/build.sh ...` compiles the window with `-DAPP_RELEASE`: `open`'s `debug`
   argument is then ignored (no developer tools, no right-click menu) because the switch is not in the binary, not because a
   variable is unset. Without `RELEASE`, `debug` works as before.

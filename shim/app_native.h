@@ -27,6 +27,7 @@ int app_window_title(int handle, std::string title);
 int app_window_size(int handle, int width, int height);
 int app_window_state(int handle, int state);
 int app_window_guard(int handle, int on);
+int app_release_build();                                                          // 1 if built with RELEASE=1 (no development server, no developer tools)
 // Limits on what a page may send: a call over `max_request` bytes or arriving while `max_queued` wait is answered at once with
 // {code: too_large} / {code: busy} and never reaches CeeLing. Defaults 16 MiB and 1000.
 int app_limits(int handle, int max_request, int max_queued);

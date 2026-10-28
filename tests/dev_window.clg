@@ -1,0 +1,52 @@
+// A real window on a development server running on this machine (APP_DEV_URL, set by tests/run_dev_window.sh): the bridge reaches the
+// page, the page cannot leave the server's origin, and a release build refuses to load any server.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "app.clh"
+
+class Verdict {
+public:
+    bool ok;
+    Verdict() {
+        ok = false;
+    }
+};
+
+int main() {
+    App app = new App();
+    app.command("ping", closure Command [] (Item args) {
+        return createString("pong");
+    });
+    Verdict verdict = new Verdict();
+    string url = app.devServerFromEnvironment();
+    if (url.length() == 0) {
+        std::cout << "dev: refused" << std::endl;
+        return 3;
+    }
+    if (!app.openDevServer("dev selftest", 480, 320, url)) {
+        std::cout << "selftest FAILED: no window" << std::endl;
+        return 2;
+    }
+    int handle = app.handle;
+    app.command("selftest", closure Command [verdict, handle, url] (Item args) {
+        string expected = "{\"origin\":\"" + url.substr(0, url.length() - 1) + "\",\"bridge\":\"pong\",\"blocked\":1,\"still\":true}";
+        string got = printUnformatted(args);
+        verdict.ok = got == expected;
+        if (got != expected) {
+            std::cout << "got:      " << got << std::endl;
+            std::cout << "expected: " << expected << std::endl;
+        }
+        app_terminate(handle);
+        return createNull();
+    });
+    app.run();
+    app.close();
+    if (verdict.ok) {
+        std::cout << "selftest ok" << std::endl;
+        return 0;
+    }
+    std::cout << "selftest FAILED" << std::endl;
+    return 1;
+}

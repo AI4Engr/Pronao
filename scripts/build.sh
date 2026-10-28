@@ -6,7 +6,8 @@
 # instead of the window and the dialogs (no webview, no window).
 # Environment: CLING (compiler), CJSON (path of cjson-cling), CXX, CLING_FLAGS, WORK, PAGE (an .html file to embed as
 # app_page_html(); empty if unset). src/bridge.js is always embedded as app_bridge_js().
-# RELEASE=1: the window ignores the debug argument of open (no developer tools, no context menu): compiled out, not a runtime switch.
+# RELEASE=1: the window ignores the debug argument of open (no developer tools, no context menu) and the program refuses a development
+# server (APP_DEV_URL): compiled out, not a runtime switch.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLING="${CLING:-c:/project/CeeLing/build/cling.exe}"
@@ -49,7 +50,7 @@ EMBED="$WORK/embedded.cpp"
     echo ')CLING_EMBED"); }'
 } > "$EMBED"
 
-CXXFLAGS="--std=c++17 -O1 -Wno-unknown-pragmas"
+CXXFLAGS="--std=c++17 -O1 -Wno-unknown-pragmas ${RELEASE:+-DAPP_RELEASE}"
 OBJS=()
 for f in cjson_item cjson_api cjson_parse cjson_print $MODULES $EXTRA_NAMES "$MAIN_NAME"; do
     OBJS+=("$WORK/$f.o")
