@@ -8,6 +8,7 @@
 # app_page_html(); empty if unset). src/bridge.js is always embedded as app_bridge_js().
 # RELEASE=1: the window ignores the debug argument of open (no developer tools, no context menu) and the program refuses a development
 # server (APP_DEV_URL): compiled out, not a runtime switch. It also strips the symbols (STRIP=1 does that alone).
+# JOBS (parallel compiles, default: the cores), OBJ_CACHE (a folder of compiled objects shared by builds), OPT (optimisation level, default -O1).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$HERE/scripts/env.sh"      # CLING, CJSON, CXX: from the environment, else the side-by-side layout (see env.sh)
@@ -53,29 +54,66 @@ EMBED="$WORK/embedded.cpp"
 SECTIONS="-ffunction-sections -fdata-sections"
 GC="-Wl,--gc-sections"
 STRIP_FLAG="${RELEASE:+-s}${STRIP:+-s}"
-CXXFLAGS="--std=c++17 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE}"
-OBJS=()
-for f in cjson_item cjson_api cjson_parse cjson_print $MODULES $EXTRA_NAMES "$MAIN_NAME"; do
-    OBJS+=("$WORK/$f.o")
-    "$CLING" $CLING_FLAGS --cpp "$WORK/$f.cpp" "$WORK/$f.clg" > "$WORK/$f.log" 2>&1 || { grep -v Detected "$WORK/$f.log"; exit 1; }
-    if [ "$f" != "$MAIN_NAME" ]; then
-        "$CLING" $CLING_FLAGS --cpp "$WORK/$f.h" "$WORK/$f.clg" >> "$WORK/$f.log" 2>&1 || { grep -v Detected "$WORK/$f.log"; exit 1; }
+OPT="${OPT:--O1}"        # (the headless test runner uses -O0: it compiles more than twice as fast, and the sanitizer runs cover -O1)
+CXXFLAGS="--std=c++17 $OPT -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE}"
+# Speed: the modules are independent once their headers exist, so they are transpiled in parallel, then compiled in parallel (JOBS at a time,
+# default: the number of cores), and a compiled object is kept in OBJ_CACHE (if set) under a key made of the source, every generated header and
+# the flags, so a second program, or a doctored copy of one file (tests/negative_controls.sh), recompiles only what actually differs.
+JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
+FAILED=0
+pids=()
+spawn() {
+    "$@" &
+    pids+=($!)
+    while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n || FAILED=1; done
+}
+finish() {
+    local p
+    for p in "${pids[@]}"; do wait "$p" || FAILED=1; done
+    pids=()
+    [ "$FAILED" = 0 ] || { echo "build failed" >&2; exit 1; }
+}
+transpile() { # module
+    "$CLING" $CLING_FLAGS --cpp "$WORK/$1.cpp" "$WORK/$1.clg" > "$WORK/$1.log" 2>&1 || { grep -v Detected "$WORK/$1.log"; return 1; }
+    if [ "$1" != "$MAIN_NAME" ]; then
+        "$CLING" $CLING_FLAGS --cpp "$WORK/$1.h" "$WORK/$1.clg" >> "$WORK/$1.log" 2>&1 || { grep -v Detected "$WORK/$1.log"; return 1; }
     fi
-    "$CXX" $CXXFLAGS -c "$WORK/$f.cpp" -o "$WORK/$f.o"
+}
+ALL_MODULES="cjson_item cjson_api cjson_parse cjson_print $MODULES $EXTRA_NAMES $MAIN_NAME"
+for f in $ALL_MODULES; do spawn transpile "$f"; done
+finish
+HKEY="$(cat "$WORK"/*.h | md5sum | cut -d' ' -f1)"
+cc() { # source object flags...
+    local src="$1" obj="$2" key=""
+    shift 2
+    if [ -n "${OBJ_CACHE:-}" ]; then
+        mkdir -p "$OBJ_CACHE"
+        key="$({ cat "$src"; echo "$HKEY ${NKEY:-} $CXX $*"; } | md5sum | cut -d' ' -f1)"
+        if [ -f "$OBJ_CACHE/$key.o" ]; then cp "$OBJ_CACHE/$key.o" "$obj"; return 0; fi
+    fi
+    "$CXX" "$@" -c "$src" -o "$obj" || return 1
+    if [ -n "$key" ]; then cp "$obj" "$OBJ_CACHE/$key.$$.tmp" && mv -f "$OBJ_CACHE/$key.$$.tmp" "$OBJ_CACHE/$key.o"; fi
+}
+OBJS=()
+for f in $ALL_MODULES; do
+    OBJS+=("$WORK/$f.o")
+    spawn cc "$WORK/$f.cpp" "$WORK/$f.o" $CXXFLAGS
 done
 
 # the native layer: shared files, the OS's files, and either the window or the test doubles
 SHIM="${SHIM:-$HERE/shim}"      # (tests/negative_controls.sh builds against a doctored copy)
+DOUBLES="${DOUBLES:-$HERE/tests/doubles}"
+# a native source depends on the headers beside it: they are part of its cache key
+NKEY="$(cat "$SHIM"/*.h "$SHIM/$PLAT"/*.h "$DOUBLES"/*.h 2>/dev/null | md5sum | cut -d' ' -f1)"
 # ASSETS=<folder>: the web files compiled into the program (served from memory; see scripts/pack_assets.sh)
 bash "$HERE/scripts/pack_assets.sh" "${ASSETS:--}" "$WORK/assets" || exit 1
 NATIVE=("$SHIM/watch.cpp" "$SHIM/assets.cpp" "$WORK/assets/assets_embedded.cpp" "$SHIM/os.cpp" "$SHIM/$PLAT/fs.cpp" "$SHIM/$PLAT/proc.cpp" "$SHIM/$PLAT/watch.cpp")
 if [ "$MODE" = "--headless" ]; then
-    DOUBLES="${DOUBLES:-$HERE/tests/doubles}"
     NATIVE+=("$DOUBLES/headless_shim.cpp" "$DOUBLES/test_support.cpp")
     LINK="-pthread"
 else
     INC="-I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
-    "$CXX" --std=c++14 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE} $INC -c "$SHIM/app_shim.cpp" -o "$WORK/app_shim.o"
+    spawn cc "$SHIM/app_shim.cpp" "$WORK/app_shim.o" --std=c++14 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE} $INC
     OBJS+=("$WORK/app_shim.o")
     NATIVE+=("$SHIM/$PLAT/dialog.cpp")
     [ -f "$SHIM/$PLAT/nav.cpp" ] && NATIVE+=("$SHIM/$PLAT/nav.cpp")
@@ -84,9 +122,10 @@ else
 fi
 for n in "${NATIVE[@]}"; do
     o="$WORK/native_$(basename "$(dirname "$n")")_$(basename "$n" .cpp).o"
-    "$CXX" $CXXFLAGS ${INC:-} -c "$n" -o "$o"
+    spawn cc "$n" "$o" $CXXFLAGS ${INC:-}
     OBJS+=("$o")
 done
-"$CXX" -c "$EMBED" -o "$WORK/embedded.o"
+spawn cc "$EMBED" "$WORK/embedded.o"
+finish
 [ -f "$WORK/assets/assets_blob.o" ] && OBJS+=("$WORK/assets/assets_blob.o")
 "$CXX" "${OBJS[@]}" "$WORK/embedded.o" $GC $STRIP_FLAG $LINK -o "$OUT"

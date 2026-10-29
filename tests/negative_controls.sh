@@ -9,8 +9,21 @@ W="${TMPDIR:-/tmp}/app-cling-negative"
 rm -rf "$W"; mkdir -p "$W"
 "${CXX:-g++}" --std=c++17 -O1 "$HERE/tests/proc_helper.cpp" -o "$W/proc_helper.exe" || exit 1
 export APP_PROC_ECHO="$W/proc_helper.exe"
+# Speed: the controls are independent, so up to MAXPAR (default 10) run at the same time; their programs are built at -O0 and share compiled modules
+# through OBJ_CACHE (a control that changes one file recompiles that file and the main, nothing else). Results are printed in order at the end.
+export OPT="${OPT:--O0}" OBJ_CACHE="$W/cache"
+MAXPAR="${MAXPAR:-10}"
 bad=0
-control() { # name  file (relative to src/, or shim/...)  old  new  program  must-fail-substring
+NAMES=()
+control() { # queue a control; see control_run for the arguments
+    local idx=${#NAMES[@]}
+    NAMES+=("$1")
+    while [ "$(jobs -rp | wc -l)" -ge "$MAXPAR" ]; do wait -n; done
+    control_run "$@" > "$W/result.$idx" 2>&1 &
+}
+# a warm cache first: the modules every control shares
+WORK="$W/warm" bash "$HERE/scripts/build.sh" "$HERE/tests/headless_main.clg" "$W/warm.exe" --headless > /dev/null 2>&1
+control_run() { # name  file (relative to src/, or shim/...)  old  new  program  must-fail-substring
     local dir="$W/${1// /_}"
     mkdir -p "$dir/src" "$dir/work" "$dir/shim"
     cp "$HERE"/src/* "$dir/src/"
@@ -31,7 +44,11 @@ PYEOF
     local assets="-"
     [ "$5" = "site_main" ] && assets="$HERE/tests/site"
     ASSETS="$assets" EXTRA="$extra" SRC="$dir/src" SHIM="$dir/shim" DOUBLES="$dir/tests/doubles" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
-    APP_SITE_DIR="$(cd "$HERE/tests/site" && (cygpath -m "$PWD" 2>/dev/null || pwd))" "$dir/t.exe" > "$dir/out.txt" 2>&1
+    # run the program only until the check that must fail has failed (or it ends): the rest of its output proves nothing more
+    APP_SITE_DIR="$(cd "$HERE/tests/site" && (cygpath -m "$PWD" 2>/dev/null || pwd))" "$dir/t.exe" > "$dir/out.txt" 2>&1 &
+    local pid=$! waited=0
+    while kill -0 "$pid" 2> /dev/null && ! grep -q "^FAIL .*$6" "$dir/out.txt" && [ "$waited" -lt 600 ]; do sleep 0.2; waited=$((waited + 1)); done
+    kill "$pid" 2> /dev/null; wait "$pid" 2> /dev/null
     local failed; failed=$(grep -c '^FAIL ' "$dir/out.txt")
     if [ "$failed" -gt 0 ] && grep -q "^FAIL .*$6" "$dir/out.txt"; then echo "ok: without '$1' $failed checks fail (including \"$6\")"; else echo "NEGATIVE CONTROL DID NOT FAIL: $1 ($failed failures)"; bad=1; fi
 }
@@ -60,5 +77,10 @@ if command -v lore > /dev/null 2>&1 || [ -n "${LORE_CLI_PATH:-}" ]; then
     control "recursive remove checks the folder first" files.clg '            if (isRootItself(here.text)) {' '            if (false) {' tauriport_main "the opened folder itself is never removed"
     control "paths that could be options are refused" tauriport.clg '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000) || path[0] == '"'"'-'"'"'' '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000)' tauriport_main "a path that could be read as an option is refused"
 fi
+wait
+for ((k = 0; k < ${#NAMES[@]}; k++)); do
+    cat "$W/result.$k"
+    grep -q '^ok: ' "$W/result.$k" || bad=1
+done
 [ "$bad" -eq 0 ] && echo "negative controls: ALL OK" || echo "negative controls: FAILED"
 exit $bad

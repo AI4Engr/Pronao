@@ -2,6 +2,7 @@
 # The WSL half of tests/run_sanitizers.sh: compiles and runs everything under the sanitizers.
 #   wsl_run.sh <directory prepared by run_sanitizers.sh>
 set -uo pipefail
+T0=$(date +%s)
 cd "$1"
 fail=0
 EXPECTED=282
@@ -54,7 +55,7 @@ g++ --std=c++17 -O1 repo/tests/proc_helper.cpp -o proc_helper || { echo "HELPER 
 
 for m in "headless_main $EXPECTED" "files_main $EXPECTED_FILES" "programs_main $EXPECTED_PROGRAMS"; do
     set -- $m
-    echo "== ASan+UBSan: $1"
+    echo "[$(( $(date +%s) - T0 ))s] == ASan+UBSan: $1"
     build_program work repo "$ASAN" $1.asan $1 || { echo "BUILD FAILED"; exit 1; }
     APP_PROC_ECHO="$PWD/proc_helper" ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1 ./$1.asan > $1.asan.out 2>&1
     rc=$?; pass=$(grep -c '^PASS ' $1.asan.out); bad=$(grep -c '^FAIL ' $1.asan.out)
@@ -62,7 +63,7 @@ for m in "headless_main $EXPECTED" "files_main $EXPECTED_FILES" "programs_main $
     if [ $rc -ne 0 ] || [ "$pass" -ne "$2" ] || [ "$bad" -ne 0 ]; then tail -30 $1.asan.out; fail=1; fi
 done
 
-echo "== ASan+UBSan: the program's own web files (packed here, looked up as the window does)"
+echo "[$(( $(date +%s) - T0 ))s] == ASan+UBSan: the program's own web files (packed here, looked up as the window does)"
 bash repo/scripts/pack_assets.sh repo/tests/site site_assets || { echo "PACK FAILED"; exit 1; }
 ASSETS_DIR="$PWD/site_assets" build_program work repo "$ASAN" site_main.asan site_main || { echo "BUILD FAILED"; exit 1; }
 APP_SITE_DIR="$PWD/repo/tests/site" ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1 ./site_main.asan > site_main.asan.out 2>&1
@@ -70,26 +71,26 @@ rc=$?; pass=$(grep -c '^PASS ' site_main.asan.out); bad=$(grep -c '^FAIL ' site_
 echo "   exit $rc, $pass passed, $bad failed"
 if [ $rc -ne 0 ] || [ "$pass" -ne $EXPECTED_SITE ] || [ "$bad" -ne 0 ]; then tail -30 site_main.asan.out; fail=1; fi
 
-echo "== ASan+UBSan: program launching (real child processes)"
+echo "[$(( $(date +%s) - T0 ))s] == ASan+UBSan: program launching (real child processes)"
 build_cpp_test proc_shim_test.cpp repo "$ASAN" proc.asan || exit 1
 APP_PROC_ECHO="$PWD/proc_helper" ASAN_OPTIONS=detect_leaks=1 ./proc.asan > proc.asan.out 2>&1; rc=$?
 echo "   exit $rc: $(tail -1 proc.asan.out)"
 [ $rc -eq 0 ] || { grep -v '^PASS' proc.asan.out | head -30; fail=1; }
 
-echo "== ASan+UBSan: folder watcher (real inotify events)"
+echo "[$(( $(date +%s) - T0 ))s] == ASan+UBSan: folder watcher (real inotify events)"
 build_cpp_test watch_shim_test.cpp repo "$ASAN" watch.asan || exit 1
 ASAN_OPTIONS=detect_leaks=1 ./watch.asan > watch.asan.out 2>&1; rc=$?
 echo "   exit $rc: $(tail -1 watch.asan.out)"
 [ $rc -eq 0 ] || { grep -v '^PASS' watch.asan.out | head -30; fail=1; }
 
-echo "== TSan: folder watcher"
+echo "[$(( $(date +%s) - T0 ))s] == TSan: folder watcher"
 build_cpp_test watch_shim_test.cpp repo "$TSAN" watch.tsan || exit 1
 run_tsan watch.tsan watch.tsan.out; rc=$?
 races=$(grep -c 'WARNING: ThreadSanitizer' watch.tsan.out)
 echo "   exit $rc, $races TSan reports: $(grep 'watch shim test' watch.tsan.out | tail -1)"
 if [ $rc -ne 0 ] || [ "$races" -ne 0 ]; then grep -v '^PASS' watch.tsan.out | head -40; fail=1; fi
 
-echo "== ASan+UBSan and TSan: the asset table"
+echo "[$(( $(date +%s) - T0 ))s] == ASan+UBSan and TSan: the asset table"
 g++ --std=c++17 $ASAN -pthread repo/tests/assets_test.cpp -o assets.asan || exit 1
 ASAN_OPTIONS=detect_leaks=1 ./assets.asan > assets.asan.out 2>&1; rc=$?
 echo "   ASan exit $rc: $(tail -1 assets.asan.out)"
@@ -99,13 +100,13 @@ run_tsan assets.tsan assets.tsan.out; rc=$?; races=$(grep -c 'WARNING: ThreadSan
 echo "   TSan exit $rc, $races reports"
 [ $rc -eq 0 ] && [ "$races" -eq 0 ] || { head -30 assets.tsan.out; fail=1; }
 
-echo "== ASan+UBSan: queue stress"
+echo "[$(( $(date +%s) - T0 ))s] == ASan+UBSan: queue stress"
 build_cpp_test queue_stress.cpp repo "$ASAN" stress.asan || exit 1
 ASAN_OPTIONS=detect_leaks=1 ./stress.asan > stress.asan.out 2>&1; rc=$?
 echo "   exit $rc: $(tail -1 stress.asan.out)"
 [ $rc -eq 0 ] || { tail -30 stress.asan.out; fail=1; }
 
-echo "== TSan: queue stress"
+echo "[$(( $(date +%s) - T0 ))s] == TSan: queue stress"
 build_cpp_test queue_stress.cpp repo "$TSAN" stress.tsan || exit 1
 run_tsan stress.tsan stress.tsan.out; rc=$?
 races=$(grep -c 'WARNING: ThreadSanitizer' stress.tsan.out)
@@ -113,7 +114,7 @@ echo "   exit $rc, $races TSan reports: $(grep 'queue stress' stress.tsan.out | 
 if [ $rc -ne 0 ] || [ "$races" -ne 0 ]; then head -40 stress.tsan.out; fail=1; fi
 
 for variant in work work_pool; do
-    echo "== TSan: CeeLing end-to-end tests with worker threads ($variant)"
+    echo "[$(( $(date +%s) - T0 ))s] == TSan: CeeLing end-to-end tests with worker threads ($variant)"
     build_program $variant repo "$TSAN" headless.tsan.$variant headless_main || { echo "BUILD FAILED"; exit 1; }
     run_tsan headless.tsan.$variant headless.tsan.$variant.out; rc=$?
     races=$(grep -c 'WARNING: ThreadSanitizer' headless.tsan.$variant.out)
@@ -122,26 +123,26 @@ for variant in work work_pool; do
     if [ $rc -ne 0 ] || [ "$races" -ne 0 ] || [ "$pass" -ne $EXPECTED ] || [ "$bad" -ne 0 ]; then head -60 headless.tsan.$variant.out; fail=1; fi
 done
 
-echo "== TSan negative control 1: the queue's push without its lock (queue stress; must report a race)"
+echo "[$(( $(date +%s) - T0 ))s] == TSan negative control 1: the queue's push without its lock (queue stress; must report a race)"
 build_cpp_test queue_stress.cpp nolock "$TSAN" stress.nolock || exit 1
 run_tsan stress.nolock stress.nolock.out
 races=$(grep -c 'WARNING: ThreadSanitizer' stress.nolock.out)
 echo "   $races TSan reports"
 if [ "$races" -eq 0 ]; then echo "   NEGATIVE CONTROL DID NOT FAIL -- the TSan run above proves nothing"; fail=1; fi
 
-echo "== TSan negative control 2: reply side without its lock (CeeLing workers answering concurrently; must report a race)"
+echo "[$(( $(date +%s) - T0 ))s] == TSan negative control 2: reply side without its lock (CeeLing workers answering concurrently; must report a race)"
 build_program work nolock_ret "$TSAN" headless.nolockret headless_main || { echo "BUILD FAILED"; exit 1; }
 run_tsan headless.nolockret headless.nolockret.out
 races=$(grep -c 'WARNING: ThreadSanitizer' headless.nolockret.out)
 echo "   $races TSan reports"
 if [ "$races" -eq 0 ]; then echo "   NEGATIVE CONTROL DID NOT FAIL -- the TSan run of the CeeLing tests proves nothing"; fail=1; fi
-echo "== negative control 4: wait-any without its notification (the ping-pong test must see the lost wakeup and fail)"
+echo "[$(( $(date +%s) - T0 ))s] == negative control 4: wait-any without its notification (the ping-pong test must see the lost wakeup and fail)"
 build_cpp_test queue_stress.cpp nonotify "-O1" stress.nonotify || exit 1
 ./stress.nonotify > stress.nonotify.out 2>&1; rc=$?
 echo "   exit $rc: $(grep -c 'wakeup was lost' stress.nonotify.out) lost-wakeup report(s)"
 if [ $rc -eq 0 ] || ! grep -q 'wakeup was lost' stress.nonotify.out; then echo "   NEGATIVE CONTROL DID NOT FAIL -- the wait-any tests prove nothing"; fail=1; fi
 
-echo "== TSan negative control 3: Channel::send without its lock (a producer thread and the consumer; must report a race)"
+echo "[$(( $(date +%s) - T0 ))s] == TSan negative control 3: Channel::send without its lock (a producer thread and the consumer; must report a race)"
 build_program work_nochannel repo "$TSAN" headless.nochannel headless_main || { echo "BUILD FAILED"; exit 1; }
 run_tsan headless.nochannel headless.nochannel.out
 races=$(grep -c 'WARNING: ThreadSanitizer' headless.nochannel.out)

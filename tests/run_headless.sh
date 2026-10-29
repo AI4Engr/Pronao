@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Headless tests: no window. CeeLing end-to-end (dispatcher + the real native layer + test doubles for the window and the dialogs),
 # the file policy against the real file system, program lookup, and the native process runner and folder watcher on their own.
-#   tests/run_headless.sh
+#   tests/run_headless.sh          (SLOW=1: build with -O1 like the product instead of -O0)
 # Fails if any check prints FAIL, if fewer than the expected number of checks ran, or if a program does not exit 0.
+# What can run at the same time does: modules are compiled in parallel and kept in OBJ_CACHE, so the first program pays for them and the others
+# only compile their own main; the programs run together; the native tests are linked from objects compiled once. -O0 because these tests check
+# behaviour, not speed (and libstdc++'s own assertions are on in an unoptimised build, which only makes them stricter); the sanitizer runs use -O1.
+# The output of every part is printed in a fixed order at the end.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXPECTED_HEADLESS=282
@@ -11,42 +15,104 @@ EXPECTED_PROGRAMS=18
 EXPECTED_TAURIPORT=50
 EXPECTED_SITE=38
 W="${TMPDIR:-/tmp}/app-cling-headless"
-rm -rf "$W"; mkdir -p "$W/work"
+rm -rf "$W"; mkdir -p "$W"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
-"${CXX:-g++}" --std=c++17 -O1 "$HERE/tests/proc_helper.cpp" -o "$W/proc_helper.exe" || { echo "HELPER BUILD FAILED"; exit 1; }
+CXX="${CXX:-g++}"
+OPT_LEVEL="-O0"; [ -n "${SLOW:-}" ] && OPT_LEVEL="-O1"
+export OPT="$OPT_LEVEL" OBJ_CACHE="$W/cache"
+"$CXX" --std=c++17 -O1 "$HERE/tests/proc_helper.cpp" -o "$W/proc_helper.exe" || { echo "HELPER BUILD FAILED"; exit 1; }
 export APP_PROC_ECHO="$W/proc_helper.exe"
 OK=1
 
-# a CeeLing program built against the test doubles: all programs share one work directory, so the modules are built once
-runProgram() { # name expected
-    WORK="$W/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$1.clg" "$W/$1.exe" --headless || { echo "BUILD FAILED: $1"; OK=0; return; }
-    OUT="$("$W/$1.exe")"; RC=$?
-    PASS=$(printf '%s\n' "$OUT" | grep -c '^PASS ')
-    FAIL=$(printf '%s\n' "$OUT" | grep -c '^FAIL ')
-    printf '%s\n' "$OUT" | grep -v '^PASS'
-    echo "$1: $PASS passed, $FAIL failed (expected $2 checks, exit code $RC)"
-    { [ "$RC" -eq 0 ] && [ "$FAIL" -eq 0 ] && [ "$PASS" -eq "$2" ]; } || OK=0
+# build one CeeLing program against the test doubles (log in $W/<name>.build)
+buildProgram() { # name
+    WORK="$W/work_$1" bash "$HERE/scripts/build.sh" "$HERE/tests/$1.clg" "$W/$1.exe" --headless > "$W/$1.build" 2>&1
 }
-runProgram headless_main "$EXPECTED_HEADLESS"
-runProgram files_main "$EXPECTED_FILES"
-runProgram programs_main "$EXPECTED_PROGRAMS"
-# the tauriport port against the real `lore` tool (only where it is installed)
+# run it and judge it: everything it prints goes to $W/<name>.log, its verdict to $W/<name>.verdict
+runProgram() { # name expected
+    local name="$1" expected="$2" out rc pass fail
+    {
+        if [ ! -f "$W/$name.exe" ]; then
+            cat "$W/$name.build"; echo "BUILD FAILED: $name"; echo bad > "$W/$name.verdict"; return
+        fi
+        out="$("$W/$name.exe")"; rc=$?
+        pass=$(printf '%s\n' "$out" | grep -c '^PASS ')
+        fail=$(printf '%s\n' "$out" | grep -c '^FAIL ')
+        printf '%s\n' "$out" | grep -v '^PASS'
+        echo "$name: $pass passed, $fail failed (expected $expected checks, exit code $rc)"
+        if [ "$rc" -eq 0 ] && [ "$fail" -eq 0 ] && [ "$pass" -eq "$expected" ]; then echo ok > "$W/$name.verdict"; else echo bad > "$W/$name.verdict"; fi
+    } > "$W/$name.log" 2>&1
+}
+
+# first (in the background): the native process runner and folder watcher on their own (real helper program, real file changes); the shared native sources are
+# compiled once, in parallel, then each test is compiled and linked against those objects
+bash "$HERE/scripts/pack_assets.sh" - "$W/stub"          # (no embedded web files in these)
+NSRC="$HERE/shim/watch.cpp $HERE/shim/assets.cpp $W/stub/assets_embedded.cpp $HERE/shim/os.cpp $HERE/shim/$PLAT/fs.cpp $HERE/shim/$PLAT/proc.cpp $HERE/shim/$PLAT/watch.cpp $HERE/tests/doubles/headless_shim.cpp $HERE/tests/doubles/test_support.cpp"
+NOBJS=""
+NP=()
+i=0
+for s in $NSRC; do
+    i=$((i + 1))
+    "$CXX" --std=c++17 $OPT_LEVEL -c "$s" -o "$W/native_$i.o" &
+    NP+=($!)
+    NOBJS="$NOBJS $W/native_$i.o"
+done
+for p in "${NP[@]}"; do wait "$p" || OK=0; done
+TPIDS=()
+for t in proc watch assets; do
+    src="$HERE/tests/${t}_$( [ $t = assets ] && echo test || echo shim_test).cpp"
+    (
+        "$CXX" --std=c++17 $OPT_LEVEL "$src" $NOBJS -pthread -o "$W/$t.exe" > "$W/$t.log" 2>&1 || { echo "$t TEST BUILD FAILED" >> "$W/$t.log"; echo bad > "$W/$t.verdict"; exit 0; }
+        TOUT="$("$W/$t.exe")"; TRC=$?
+        printf '%s\n' "$TOUT" | grep -v '^PASS' >> "$W/$t.log"
+        if [ "$TRC" -eq 0 ]; then echo ok > "$W/$t.verdict"; else echo bad > "$W/$t.verdict"; fi
+    ) &
+    TPIDS+=($!)
+done
+
+# the first program fills the module cache; the others then compile only their own main (and run alongside)
+buildProgram headless_main
+runProgram headless_main "$EXPECTED_HEADLESS" &
+PIDS=($!)
+NAMES="headless_main"
+buildProgram files_main &
+B1=$!
+buildProgram programs_main &
+B2=$!
+BS=("$B1" "$B2")
+( ASSETS="$HERE/tests/site" WORK="$W/work_site_main" bash "$HERE/scripts/build.sh" "$HERE/tests/site_main.clg" "$W/site_main.exe" --headless > "$W/site_main.build" 2>&1 ) &
+BS+=($!)
+HAVE_LORE=0
 if command -v lore > /dev/null 2>&1 || [ -n "${LORE_CLI_PATH:-}" ]; then
-    EXTRA="$HERE/tests/support.clg $HERE/examples/tauriport/tauriport.clg" runProgram tauriport_main "$EXPECTED_TAURIPORT"
+    HAVE_LORE=1
+    ( EXTRA="$HERE/tests/support.clg $HERE/examples/tauriport/tauriport.clg" WORK="$W/work_tauriport_main" bash "$HERE/scripts/build.sh" "$HERE/tests/tauriport_main.clg" "$W/tauriport_main.exe" --headless > "$W/tauriport_main.build" 2>&1 ) &
+    BS+=($!)
+fi
+
+for p in "${BS[@]}"; do wait "$p"; done
+runProgram files_main "$EXPECTED_FILES" &
+PIDS+=($!)
+runProgram programs_main "$EXPECTED_PROGRAMS" &
+PIDS+=($!)
+APP_SITE_DIR="$(cd "$HERE/tests/site" && (cygpath -m "$PWD" 2>/dev/null || pwd))" runProgram site_main "$EXPECTED_SITE" &
+PIDS+=($!)
+NAMES="$NAMES files_main programs_main site_main"
+if [ "$HAVE_LORE" -eq 1 ]; then
+    runProgram tauriport_main "$EXPECTED_TAURIPORT" &
+    PIDS+=($!)
+    NAMES="$NAMES tauriport_main"
 else
     echo "tauriport_main: SKIPPED (lore is not installed)"
 fi
+for p in "${PIDS[@]}" "${TPIDS[@]}"; do wait "$p"; done
 
-# the program's own web files: compiled in from tests/site, looked up the way the window does it
-APP_SITE_DIR="$(cd "$HERE/tests/site" && (cygpath -m "$PWD" 2>/dev/null || pwd))" ASSETS="$HERE/tests/site" runProgram site_main "$EXPECTED_SITE"
-
-# the native process runner and folder watcher on their own, against the real helper program and real file changes
-bash "$HERE/scripts/pack_assets.sh" - "$W/stub"          # (no embedded web files in these two)
-NATIVE="$HERE/shim/watch.cpp $HERE/shim/assets.cpp $W/stub/assets_embedded.cpp $HERE/shim/os.cpp $HERE/shim/$PLAT/fs.cpp $HERE/shim/$PLAT/proc.cpp $HERE/shim/$PLAT/watch.cpp $HERE/tests/doubles/headless_shim.cpp $HERE/tests/doubles/test_support.cpp"
+for n in headless_main files_main programs_main tauriport_main site_main; do
+    [ -f "$W/$n.log" ] || continue
+    cat "$W/$n.log"
+    [ "$(cat "$W/$n.verdict" 2> /dev/null)" = ok ] || OK=0
+done
 for t in proc watch assets; do
-    "${CXX:-g++}" --std=c++17 -O1 "$HERE/tests/${t}_$( [ $t = assets ] && echo test || echo shim_test).cpp" $NATIVE -pthread -o "$W/$t.exe" || { echo "$t TEST BUILD FAILED"; OK=0; continue; }
-    TOUT="$("$W/$t.exe")"; TRC=$?
-    printf '%s\n' "$TOUT" | grep -v '^PASS'
-    [ "$TRC" -eq 0 ] || OK=0
+    cat "$W/$t.log"
+    [ "$(cat "$W/$t.verdict" 2> /dev/null)" = ok ] || OK=0
 done
 [ "$OK" -eq 1 ]

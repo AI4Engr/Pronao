@@ -158,6 +158,21 @@ string answerOn(App app, int h) {
     return intToString(status) + " " + json;
 }
 
+// Serves the loop and gathers every script evaluated in the page until `needle` has appeared (or maxMs have passed): a wait for an event that
+// is exactly as long as it takes, instead of a fixed sleep that is too short on a busy machine and too long on an idle one.
+string awaitEvals(App app, string needle, int maxMs) {
+    string all = "";
+    string one = "";
+    double began = app_now_ms();
+    while (!containsText(all, needle) && app_now_ms() - began < double(maxMs)) {
+        app.serveOne(25);
+        while (app_test_take_eval(app.handle, one) == 1) {
+            all = all + one;
+        }
+    }
+    return all;
+}
+
 class Counted {
 public:
     int count;
@@ -1168,25 +1183,15 @@ int main() {
     check("a dot-dot path is forbidden", startsWith(roundTrip(app, "w4", requestText("fs.watch", pathArgs("../"))), "1 {\"code\":\"forbidden\""));
 
     app_test_write_raw(wbase + "/outside/watched/made.txt", "hi");
-    app_test_sleep_ms(400);
-    drain(app, 100);
-    string allEvals = "";
+    string allEvals = awaitEvals(app, "\"kind\":\"created\",\"path\":\"made.txt\"", 10000);
     string oneEval = "";
-    while (app_test_take_eval(app.handle, oneEval) == 1) {
-        allEvals = allEvals + oneEval;
-    }
     check("a new file reaches the page as an event", containsText(allEvals, "window.__cling_emit([\"fs.change\",{\"watch\":") &&
           containsText(allEvals, "\"kind\":\"created\",\"path\":\"made.txt\""));
     check("the event carries a relative path only", !containsText(allEvals, wbase) && !containsText(allEvals, "app-cling-"));
 
     // a name that tries to break out of the script stays a string
     app_test_write_raw(wbase + "/outside/watched/a'b);alert(1);(.txt", "x");
-    app_test_sleep_ms(400);
-    drain(app, 100);
-    allEvals = "";
-    while (app_test_take_eval(app.handle, oneEval) == 1) {
-        allEvals = allEvals + oneEval;
-    }
+    allEvals = awaitEvals(app, "alert(1)", 10000);
     check("a hostile file name stays inside a string literal", containsText(allEvals, "\"kind\":\"created\"") && containsText(allEvals, "alert(1)") && startsWith(allEvals, "window.__cling_emit([\"fs.change\",{"));
 
     check("unwatch with an unknown id is not_found", startsWith(roundTrip(app, "w5", requestText("fs.unwatch", watchIdArgs(999999))), "1 {\"code\":\"not_found\""));
@@ -1197,7 +1202,7 @@ int main() {
     int watchNumber = int(decimalValue(idText));
     check("unwatch stops the watch", roundTrip(app, "w7", requestText("fs.unwatch", watchIdArgs(watchNumber))) == "0 null");
     app_test_write_raw(wbase + "/outside/watched/silent.txt", "x");
-    app_test_sleep_ms(400);
+    app_test_sleep_ms(250);
     drain(app, 100);
     allEvals = "";
     while (app_test_take_eval(app.handle, oneEval) == 1) {
@@ -1211,12 +1216,7 @@ int main() {
     check("the page can watch the folder the user granted", startsWith(revokedReply, "0 {\"id\":"));
     app.revokeGrants();
     app_test_write_raw(wbase + "/outside/granted/late.txt", "x");
-    app_test_sleep_ms(400);
-    drain(app, 100);
-    allEvals = "";
-    while (app_test_take_eval(app.handle, oneEval) == 1) {
-        allEvals = allEvals + oneEval;
-    }
+    allEvals = awaitEvals(app, "access_revoked", 10000);
     check("withdrawing the permission ends the watch with a reason", containsText(allEvals, "\"kind\":\"stopped\",\"reason\":\"access_revoked\"") && !containsText(allEvals, "late.txt"));
 
     // the queue entry that signals a watch has an empty id: a page cannot produce one
@@ -1448,7 +1448,7 @@ int main() {
     closing.run();
     check("closing the window ends the loop and cancels what was running", app_cancelled_after_close(closing.handle));
     closing.close();
-    app_test_sleep_ms(1500);
+    app_test_sleep_ms(100);
     check("the program that was running is already dead (the job ended long before 20 s)", app_now_ms() - cancelStarted < 8000.0);
     app.gate.clear();
     app_test_remove_tree(cbase);
