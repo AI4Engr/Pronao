@@ -12,6 +12,9 @@ int app_open(std::string title, int width, int height, std::string html, std::st
 // The next call from the page, or a record the shim queued itself (id empty). 1: got one (`request` is a JSON array text), 0: the
 // window closed and nothing is left, 2: timed out (timeout_ms < 0 waits forever).
 int app_next_call(int handle, int timeout_ms, std::string& id, std::string& request);
+// Waits for ANY of these windows to have a call or record: 1 and `handle` = that window is ready (then app_next_call(handle, 0, ...) takes it; it returns 0 once the
+// window has closed and been reported), 2 timed out, 0 none of them has anything more to say (gone, or closed and already reported). The loop that serves several windows.
+int app_wait_any(std::vector<int> handles, int timeout_ms, int& handle);
 int app_return(int handle, std::string id, int status, std::string json);   // status 0 resolves the page's promise, else rejects it. A page call
                                                                             // is answered ONCE: 1 if this answer was delivered, 0 if the call was
                                                                             // already answered (a timeout got there first), is unknown, or the window is gone

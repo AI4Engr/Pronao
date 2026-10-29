@@ -20,6 +20,7 @@
 #include "assets.clh"
 
 ext_fn int app_open(string title, int width, int height, string html, string url, string initJs, int debug);
+ext_fn int app_wait_any(std::vector<int> handles, int timeoutMs, ref int handle);
 ext_fn int app_next_call(int handle, int timeoutMs, ref string id, ref string request);
 ext_fn int app_push(int handle, string id, string request, int maxQueued);
 ext_fn int app_terminate(int handle);
@@ -48,6 +49,139 @@ ext_fn string app_page_html();
 ext_fn string app_bridge_js();
 ext_fn string app_extra_js();
 
+// Which window is calling right now: set by the Dispatcher around a synchronous command (0 outside one). A command that acts on "its" window
+// holds this object and reads `handle`.
+class CallContext {
+public:
+    int handle;
+    CallContext() {
+        handle = 0;
+    }
+};
+
+// The commands each window's page may call. The default list (once restrictAll has been used; before that: every registered command) applies
+// to every window without a list of its own; restrictWindow gives one window its own. Anything else is answered {code: "forbidden"}, whether or not
+// such a command exists, so the page cannot probe for names. `known` is every registered command name.
+class CommandRules {
+public:
+    std::vector<string> known;
+    bool defaultRestricted;
+    std::vector<string> defaultNames;
+    std::vector<int> restrictedHandles;
+    std::vector<int> ruleHandles;
+    std::vector<string> ruleNames;
+
+    CommandRules() {
+        defaultRestricted = false;
+    }
+
+    bool hasCommand(string name) {
+        int i = 0;
+        while (i < known.size()) {
+            if (known[i] == name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    bool mayCall(int handle, string name) {
+        bool own = false;
+        int i = 0;
+        while (i < restrictedHandles.size()) {
+            if (restrictedHandles[i] == handle) {
+                own = true;
+            }
+            i = i + 1;
+        }
+        if (own) {
+            int r = 0;
+            while (r < ruleNames.size()) {
+                if (ruleHandles[r] == handle && ruleNames[r] == name) {
+                    return true;
+                }
+                r = r + 1;
+            }
+            return false;
+        }
+        if (!defaultRestricted) {
+            return true;
+        }
+        int d = 0;
+        while (d < defaultNames.size()) {
+            if (defaultNames[d] == name) {
+                return true;
+            }
+            d = d + 1;
+        }
+        return false;
+    }
+
+    // A window opened by another one starts with the opener's own list, if it has one (the default list applies to it anyway).
+    void inheritRules(int from, int to) {
+        bool own = false;
+        int i = 0;
+        while (i < restrictedHandles.size()) {
+            if (restrictedHandles[i] == from) {
+                own = true;
+            }
+            i = i + 1;
+        }
+        if (!own) {
+            return;
+        }
+        std::vector<string> names;
+        int r = 0;
+        while (r < ruleNames.size()) {
+            if (ruleHandles[r] == from) {
+                names.push_back(ruleNames[r]);
+            }
+            r = r + 1;
+        }
+        restrictWindow(to, names);
+    }
+
+    void restrictAll(std::vector<string> names) {
+        defaultNames = names;
+        defaultRestricted = true;
+    }
+
+    void restrictWindow(int handle, std::vector<string> names) {
+        forgetRules(handle);
+        restrictedHandles.push_back(handle);
+        int i = 0;
+        while (i < names.size()) {
+            ruleHandles.push_back(handle);
+            ruleNames.push_back(names[i]);
+            i = i + 1;
+        }
+    }
+
+    void forgetRules(int handle) {
+        int i = restrictedHandles.size() - 1;
+        while (i >= 0) {
+            if (restrictedHandles[i] == handle) {
+                restrictedHandles[i] = restrictedHandles[restrictedHandles.size() - 1];
+                restrictedHandles.pop_back();
+            }
+            i = i - 1;
+        }
+        int r = ruleNames.size() - 1;
+        while (r >= 0) {
+            if (ruleHandles[r] == handle) {
+                int last = ruleNames.size() - 1;
+                ruleHandles[r] = ruleHandles[last];
+                ruleNames[r] = ruleNames[last];
+                ruleHandles.pop_back();
+                ruleNames.pop_back();
+            }
+            r = r - 1;
+        }
+    }
+
+};
+
 class Dispatcher {
 public:
     std::vector<string> names;
@@ -60,33 +194,50 @@ public:
     std::vector<int> timeoutValues;
     int defaultTimeoutMs;
     std::vector<string> dueIds;
+    std::vector<int> dueHandles;       // (a page's call ids are only unique within its window: every table of calls is keyed by window AND id)
     std::vector<double> dueAt;
     // The tag a page gave an async call (cling.invoke(..., {signal})) and the call it names, newest last, at most 256 of them.
     std::vector<string> tags;
+    std::vector<int> tagHandles;
     std::vector<string> tagCalls;
 
-    // The commands this window's page may call, once restrict() has been used (before that: every registered command). Anything else
-    // is answered {code: "forbidden"}, whether or not such a command exists, so the page cannot probe for names.
-    std::vector<string> allowed;
-    bool restricted;
+    // Which commands each window's page may call (see CommandRules), and which window's synchronous command is running right now (see
+    // CallContext). Both are separate objects so that the commands, which are owned by this Dispatcher, can hold them without pointing back at it.
+    CommandRules rules;
+    CallContext caller;
 
     Dispatcher() {
         defaultTimeoutMs = 0;
-        restricted = false;
+        rules = new CommandRules();
+        caller = new CallContext();
     }
 
-    bool mayCall(string name) {
-        if (!restricted) {
-            return true;
-        }
-        int i = 0;
-        while (i < allowed.size()) {
-            if (allowed[i] == name) {
-                return true;
+    // A window is gone: its list, its tags and its deadlines go with it.
+    void forgetWindow(int handle) {
+        rules.forgetRules(handle);
+        int t = tags.size() - 1;
+        while (t >= 0) {
+            if (tagHandles[t] == handle) {
+                int k = t;
+                while (k + 1 < tags.size()) {
+                    tags[k] = tags[k + 1];
+                    tagHandles[k] = tagHandles[k + 1];
+                    tagCalls[k] = tagCalls[k + 1];
+                    k = k + 1;
+                }
+                tags.pop_back();
+                tagHandles.pop_back();
+                tagCalls.pop_back();
             }
-            i = i + 1;
+            t = t - 1;
         }
-        return false;
+        int d = dueIds.size() - 1;
+        while (d >= 0) {
+            if (dueHandles[d] == handle) {
+                dropDue(d);
+            }
+            d = d - 1;
+        }
     }
 
     int timeoutFor(string name) {
@@ -113,26 +264,30 @@ public:
         timeoutValues.push_back(ms);
     }
 
-    void rememberTag(string tag, string call) {
+    void rememberTag(int handle, string tag, string call) {
         if (tags.size() >= 256) {
             int i = 0;
             while (i + 1 < tags.size()) {
                 tags[i] = tags[i + 1];
+                tagHandles[i] = tagHandles[i + 1];
                 tagCalls[i] = tagCalls[i + 1];
                 i = i + 1;
             }
             tags.pop_back();
+            tagHandles.pop_back();
             tagCalls.pop_back();
         }
         tags.push_back(tag);
+        tagHandles.push_back(handle);
         tagCalls.push_back(call);
     }
 
-    // The page abandons the call it tagged: the work is told to stop. Unknown or finished tags are ignored.
+    // The page abandons the call it tagged: the work is told to stop. Unknown or finished tags are ignored, and a tag only names a call of the
+    // window that sent it.
     void cancelTag(int handle, string tag) {
         int i = 0;
         while (i < tags.size()) {
-            if (tags[i] == tag) {
+            if (tags[i] == tag && tagHandles[i] == handle) {
                 app_cancel(handle, tagCalls[i]);
                 return;
             }
@@ -144,20 +299,23 @@ public:
         int last = dueIds.size() - 1;
         if (index != last) {
             dueIds[index] = dueIds[last];
+            dueHandles[index] = dueHandles[last];
             dueAt[index] = dueAt[last];
         }
         dueIds.pop_back();
+        dueHandles.pop_back();
         dueAt.pop_back();
     }
 
     // Answers every call whose time is up {code: "timed_out"} and tells the work to stop (callCancelled, and a program it started is
     // killed). A call that was answered meanwhile is just forgotten; the late answer of a job that kept going is dropped by the shim
     // (a page call is answered once).
-    void sweep(int handle) {
+    void sweep() {
         double now = app_now_ms();
         int i = dueIds.size() - 1;
         while (i >= 0) {
             string id = dueIds[i];
+            int handle = dueHandles[i];
             if (app_pending(handle, id) == 0) {
                 dropDue(i);
             } else if (now >= dueAt[i]) {
@@ -192,11 +350,13 @@ public:
     void add(string name, Command handler) {
         names.push_back(name);
         handlers.push_back(handler);
+        rules.known.push_back(name);
     }
 
     void addAsync(string name, AsyncCommand handler) {
         asyncNames.push_back(name);
         asyncHandlers.push_back(handler);
+        rules.known.push_back(name);
     }
 
     // The index of the async command called `name`, or -1.
@@ -250,7 +410,7 @@ public:
         if (tagItem != nullptr && isString(tagItem) && tagItem.valuestring.length() <= 64) {
             tag = tagItem.valuestring;
         }
-        if (!mayCall(nameItem.valuestring)) {
+        if (!rules.mayCall(appHandle, nameItem.valuestring)) {
             return new Reply(1, errorJson("forbidden", "this window may not call that command"));
         }
         int index = indexOf(nameItem.valuestring);
@@ -272,11 +432,12 @@ public:
                 starter.start(args, id, appHandle);
                 cling::clearJobFailure();
                 if (tag.length() > 0) {
-                    rememberTag(tag, id);
+                    rememberTag(appHandle, tag, id);
                 }
                 int limitMs = timeoutFor(nameItem.valuestring);
                 if (limitMs > 0) {
                     dueIds.push_back(id);
+                    dueHandles.push_back(appHandle);
                     dueAt.push_back(app_now_ms() + double(limitMs));
                 }
                 return new Reply(2, "");
@@ -288,7 +449,9 @@ public:
         try {
             // (a local first: the checker cannot resolve a method call made directly on `handlers[index]`)
             Command handler = handlers[index];
+            caller.handle = appHandle;
             Item result = handler.call(args);
+            caller.handle = 0;
             if (result == nullptr) {
                 return new Reply(0, "null");
             }
@@ -298,6 +461,7 @@ public:
             }
             return new Reply(0, text);
         } catch (string message) {
+            caller.handle = 0;
             return new Reply(1, errorJson(errorCodeOf(message), errorTextOf(message)));
         }
         return new Reply(1, errorJson("internal", "unreachable"));
@@ -1032,13 +1196,14 @@ public:
 
 class LaterBook {
 public:
+    std::vector<int> handles;      // the window each call came from: a call id is only unique within its window
     std::vector<string> ids;
     std::vector<Later> items;
     LaterBook() { }
-    int indexOf(string id) {
+    int indexOf(int handle, string id) {
         int i = 0;
         while (i < ids.size()) {
-            if (ids[i] == id) {
+            if (ids[i] == id && handles[i] == handle) {
                 return i;
             }
             i = i + 1;
@@ -1048,11 +1213,23 @@ public:
     void drop(int index) {
         int last = ids.size() - 1;
         if (index != last) {
+            handles[index] = handles[last];
             ids[index] = ids[last];
             items[index] = items[last];
         }
+        handles.pop_back();
         ids.pop_back();
         items.pop_back();
+    }
+    // A window is gone: the calls it was still waiting for are forgotten.
+    void forgetWindow(int handle) {
+        int i = ids.size() - 1;
+        while (i >= 0) {
+            if (handles[i] == handle) {
+                drop(i);
+            }
+            i = i - 1;
+        }
     }
 };
 
@@ -1336,7 +1513,163 @@ public:
     }
 };
 
-// A running application: a window plus a command table.
+// One open window: what belongs to it and not to the application. The application (App) owns the commands, the file policy, the programs;
+// a Window owns its handle, its close-button state, its watches, the addresses it may load and (through the Dispatcher) its command list.
+class Window {
+public:
+    int handle;
+    WindowState state;
+    Watches watches;
+    std::vector<string> navigation;
+    CommandRules rules;
+    Window(int h, CommandRules r) {
+        handle = h;
+        state = new WindowState();
+        state.handle = h;
+        watches = new Watches();
+        rules = r;
+    }
+
+    // Pushes an event to this window's page (see emitEvent).
+    bool emit(string name, string payloadJson) {
+        return emitEvent(handle, name, payloadJson);
+    }
+
+    // Closes the window at once, without asking (see requestClose).
+    void close() {
+        app_terminate(handle);
+    }
+
+    // Asks the window to close as if the user had pressed the X: a window with confirmClose and unsaved work asks first.
+    void requestClose() {
+        app_window_state(handle, 4);
+    }
+
+    bool setTitle(string title) {
+        if (title.length() == 0 || !plainText(title, 200)) {
+            return false;
+        }
+        return app_window_title(handle, title) == 1;
+    }
+
+    // When the user closes this window (the X, Alt+F4) while its page has said it has unsaved work, ask first with a native box whose text
+    // is the application's, not the page's.
+    bool confirmClose(string title, string message) {
+        if (!plainText(title, 200) || !plainText(message, 4000)) {
+            return false;
+        }
+        state.closeTitle = title;
+        state.closeMessage = message;
+        state.confirm = true;
+        return app_window_guard(handle, 1) >= 0;
+    }
+
+    // From now on this window may also load addresses that start with `prefix` (the event window.navigationBlocked reports the rest).
+    bool allowNavigation(string prefix) {
+        if (prefix.length() < 5 || !plainText(prefix, 1000)) {
+            return false;
+        }
+        navigation.push_back(prefix);
+        app_navigation_allow(handle, navigation);
+        return true;
+    }
+
+    // This window's page may call only the commands named here (every name must be registered); a list of its own replaces the application's.
+    // false, and nothing changes, if a name is not registered.
+    bool allowOnlyCommands(std::vector<string> names) {
+        int i = 0;
+        while (i < names.size()) {
+            if (!rules.hasCommand(names[i])) {
+                return false;
+            }
+            i = i + 1;
+        }
+        rules.restrictWindow(handle, names);
+        return true;
+    }
+};
+
+// The open windows, by handle.
+class WindowBook {
+public:
+    std::vector<int> handles;
+    std::vector<Window> items;
+    WindowBook() { }
+
+    int indexOf(int handle) {
+        int i = 0;
+        while (i < handles.size()) {
+            if (handles[i] == handle) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // The window with this handle, or nullptr.
+    Window get(int handle) {
+        int i = indexOf(handle);
+        if (i < 0) {
+            return nullptr;
+        }
+        Window w = items[i];
+        return w;
+    }
+
+    int count() {
+        return handles.size();
+    }
+
+    void add(Window w) {
+        handles.push_back(w.handle);
+        items.push_back(w);
+    }
+
+    void drop(int index) {
+        int last = handles.size() - 1;
+        if (index != last) {
+            handles[index] = handles[last];
+            items[index] = items[last];
+        }
+        handles.pop_back();
+        items.pop_back();
+    }
+
+    bool anyPending() {
+        int i = 0;
+        while (i < items.size()) {
+            Window w = items[i];
+            if (w.watches.anyPending()) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    void flushQuiet(FileGate gate) {
+        int i = 0;
+        while (i < items.size()) {
+            Window w = items[i];
+            w.watches.flushQuiet(gate, w.handle);
+            i = i + 1;
+        }
+    }
+};
+
+// A page path for a window the page asks to open: inside the program's own site, plain, no parent folders, no scheme.
+bool pagePathOk(string path) {
+    if (path.length() < 1 || path.length() > 300 || path[0] != '/' || !plainText(path, 300)) {
+        return false;
+    }
+    if (containsText(path, "..") || containsText(path, "//") || containsText(path, "\\") || containsText(path, ":")) {
+        return false;
+    }
+    return true;
+}
+
+// A running application: commands, the file policy, programs, and any number of windows.
 // The origin ("http://localhost:5173") of a development server address, or "" if the address is not one we load. Only the machine's own
 // loopback names are accepted, over plain http, with an optional port and no user name: a development server is a program on this machine
 // that serves the page while it is being written, and nothing else may be given the application's commands.
@@ -1388,12 +1721,19 @@ public:
     LaterBook laters;
     PumpBook pumps;
     FileGate gate;
-    Watches watches;
-    WindowState window;
-    std::vector<string> navigation;    // addresses the window may load after the application's own page (allowNavigation)
+    WindowBook windows;                // the open windows
+    std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
+    Watches watches;                   // the first window's (see `handle`); each Window has its own
+    WindowState window;                // the first window's
+    std::vector<string> navigation;    // addresses every window opened from now on may load after the application's own page (allowNavigation)
     int maxRequestBytes;
     int maxQueuedCalls;
-    string siteStart;          // the address the window opens on, when the program serves its own web files
+    string siteStart;          // the address windows open on, when the program serves its own web files
+    string siteOrigin;         // the origin the program's own web files are served under ("" until openSite)
+    int maxWindows;            // how many windows a page may ask for (enableWindowOpenCommand); 0 = a page may not open windows
+    bool confirmDefault;       // confirmClose was called: every window asks before it closes with unsaved work
+    string confirmTitle;
+    string confirmMessage;
 
     App() {
         handle = 0;
@@ -1403,11 +1743,17 @@ public:
         pumps = new PumpBook();
         gate = new FileGate();
         cling::setExitGraceMs(5000);
+        windows = new WindowBook();
         watches = new Watches();
         window = new WindowState();
         maxRequestBytes = 4194304;
         maxQueuedCalls = 256;
         siteStart = "";
+        siteOrigin = "";
+        maxWindows = 0;
+        confirmDefault = false;
+        confirmTitle = "";
+        confirmMessage = "";
     }
 
     void command(string name, Command handler) {
@@ -1418,10 +1764,19 @@ public:
         dispatcher.addAsync(name, handler);
     }
 
-    // Pushes an event to the page (see emitEvent). Safe to call from the main thread only through this method;
-    // worker jobs use emitEvent with a captured handle.
+    // Pushes an event to the page of EVERY open window (see emitEvent; Window.emit addresses one). Safe to call from the main thread only
+    // through this method; worker jobs use emitEvent with a captured handle. true if some window took it.
     bool emit(string name, string payloadJson) {
-        return emitEvent(handle, name, payloadJson);
+        bool any = false;
+        int i = 0;
+        while (i < windows.items.size()) {
+            Window w = windows.items[i];
+            if (emitEvent(w.handle, name, payloadJson)) {
+                any = true;
+            }
+            i = i + 1;
+        }
+        return any;
     }
 
     // Adds a folder the page may reach through the file commands. Nothing is reachable until at least one is added;
@@ -1705,8 +2060,12 @@ public:
     // can reach, at most 32 at a time.
     void enableWatchCommands() {
         FileGate files = gate;
-        Watches book = watches;
+        WindowBook book = windows;
         asyncCommand("fs.watch", closure AsyncCommand [files, book] (Item args, string id, int handle) {
+            Window owner = book.get(handle);
+            if (owner == nullptr) {
+                throw "forbidden: the window is gone";
+            }
             string path = requiredString(args, "path");
             bool recursive = optionalBool(args, "recursive", false);
             int flag = 0;
@@ -1715,28 +2074,32 @@ public:
             }
             FsResult r = files.resolve(path, 2);
             fsCheck(r.status, "cannot watch " + path);
-            if (book.states.size() >= 32) {
+            if (owner.watches.states.size() >= 32) {
                 throw "too_many: at most 32 folders can be watched at a time";
             }
             int watchId = 0;
             fsCheck(app_watch_start(handle, r.text, flag, watchId), "cannot watch " + path);
-            book.states.push_back(new WatchState(watchId, r.text));
+            owner.watches.states.push_back(new WatchState(watchId, r.text));
             Item result = createObject();
             addNumberToObject(result, "id", double(watchId));
             replyOk(handle, id, printUnformatted(result));
         });
         asyncCommand("fs.unwatch", closure AsyncCommand [book] (Item args, string id, int handle) {
+            Window owner = book.get(handle);
+            if (owner == nullptr) {
+                throw "forbidden: the window is gone";
+            }
             Item given = getObjectItem(objectArg(args), "id");
             if (given == nullptr || !isNumber(given)) {
                 throw "invalid_argument: `id` must be a number";
             }
             int watchId = int(given.valuedouble);
-            int index = book.indexOf(watchId);
+            int index = owner.watches.indexOf(watchId);
             if (index < 0) {
                 throw "not_found: no such watch";
             }
             app_watch_stop(handle, watchId);
-            book.drop(index);
+            owner.watches.drop(index);
             replyOk(handle, id, "null");
         });
     }
@@ -1804,7 +2167,7 @@ public:
     }
 
     // Applies what a dialog worker sent: grants the user's choice, then answers the page.
-    void onPickRecord(std::vector<string> f) {
+    void onPickRecord(int from, std::vector<string> f) {
         if (f.size() < 4) {
             return;
         }
@@ -1816,12 +2179,12 @@ public:
             g = gate.grantFile(f[3]);
         }
         if (g.status != 0) {
-            replyError(handle, id, fsCodeFor(g.status), "the chosen path cannot be used");
+            replyError(from, id, fsCodeFor(g.status), "the chosen path cannot be used");
             return;
         }
         Item result = createObject();
         addStringToObject(result, "path", g.text);
-        replyOk(handle, id, printUnformatted(result));
+        replyOk(from, id, printUnformatted(result));
     }
 
     // ---- the window ----
@@ -1829,16 +2192,17 @@ public:
     // Registers window.setTitle {title}, window.setSize {width, height}, window.minimize / maximize / restore / focus,
     // window.close, and window.setDirty {dirty}: the page says it has unsaved work, which matters to confirmClose.
     void enableWindowCommands() {
-        WindowState state = window;
-        command("window.setTitle", closure Command [state] (Item args) {
+        CallContext who = dispatcher.caller;
+        WindowBook book = windows;
+        command("window.setTitle", closure Command [who] (Item args) {
             string title = requiredString(args, "title");
             if (title.length() == 0 || !plainText(title, 200)) {
                 throw "invalid_argument: `title` must be plain text of 1 to 200 bytes";
             }
-            app_window_title(state.handle, title);
+            app_window_title(who.handle, title);
             return createNull();
         });
-        command("window.setSize", closure Command [state] (Item args) {
+        command("window.setSize", closure Command [who] (Item args) {
             Item w = getObjectItem(objectArg(args), "width");
             Item h = getObjectItem(objectArg(args), "height");
             if (w == nullptr || h == nullptr || !isNumber(w) || !isNumber(h)) {
@@ -1847,51 +2211,146 @@ public:
             if (w.valuedouble < 200.0 || w.valuedouble > 10000.0 || h.valuedouble < 150.0 || h.valuedouble > 10000.0) {
                 throw "invalid_argument: width must be 200 to 10000 and height 150 to 10000";
             }
-            app_window_size(state.handle, int(w.valuedouble), int(h.valuedouble));
+            app_window_size(who.handle, int(w.valuedouble), int(h.valuedouble));
             return createNull();
         });
-        command("window.minimize", closure Command [state] (Item args) {
-            app_window_state(state.handle, 1);
+        command("window.minimize", closure Command [who] (Item args) {
+            app_window_state(who.handle, 1);
             return createNull();
         });
-        command("window.maximize", closure Command [state] (Item args) {
-            app_window_state(state.handle, 2);
+        command("window.maximize", closure Command [who] (Item args) {
+            app_window_state(who.handle, 2);
             return createNull();
         });
-        command("window.restore", closure Command [state] (Item args) {
-            app_window_state(state.handle, 0);
+        command("window.restore", closure Command [who] (Item args) {
+            app_window_state(who.handle, 0);
             return createNull();
         });
-        command("window.focus", closure Command [state] (Item args) {
-            app_window_state(state.handle, 3);
+        command("window.focus", closure Command [who] (Item args) {
+            app_window_state(who.handle, 3);
             return createNull();
         });
-        command("window.close", closure Command [state] (Item args) {
-            app_terminate(state.handle);
+        command("window.close", closure Command [who] (Item args) {
+            app_terminate(who.handle);
             return createNull();
         });
-        command("window.setDirty", closure Command [state] (Item args) {
-            state.dirty = optionalBool(args, "dirty", true);
+        command("window.setDirty", closure Command [who, book] (Item args) {
+            Window w = book.get(who.handle);
+            if (w == nullptr) {
+                throw "forbidden: the window is gone";
+            }
+            w.state.dirty = optionalBool(args, "dirty", true);
             return createNull();
         });
     }
 
-    // When the user closes the window (the X, Alt+F4) while the page has said it has unsaved work, ask first with a native
-    // box whose text is the application's, not the page's. Without this the window just closes.
+    // Registers window.open {start, title?, width?, height?}: a page may ask for another window of the program's own site. Off unless this is called
+    // (a page that can open windows can show the application's commands to more places); `max` windows at most (1 to 32, counting the open ones).
+    // `start` must be a path inside the site ("/settings.html"): plain text, no "..", no scheme. The window opens after the call has been answered
+    // (null), on the thread that serves the windows; it gets the opener's own command list if it has one, and if it cannot open the opener receives
+    // the event window.openFailed {start}. Needs openSite to have been used.
+    bool enableWindowOpenCommand(int max) {
+        if (max < 1 || max > 32) {
+            return false;
+        }
+        maxWindows = max;
+        CallContext who = dispatcher.caller;
+        WindowBook book = windows;
+        command("window.open", closure Command [who, book, max] (Item args) {
+            string start = requiredString(args, "start");
+            if (!pagePathOk(start)) {
+                throw "invalid_argument: `start` must be a path inside the site, such as /settings.html";
+            }
+            string title = optionalString(args, "title", "");
+            if (title.length() > 0 && !plainText(title, 200)) {
+                throw "invalid_argument: `title` must be plain text of at most 200 bytes";
+            }
+            double width = 800.0;
+            double height = 600.0;
+            Item w = getObjectItem(objectArg(args), "width");
+            Item h = getObjectItem(objectArg(args), "height");
+            if (w != nullptr) {
+                if (!isNumber(w) || w.valuedouble < 200.0 || w.valuedouble > 10000.0) {
+                    throw "invalid_argument: `width` must be 200 to 10000";
+                }
+                width = w.valuedouble;
+            }
+            if (h != nullptr) {
+                if (!isNumber(h) || h.valuedouble < 150.0 || h.valuedouble > 10000.0) {
+                    throw "invalid_argument: `height` must be 150 to 10000";
+                }
+                height = h.valuedouble;
+            }
+            if (book.count() >= max) {
+                string message = "too_many: at most " + intToString(max) + " windows can be open";
+                throw message;
+            }
+            string record = "openwin";
+            record.push_back(char(0));
+            record = record + start;
+            record.push_back(char(0));
+            record = record + title;
+            record.push_back(char(0));
+            record = record + intToString(int(width));
+            record.push_back(char(0));
+            record = record + intToString(int(height));
+            record.push_back(char(0));
+            if (app_push(who.handle, "", record, 100) != 1) {
+                throw "busy: the application is not keeping up";
+            }
+            return createNull();
+        });
+        return true;
+    }
+
+    // The window.open record: opens the window if the cap still allows it, and tells the opener when it could not.
+    void openFromRecord(int opener, std::vector<string> f) {
+        if (f.size() < 5) {
+            return;
+        }
+        string start = f[1];
+        string title = f[2];
+        if (title.length() == 0) {
+            title = "window";
+        }
+        int h = 0;
+        if (maxWindows > 0 && windows.count() < maxWindows && pagePathOk(start)) {
+            h = openWindow(title, int(decimalValue(f[3])), int(decimalValue(f[4])), false, start);
+        }
+        if (h == 0) {
+            Item e = createObject();
+            addStringToObject(e, "start", start);
+            emitEvent(opener, "window.openFailed", printUnformatted(e));
+            return;
+        }
+        dispatcher.rules.inheritRules(opener, h);
+    }
+
+    // When the user closes a window (the X, Alt+F4) while its page has said it has unsaved work, ask first with a native box whose text is
+    // the application's, not the page's. Applies to every window, open now or opened later. Without this a window just closes.
     bool confirmClose(string title, string message) {
         if (!plainText(title, 200) || !plainText(message, 4000)) {
             return false;
         }
+        confirmDefault = true;
+        confirmTitle = title;
+        confirmMessage = message;
         window.closeTitle = title;
         window.closeMessage = message;
         window.confirm = true;
-        if (handle == 0) {
-            return true;
+        bool ok = true;
+        int i = 0;
+        while (i < windows.items.size()) {
+            Window w = windows.items[i];
+            if (!w.confirmClose(title, message)) {
+                ok = false;
+            }
+            i = i + 1;
         }
-        return app_window_guard(handle, 1) >= 0;
+        return ok;
     }
 
-    void onWindowRecord(std::vector<string> f) {
+    void onWindowRecord(int from, std::vector<string> f) {
         if (f.size() < 2) {
             return;
         }
@@ -1899,29 +2358,34 @@ public:
             if (isUtf8(f[2])) {
                 Item e = createObject();
                 addStringToObject(e, "url", f[2]);
-                emitEvent(handle, "window.navigationBlocked", printUnformatted(e));
+                emitEvent(from, "window.navigationBlocked", printUnformatted(e));
             }
             return;
         }
+        Window w = windows.get(from);
+        if (w == nullptr) {
+            return;
+        }
+        WindowState st = w.state;
         if (f[1] == "close_declined") {
-            window.confirming = false;
-            emitEvent(handle, "window.closeDeclined", "null");
+            st.confirming = false;
+            emitEvent(from, "window.closeDeclined", "null");
             return;
         }
         if (f[1] != "close_requested") {
             return;
         }
-        if (!window.dirty) {
-            app_terminate(handle);
+        if (!st.dirty) {
+            app_terminate(from);
             return;
         }
-        if (window.confirming) {
+        if (st.confirming) {
             return;
         }
-        window.confirming = true;
-        int h = handle;
-        string title = window.closeTitle;
-        string message = window.closeMessage;
+        st.confirming = true;
+        int h = from;
+        string title = st.closeTitle;
+        string message = st.closeMessage;
         string declined = packRecord("window", "close_declined");
         spawn(closure Job [h, title, message, declined] () {
             if (app_dialog_message(h, title, message, 3, 2) == 3) {
@@ -1950,24 +2414,34 @@ public:
         if (prefix.length() < 5 || !plainText(prefix, 1000)) {
             return false;
         }
-        navigation.push_back(prefix);
+        addNavigation(prefix);
         return true;
+    }
+
+    void addNavigation(string prefix) {
+        int i = 0;
+        while (i < navigation.size()) {
+            if (navigation[i] == prefix) {
+                return;
+            }
+            i = i + 1;
+        }
+        navigation.push_back(prefix);
     }
 
     // From now on the page may call only the commands named here (every name must be one that is registered by now, so a typo cannot
     // silently leave a command open or closed). Others are answered {code: "forbidden"}, registered or not. Cancelling a call
-    // ($cancel) is always allowed. Calling it again replaces the list. One App serves one window, so this is that window's list.
-    // false (and nothing changes) if a name is not registered.
+    // ($cancel) is always allowed. Calling it again replaces the list. This is the list of every window that has no list of its own
+    // (Window.allowOnlyCommands gives one window its own). false (and nothing changes) if a name is not registered.
     bool allowOnlyCommands(std::vector<string> names) {
         int i = 0;
         while (i < names.size()) {
-            if (dispatcher.indexOf(names[i]) < 0 && dispatcher.indexOfAsync(names[i]) < 0) {
+            if (!dispatcher.rules.hasCommand(names[i])) {
                 return false;
             }
             i = i + 1;
         }
-        dispatcher.allowed = names;
-        dispatcher.restricted = true;
+        dispatcher.rules.restrictAll(names);
         return true;
     }
 
@@ -2002,22 +2476,64 @@ public:
         cling::setWorkerLimit(n);
     }
 
-    // Opens the window. false if it could not be created (the shim has printed why on stderr).
-    bool open(string title, int width, int height, string html, string bridgeJs, bool debug) {
+    // Opens a window on `start` (an address, or "" for `html`). Returns its handle, 0 if it could not be created (the shim has printed why on
+    // stderr). The first window opened is the primary one: `handle`, `window` and `watches` name it.
+    int openAt(string title, int width, int height, string html, string start, string bridgeJs, bool debug) {
         int d = 0;
         if (debug) {
             d = 1;
         }
-        handle = app_open(title, width, height, html, siteStart, bridgeJs, d);
-        window.handle = handle;
-        if (handle != 0) {
-            app_limits(handle, maxRequestBytes, maxQueuedCalls);
-            app_navigation_allow(handle, navigation);
-            if (window.confirm) {
-                app_window_guard(handle, 1);
-            }
+        int h = app_open(title, width, height, html, start, bridgeJs, d);
+        if (h == 0) {
+            return 0;
         }
-        return handle != 0;
+        app_limits(h, maxRequestBytes, maxQueuedCalls);
+        app_navigation_allow(h, navigation);
+        Window w = new Window(h, dispatcher.rules);
+        w.navigation = navigation;
+        windows.add(w);
+        opened.push_back(h);
+        if (windows.count() == 1) {
+            handle = h;
+            window = w.state;
+            watches = w.watches;
+        }
+        if (confirmDefault) {
+            w.confirmClose(confirmTitle, confirmMessage);
+        }
+        return h;
+    }
+
+    // Opens a window on the page embedded at build time or on `siteStart`. false if it could not be created.
+    bool open(string title, int width, int height, string html, string bridgeJs, bool debug) {
+        return openAt(title, width, height, html, siteStart, bridgeJs, debug) != 0;
+    }
+
+    // Opens another window and returns its handle (0 if it could not be created); `windows.get(handle)` is the Window object. `start` is ""
+    // for the embedded page, a path inside the program's own site ("/settings.html", after openSite), or the address of a development server
+    // (see openDevServer). It gets the application's command list and the addresses allowNavigation added.
+    int openWindow(string title, int width, int height, bool debug, string start) {
+        string address = "";
+        string html = "";
+        if (start.length() == 0) {
+            html = app_page_html();
+        } else if (startsWithText(start, "/")) {
+            if (siteOrigin.length() == 0 || !pagePathOk(start)) {
+                return 0;
+            }
+            address = siteOrigin + start;
+        } else {
+            if (app_release_build() == 1) {
+                return 0;
+            }
+            string origin = devServerOrigin(start);
+            if (origin.length() == 0) {
+                return 0;
+            }
+            addNavigation(origin + "/");
+            address = start;
+        }
+        return openAt(title, width, height, html, address, app_bridge_js() + app_extra_js(), debug);
     }
 
     // The development server address the program was asked to load (environment variable APP_DEV_URL), or "" if there is none, it is not a
@@ -2050,7 +2566,7 @@ public:
             return false;
         }
         siteStart = url;
-        navigation.push_back(origin + "/");
+        addNavigation(origin + "/");
         return open(title, width, height, "", app_bridge_js() + app_extra_js(), true);
     }
 
@@ -2064,12 +2580,18 @@ public:
     // Content-Security-Policy. The window may navigate to that origin and nowhere else (allowNavigation adds more). false if there
     // are no files, no page among them, or the window could not be created.
     bool openSite(string title, int width, int height, bool debug, string origin, string csp) {
-        SiteInfo info = publishSite(origin, csp);
-        if (info.files == 0 || info.start.length() == 0) {
-            return false;
+        if (siteOrigin.length() > 0 && siteOrigin != origin) {
+            return false;           // one site per program: every window shares the origin
         }
-        siteStart = info.start;
-        navigation.push_back(origin + "/");
+        if (siteOrigin.length() == 0) {
+            SiteInfo info = publishSite(origin, csp);
+            if (info.files == 0 || info.start.length() == 0) {
+                return false;
+            }
+            siteStart = info.start;
+            siteOrigin = origin;
+        }
+        addNavigation(origin + "/");
         return open(title, width, height, "", app_bridge_js() + app_extra_js(), debug);
     }
 
@@ -2089,8 +2611,10 @@ public:
         return true;
     }
 
-    // Expects a record from a worker for the page call `id`: when finishLater arrives, `l.done` runs on the main thread.
-    void later(string id, Later l) {
+    // Expects a record from a worker for the page call `id` of window `handle` (the one the command was called from; call ids repeat across
+    // windows): when finishLater arrives, `l.done` runs on the main thread.
+    void later(int handle, string id, Later l) {
+        laters.handles.push_back(handle);
         laters.ids.push_back(id);
         laters.items.push_back(l);
     }
@@ -2104,18 +2628,23 @@ public:
         return run;
     }
 
-    // A record the native layer queued itself (empty id): "watch", "pick", "window", "later" or "pump".
-    void onInternalRecord(string request) {
+    // A record the native layer queued itself (empty id) for window `from`: "watch", "pick", "window", "later" or "pump".
+    void onInternalRecord(int from, string request) {
         std::vector<string> f = splitFields(request);
         if (f.size() == 0) {
             return;
         }
         if (f[0] == "watch") {
-            watches.onRecord(gate, handle, f);
+            Window w = windows.get(from);
+            if (w != nullptr) {
+                w.watches.onRecord(gate, from, f);
+            }
+        } else if (f[0] == "openwin") {
+            openFromRecord(from, f);
         } else if (f[0] == "pick") {
-            onPickRecord(f);
+            onPickRecord(from, f);
         } else if (f[0] == "window") {
-            onWindowRecord(f);
+            onWindowRecord(from, f);
         } else if (f[0] == "pump" && f.size() >= 2) {
             int index = pumps.indexOf(f[1]);
             if (index >= 0) {
@@ -2127,24 +2656,42 @@ public:
                 }
             }
         } else if (f[0] == "later" && f.size() >= 4) {
-            int index = laters.indexOf(f[1]);
+            int index = laters.indexOf(from, f[1]);
             if (index < 0) {
                 return;
             }
             Later l = laters.items[index];
             laters.drop(index);
             try {
-                l.done(handle, f[1], int(decimalValue(f[2])), f[3]);
+                l.done(from, f[1], int(decimalValue(f[2])), f[3]);
             } catch (string message) {
-                replyError(handle, f[1], errorCodeOf(message), errorTextOf(message));
+                replyError(from, f[1], errorCodeOf(message), errorTextOf(message));
             }
         }
     }
 
-    // Serves the next thing in the queue: a call from the page (dispatched and answered) or a record from the native layer
-    // (a file watcher's change, a dialog's choice, the window's close button). Waits up to timeoutMs (-1 = for as long as it
-    // takes), and delivers merged file-watch events when they have been quiet for a moment.
-    // Returns 1 if something was served, 2 if the wait timed out, 0 if the window has closed.
+    // A window's queue reported that it is closed: the work it started is told to stop (callCancelled; programs it started are killed), its
+    // book entries go, and the next window becomes the primary one if it was the primary.
+    void windowGone(int gone) {
+        app_cancel_all(gone);
+        dispatcher.forgetWindow(gone);
+        laters.forgetWindow(gone);
+        int index = windows.indexOf(gone);
+        if (index >= 0) {
+            windows.drop(index);
+        }
+        if (gone == handle && windows.count() > 0) {
+            Window next = windows.items[0];
+            handle = next.handle;
+            window = next.state;
+            watches = next.watches;
+        }
+    }
+
+    // Serves the next thing in any window's queue: a call from a page (dispatched and answered) or a record from the native layer (a file
+    // watcher's change, a dialog's choice, a window's close button). Waits up to timeoutMs (-1 = for as long as it takes), and delivers merged
+    // file-watch events when they have been quiet for a moment.
+    // Returns 1 if something was served, 2 if the wait timed out, 0 when no window is open any more (the last one has closed).
     int serveOne(int timeoutMs) {
         double started = app_now_ms();
         while (true) {
@@ -2155,43 +2702,53 @@ public:
                     wait = 0;
                 }
             }
-            bool pending = watches.anyPending();
+            bool pending = windows.anyPending();
             if (pending && (wait < 0 || wait > 40)) {
                 wait = 40;
             }
-            dispatcher.sweep(handle);
+            dispatcher.sweep();
             int due = dispatcher.nextDueMs();
             if (due >= 0 && (wait < 0 || wait > due + 1)) {
                 wait = due + 1;
             }
-            string id = "";
-            string request = "";
-            int r = app_next_call(handle, wait, id, request);
-            if (r == 1) {
-                if (id.length() == 0) {
-                    onInternalRecord(request);
-                } else {
-                    Reply reply = dispatcher.handle(handle, id, request);
-                    if (reply.status != 2) {
-                        app_return(handle, id, reply.status, reply.json);
-                    }
-                }
-                watches.flushQuiet(gate, handle);
-                return 1;
-            }
-            if (r == 0) {
-                app_cancel_all(handle);      // the window is gone: running work is told to stop, programs it started are killed
+            int from = 0;
+            int ready = app_wait_any(windows.handles, wait, from);
+            if (ready == 0) {
                 return 0;
             }
-            watches.flushQuiet(gate, handle);
-            if (timeoutMs >= 0 && app_now_ms() - started >= double(timeoutMs)) {
-                return 2;
+            if (ready == 1) {
+                string id = "";
+                string request = "";
+                int r = app_next_call(from, 0, id, request);
+                if (r == 1) {
+                    if (id.length() == 0) {
+                        onInternalRecord(from, request);
+                    } else {
+                        Reply reply = dispatcher.handle(from, id, request);
+                        if (reply.status != 2) {
+                            app_return(from, id, reply.status, reply.json);
+                        }
+                    }
+                    windows.flushQuiet(gate);
+                    return 1;
+                }
+                if (r == 0) {
+                    windowGone(from);
+                    if (windows.count() == 0) {
+                        return 0;
+                    }
+                }
+            } else {
+                windows.flushQuiet(gate);
+                if (timeoutMs >= 0 && app_now_ms() - started >= double(timeoutMs)) {
+                    return 2;
+                }
             }
         }
         return 2;
     }
 
-    // Serves calls and records until the window closes. Returns how many calls and records were served.
+    // Serves calls and records until the last window closes. Returns how many calls and records were served.
     int run() {
         int served = 0;
         while (true) {
@@ -2206,15 +2763,31 @@ public:
         return served;
     }
 
+    // Closes every window the way the close button does when nothing asks first.
     void quit() {
-        app_terminate(handle);
+        int i = 0;
+        while (i < windows.items.size()) {
+            Window w = windows.items[i];
+            app_terminate(w.handle);
+            i = i + 1;
+        }
     }
 
     // Ends the application in order: every call still running is told to stop (callCancelled, programs killed), the watchers are stopped,
     // the window closes. Jobs that are still running afterwards get setShutdownGrace milliseconds when main returns, then the process ends.
     void close() {
-        app_cancel_all(handle);
-        app_close(handle);
+        int i = 0;
+        while (i < opened.size()) {
+            app_cancel_all(opened[i]);
+            app_close(opened[i]);
+            i = i + 1;
+        }
+        while (opened.size() > 0) {
+            opened.pop_back();
+        }
+        while (windows.count() > 0) {
+            windows.drop(windows.count() - 1);
+        }
         handle = 0;
         window.handle = 0;
     }

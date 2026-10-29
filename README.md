@@ -162,6 +162,40 @@ c.abort();                                        // p rejects at once with {cod
 - **Not done**: a job that blocks in a call this layer does not know about (an `ext_fn` of yours) cannot be interrupted, only abandoned at
   exit; there is no cancel for a running dialog; `Channel<T>` (below) lets a worker ask the main thread for something and wait for the answer.
 
+## More than one window
+
+One `App` is the application (commands, the file policy, programs, pumps); it can have any number of windows.
+
+```
+App app = new App();
+app.openSite("Main", 900, 600, false, "http://app.localhost", "");     // the first window is the primary one: app.handle
+int settings = app.openWindow("Settings", 480, 360, false, "/settings.html");   // another window of the same site; 0 if it could not open
+Window w = app.windows.get(settings);                                   // a Window: handle, emit, close, requestClose, setTitle, confirmClose,
+                                                                       // allowNavigation, allowOnlyCommands, its own watches
+app.run();                                                              // serves every window; returns when the LAST one has closed
+```
+- **One site, one origin.** The program's embedded web files are served under one origin; each window starts on its own page of it
+  (`openWindow(..., "/settings.html")`, `""` for the embedded page, or a development-server address). A second origin is not supported.
+- **Per window:** the page's calls, the command list (`Window.allowOnlyCommands`; `App.allowOnlyCommands` is the list of every window without
+  one), the watches (32 each; one window cannot stop another's), the close button's state (`window.setDirty`, `confirmClose`), the events (`Window.emit`;
+  `App.emit` reaches all). `window.*` commands act on the window that called them.
+- **A call id is only unique within its window.** Two pages may have a call "1" in flight at the same time, so everything keyed by a call id is
+  keyed by window as well: `app.later(handle, id, l)` (tauriport passes the `handle` its async command was given), cancel tags, deadlines.
+  A synchronous command that needs to know its window reads `app.dispatcher.callerHandle`; an async command is given `handle`.
+- **Closing.** Closing one window cancels the work it started (programs killed, `callCancelled` true), forgets its pending calls and, if it was the
+  primary, the oldest remaining window becomes the primary (`app.handle`). The program ends when the last window closes (`app.quit()` closes
+  them all). `Window.requestClose()` closes as the X does (a window with unsaved work asks first), `Window.close()` at once.
+- **Opening is slow for everybody**: `openWindow` runs on the thread that serves the windows and waits for WebView2 to start (a few hundred
+  milliseconds), so the other windows' calls queue meanwhile.
+- **A page may open a window only if the program says so.** `app.enableWindowOpenCommand(max)` registers `window.open {start, title?, width?, height?}`:
+  `start` must be a path inside the program's own site (plain text, no `..`, no scheme), at most `max` windows are open at once, and the new window
+  gets the opener's own command list. If it cannot open, the opener receives the event `window.openFailed {start}`. Without that call (the default) a page
+  cannot open windows, and `window.open()` in the page is cancelled by the navigation guard either way.
+- Tests: 42 headless checks and 9 on the site (the same call id in three windows, tags, laters, command lists, watches, events, closing one by one,
+  a page opening a window), a real three-window program (`tests/run_multiwindow.sh`: a page opens the third window, one is closed the way the X closes it,
+  with a control that removes the `WM_DESTROY` fix and must fail), and a wait-any stress test under ASan/UBSan/TSan with a control that removes the
+  wake-up notification.
+
 ## Workers that need the main thread: Channel and pumps
 
 State such as the file policy belongs to the main thread, so a worker cannot read a file itself. `Channel<T>` (a CeeLing type; see CeeLing's
@@ -370,7 +404,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 205 end-to-end + 139 file policy and text + 18 program lookup + 50 tauriport (needs lore) + 33 process + 26 watcher, no window
+bash tests/run_headless.sh            # 282 end-to-end + 139 file policy and text + 18 program lookup + 38 site + 50 tauriport (needs lore) + 33 process + 26 watcher, no window
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # removes one check at a time from src/ and shows the tests fail

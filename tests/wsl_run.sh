@@ -4,13 +4,13 @@
 set -uo pipefail
 cd "$1"
 fail=0
-EXPECTED=240
+EXPECTED=282
 EXPECTED_FILES=123
 EXPECTED_PROGRAMS=15
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print text core files assets app embedded"
-EXPECTED_SITE=29
+EXPECTED_SITE=38
 
 # the native layer and the test doubles (POSIX files), compiled from <repo dir> with <flags> into <prefix>*.o
 NATIVE_SRC="shim/watch.cpp shim/assets.cpp shim/os.cpp shim/posix/fs.cpp shim/posix/proc.cpp shim/posix/watch.cpp tests/doubles/headless_shim.cpp tests/doubles/test_support.cpp"
@@ -135,6 +135,12 @@ run_tsan headless.nolockret headless.nolockret.out
 races=$(grep -c 'WARNING: ThreadSanitizer' headless.nolockret.out)
 echo "   $races TSan reports"
 if [ "$races" -eq 0 ]; then echo "   NEGATIVE CONTROL DID NOT FAIL -- the TSan run of the CeeLing tests proves nothing"; fail=1; fi
+echo "== negative control 4: wait-any without its notification (the ping-pong test must see the lost wakeup and fail)"
+build_cpp_test queue_stress.cpp nonotify "-O1" stress.nonotify || exit 1
+./stress.nonotify > stress.nonotify.out 2>&1; rc=$?
+echo "   exit $rc: $(grep -c 'wakeup was lost' stress.nonotify.out) lost-wakeup report(s)"
+if [ $rc -eq 0 ] || ! grep -q 'wakeup was lost' stress.nonotify.out; then echo "   NEGATIVE CONTROL DID NOT FAIL -- the wait-any tests prove nothing"; fail=1; fi
+
 echo "== TSan negative control 3: Channel::send without its lock (a producer thread and the consumer; must report a race)"
 build_program work_nochannel repo "$TSAN" headless.nochannel headless_main || { echo "BUILD FAILED"; exit 1; }
 run_tsan headless.nochannel headless.nochannel.out

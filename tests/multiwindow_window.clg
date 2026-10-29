@@ -1,0 +1,105 @@
+// Two real windows of one program, both served from memory: each page learns which window it is (whoami), reports, and the application closes the second
+// window from the main thread; the first must keep working and the program must end only when the first closes too (exit 0, "selftest ok").
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "app.clh"
+
+class Observed {
+public:
+    int firstHandle;
+    int secondHandle;
+    int thirdHandle;
+    string firstPath;
+    string secondPath;
+    string thirdPath;
+    int reports;
+    bool alive;
+    int openLeft;
+    string failure;
+    Observed() {
+        firstHandle = 0;
+        secondHandle = 0;
+        thirdHandle = 0;
+        firstPath = "";
+        secondPath = "";
+        thirdPath = "";
+        reports = 0;
+        alive = false;
+        openLeft = 0;
+        failure = "";
+    }
+};
+
+int main() {
+    App app = new App();
+    Observed seen = new Observed();
+    CallContext disp = app.dispatcher.caller;
+    app.command("whoami", closure Command [disp] (Item args) {
+        return createNumber(double(disp.handle));
+    });
+    if (!app.openSite("multi first", 420, 300, false, "http://app.localhost", "")) {
+        std::cout << "selftest FAILED: no first window" << std::endl;
+        return 2;
+    }
+    if (!app.enableWindowOpenCommand(3)) {
+        std::cout << "selftest FAILED: window.open" << std::endl;
+        return 2;
+    }
+    int first = app.handle;
+    int second = app.openWindow("multi second", 420, 300, false, "/second.html");
+    if (second == 0) {
+        std::cout << "selftest FAILED: no second window" << std::endl;
+        return 2;
+    }
+    app.command("report", closure Command [disp, seen, app, first, second] (Item args) {
+        string who = requiredString(args, "who");
+        int claimed = int(fieldOf(args, "handle").valuedouble);
+        string path = requiredString(args, "path");
+        int real = disp.handle;
+        if (who == "first" && real == first && claimed == real) {
+            seen.firstHandle = real;
+            seen.firstPath = path;
+            seen.reports = seen.reports + 1;
+        }
+        if (who == "second" && real == second && claimed == real) {
+            seen.secondHandle = real;
+            seen.secondPath = path;
+            seen.reports = seen.reports + 1;
+        }
+        if (who == "third" && real != first && real != second && claimed == real) {
+            seen.thirdHandle = real;
+            seen.thirdPath = path;
+            seen.reports = seen.reports + 1;
+        }
+        if (seen.reports == 3) {
+            app_window_state(second, 4);                             // the second window is closed the way the X closes it ...
+            app.emit("go", "null");                                  // ... and the first is told (the broadcast reaches only the windows still open)
+        }
+        return createNull();
+    });
+    app.command("alive", closure Command [seen, app] (Item args) {
+        seen.alive = true;
+        seen.openLeft = app.windows.count();         // the closed window was noticed and forgotten while the first keeps working
+        app.quit();
+        return createNull();
+    });
+    app.command("failed", closure Command [seen] (Item args) {
+        seen.failure = requiredString(args, "error");
+        return createNull();
+    });
+    app.run();
+    app.close();
+    string failure = seen.failure;
+    bool ok = failure.length() == 0 && seen.firstHandle == first && seen.secondHandle == second && seen.firstPath == "/" && seen.secondPath == "/second.html" && seen.thirdHandle != 0 && seen.thirdPath == "/third.html" && seen.alive && seen.openLeft == 2;
+    if (!ok) {
+        std::cout << "first=" << seen.firstHandle << " (" << seen.firstPath << ") second=" << seen.secondHandle << " (" << seen.secondPath << ") third=" << seen.thirdHandle << " (" << seen.thirdPath << ") alive=" << seen.alive << " open=" << seen.openLeft << " failure=" << seen.failure << std::endl;
+    }
+    if (ok) {
+        std::cout << "selftest ok" << std::endl;
+        return 0;
+    }
+    std::cout << "selftest FAILED" << std::endl;
+    return 1;
+}

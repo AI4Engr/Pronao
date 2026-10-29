@@ -124,6 +124,50 @@ void drain(App app, int quietMs) {
 
 // Sends one request through the whole pipeline and returns "<status> <json>". The loop keeps serving until the answer is
 // there, because some answers need the main loop to run again after a worker has finished (a dialog's grant).
+// like roundTrip, for a call injected into one particular window of a program with several
+string roundTripOn(App app, int h, string id, string request) {
+    app_test_inject(h, id, request);
+    int turns = 0;
+    while (app_test_response_ready(h) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(h, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    return intToString(status) + " " + json;
+}
+
+// serves until window h has an answer (or ~2 s have passed); "" if none
+string answerOn(App app, int h) {
+    int turns = 0;
+    while (app_test_response_ready(h) == 0 && turns < 100) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    if (app_test_take_response(h, gotId, status, json) != 1) {
+        return "";
+    }
+    return intToString(status) + " " + json;
+}
+
+class Counted {
+public:
+    int count;
+    string last;
+    Counted() {
+        count = 0;
+        last = "";
+    }
+};
+
 string roundTrip(App app, string id, string request) {
     app_test_inject(app.handle, id, request);
     int turns = 0;
@@ -1473,6 +1517,190 @@ int main() {
     check("openDevServer refuses a stranger's address", !dev.openDevServer("t", 100, 100, "http://example.com/"));
     check("openDevServer opens a local one", dev.openDevServer("t", 100, 100, "http://localhost:5173/"));
     dev.close();
+
+    // ---- several windows in one application ---------------------------------------------------------------
+    App mw = new App();
+    CallContext mwd = mw.dispatcher.caller;
+    mw.command("who", closure Command [mwd] (Item args) {
+        return createNumber(double(mwd.handle));
+    });
+    mw.command("echo", closure Command [] (Item args) {
+        return args;
+    });
+    mw.asyncCommand("aspin", closure AsyncCommand [] (Item args, string id, int handle) {
+        spawn(closure Job [id, handle] () {
+            int waited = 0;
+            while (!callCancelled(handle, id) && waited < 1500) {
+                app_test_sleep_ms(10);
+                waited = waited + 10;
+            }
+            if (callCancelled(handle, id)) {
+                replyOk(handle, id, "\"cancelled\"");
+            } else {
+                replyOk(handle, id, "\"timeout\"");
+            }
+        });
+    });
+    mw.asyncCommand("ahandle", closure AsyncCommand [] (Item args, string id, int handle) {
+        spawn(closure Job [id, handle] () {
+            app_test_sleep_ms(30);
+            replyOk(handle, id, intToString(handle));
+        });
+    });
+    string mwDir = "";
+    app_test_make_temp_dir(mwDir);
+    mw.allowFolder(mwDir);
+    mw.enableFileCommands(1000);
+    mw.enableWatchCommands();
+    mw.enableWindowCommands();
+    check("no window is open before open", mw.windows.count() == 0 && mw.handle == 0 && mw.serveOne(10) == 0);
+    check("the first window opens and is the primary one", mw.open("a", 100, 100, "<html></html>", "", false) && mw.windows.count() == 1);
+    int wa = mw.handle;
+    int wb = mw.openWindow("b", 100, 100, false, "");
+    int wc = mw.openWindow("c", 100, 100, false, "");
+    check("more windows open; each has its own handle", wb != 0 && wc != 0 && wa != wb && wb != wc && wa != wc && mw.windows.count() == 3);
+    check("the first stays the primary window", mw.handle == wa);
+    check("a path that is not in a site is refused", mw.openWindow("x", 100, 100, false, "/second.html") == 0 && mw.openWindow("x", 100, 100, false, "http://example.com/") == 0);
+
+    check("a sync command learns which window called it (a)", roundTripOn(mw, wa, "1", "[\"who\"]") == "0 " + intToString(wa));
+    check("a sync command learns which window called it (b), with the same call id", roundTripOn(mw, wb, "1", "[\"who\"]") == "0 " + intToString(wb));
+    check("outside a command nobody is calling", mwd.handle == 0);
+
+    // the same call id in flight in two windows at once: each page gets its own answer
+    app_test_inject(wa, "same", "[\"ahandle\"]");
+    app_test_inject(wb, "same", "[\"ahandle\"]");
+    app_test_inject(wc, "same", "[\"ahandle\"]");
+    string ansA = answerOn(mw, wa);
+    string ansB = answerOn(mw, wb);
+    string ansC = answerOn(mw, wc);
+    check("one async call id in three windows is answered three times, each to its own window", ansA == "0 " + intToString(wa) && ansB == "0 " + intToString(wb) && ansC == "0 " + intToString(wc));
+
+    // a cancel tag only names a call of the window that sent it
+    app_test_inject(wa, "spinA", "[\"aspin\",null,\"t\"]");
+    app_test_inject(wb, "spinB", "[\"aspin\",null,\"t\"]");
+    mw.serveOne(200);
+    mw.serveOne(200);
+    roundTripOn(mw, wb, "stop", "[\"$cancel\",\"t\"]");
+    check("cancelling tag t from window b ends b's call", answerOn(mw, wb) == "0 \"cancelled\"");
+    check("and leaves a's call with the same tag and id running", app_test_response_ready(wa) == 0);
+    roundTripOn(mw, wa, "stop", "[\"$cancel\",\"t\"]");
+    check("a's own cancel ends it", answerOn(mw, wa) == "0 \"cancelled\"");
+
+    // a Later is registered for one window's call id
+    Counted tally = new Counted();
+    mw.later(wa, "pending", closure Later [tally] (int h, string callId, int status, string payload) {
+        tally.count = tally.count + 1;
+        tally.last = "a:" + payload;
+    });
+    mw.later(wb, "pending", closure Later [tally] (int h, string callId, int status, string payload) {
+        tally.count = tally.count + 1;
+        tally.last = "b:" + payload;
+    });
+    string lrec = "later";
+    lrec.push_back(char(0));
+    lrec = lrec + "pending";
+    lrec.push_back(char(0));
+    lrec = lrec + "1";
+    lrec.push_back(char(0));
+    lrec = lrec + "x";
+    lrec.push_back(char(0));
+    app_test_push_internal(wb, lrec);
+    drain(mw, 100);
+    check("a record for window b settles b's pending call only", tally.count == 1 && tally.last == "b:x");
+    app_test_push_internal(wa, lrec);
+    drain(mw, 100);
+    check("and a's own record settles a's", tally.count == 2 && tally.last == "a:x");
+
+    // watches belong to the window that started them (32 each, and one window cannot stop another's)
+    Item watched = createObject();
+    addStringToObject(watched, "path", mwDir);
+    string startedA = roundTripOn(mw, wa, "w1", requestText("fs.watch", watched));
+    string startedB = roundTripOn(mw, wb, "w1", requestText("fs.watch", watched));
+    check("a watch starts in window a and another in window b", startsWith(startedA, "0 {\"id\":") && startsWith(startedB, "0 {\"id\":"));
+    int idA = int(decimalValue(startedA.substr(8, startedA.length() - 9)));
+    int idB = int(decimalValue(startedB.substr(8, startedB.length() - 9)));
+    Item stopA = createObject();
+    addNumberToObject(stopA, "id", double(idA));
+    Item stopB = createObject();
+    addNumberToObject(stopB, "id", double(idB));
+    check("window b cannot stop a's watch", roundTripOn(mw, wb, "w2", requestText("fs.unwatch", stopA)) == "1 {\"code\":\"not_found\",\"message\":\"no such watch\"}");
+    check("window a can stop its own", roundTripOn(mw, wa, "w3", requestText("fs.unwatch", stopA)) == "0 null");
+    check("and b its own", roundTripOn(mw, wb, "w3", requestText("fs.unwatch", stopB)) == "0 null");
+    check("each window's book is its own", mw.windows.get(wa).watches.states.size() == 0);
+
+    // command lists: the application's default and a window's own
+    std::vector<string> noCommands;
+    mw.allowOnlyCommands(noCommands);
+    check("an empty default list closes every window", startsWith(roundTripOn(mw, wa, "d1", "[\"who\"]"), "1 {\"code\":\"forbidden\"") && startsWith(roundTripOn(mw, wc, "d1", "[\"who\"]"), "1 {\"code\":\"forbidden\""));
+    Window winB = mw.windows.get(wb);
+    std::vector<string> onlyWho;
+    onlyWho.push_back("who");
+    check("a window can have a list of its own", winB.allowOnlyCommands(onlyWho));
+    check("it then calls what its own list allows", roundTripOn(mw, wb, "d2", "[\"who\"]") == "0 " + intToString(wb));
+    check("and nothing else", startsWith(roundTripOn(mw, wb, "d3", "[\"echo\",1]"), "1 {\"code\":\"forbidden\""));
+    check("another window keeps the default", startsWith(roundTripOn(mw, wc, "d4", "[\"who\"]"), "1 {\"code\":\"forbidden\""));
+    std::vector<string> everything;
+    everything.push_back("who");
+    everything.push_back("echo");
+    everything.push_back("ahandle");
+    everything.push_back("aspin");
+    everything.push_back("window.setTitle");
+    everything.push_back("fs.watch");
+    everything.push_back("fs.unwatch");
+    mw.allowOnlyCommands(everything);
+    check("the default list can be widened again", roundTripOn(mw, wa, "d5", "[\"echo\",7]") == "0 7");
+    check("a window with a list of its own is not affected by it", startsWith(roundTripOn(mw, wb, "d6", "[\"echo\",7]"), "1 {\"code\":\"forbidden\""));
+
+    // window.* acts on the window that called it
+    Item mwTitle = createObject();
+    addStringToObject(mwTitle, "title", "renamed");
+    string mwLog = "";
+    while (app_test_take_window_log(wa, mwLog) == 1) { }
+    while (app_test_take_window_log(wc, mwLog) == 1) { }
+    roundTripOn(mw, wc, "t1", requestText("window.setTitle", mwTitle));
+    check("window.setTitle renames the window that asked", app_test_take_window_log(wc, mwLog) == 1 && mwLog == "title|renamed");
+    check("and no other", app_test_take_window_log(wa, mwLog) == 0);
+
+    // an event for everyone
+    string mwEval = "";
+    while (app_test_take_eval(wa, mwEval) == 1) { }
+    while (app_test_take_eval(wb, mwEval) == 1) { }
+    while (app_test_take_eval(wc, mwEval) == 1) { }
+    check("emit reaches every open window", mw.emit("tick", "1") && app_test_take_eval(wa, mwEval) == 1 && app_test_take_eval(wb, mwEval) == 1 && app_test_take_eval(wc, mwEval) == 1);
+    Window winC = mw.windows.get(wc);
+    winC.emit("only", "2");
+    check("Window.emit reaches one", app_test_take_eval(wc, mwEval) == 1 && app_test_take_eval(wa, mwEval) == 0 && app_test_take_eval(wb, mwEval) == 0);
+
+    // a page asks for a window (refusals here; a real opening needs a site, see tests/site_main.clg)
+    check("window.open is not registered until it is enabled", startsWith(roundTripOn(mw, wa, "o0", "[\"window.open\",{\"start\":\"/x.html\"}]"), "1 {\"code\":\"forbidden\"") || startsWith(roundTripOn(mw, wa, "o0b", "[\"window.open\",{\"start\":\"/x.html\"}]"), "1 {\"code\":\"unknown_command\""));
+    check("the cap must be sensible", !mw.enableWindowOpenCommand(0) && !mw.enableWindowOpenCommand(33) && mw.enableWindowOpenCommand(3));
+    std::vector<string> noneAtAll;
+    mw.allowOnlyCommands(noneAtAll);
+    check("a default list that does not name window.open keeps it closed", startsWith(roundTripOn(mw, wa, "o1", "[\"window.open\",{\"start\":\"/x.html\"}]"), "1 {\"code\":\"forbidden\""));
+    std::vector<string> openOnly;
+    openOnly.push_back("window.open");
+    mw.allowOnlyCommands(openOnly);
+    check("a start outside the site is refused", startsWith(roundTripOn(mw, wa, "o2", "[\"window.open\",{\"start\":\"http://example.com/\"}]"), "1 {\"code\":\"invalid_argument\"") && startsWith(roundTripOn(mw, wa, "o3", "[\"window.open\",{\"start\":\"/../secret.html\"}]"), "1 {\"code\":\"invalid_argument\""));
+    check("a start must be given", startsWith(roundTripOn(mw, wa, "o4", "[\"window.open\",{}]"), "1 {\"code\":\"invalid_argument\""));
+    check("a size out of range is refused", startsWith(roundTripOn(mw, wa, "o5", "[\"window.open\",{\"start\":\"/x.html\",\"width\":50}]"), "1 {\"code\":\"invalid_argument\""));
+    check("three windows are open and the cap is three: no more", startsWith(roundTripOn(mw, wa, "o6", "[\"window.open\",{\"start\":\"/x.html\"}]"), "1 {\"code\":\"too_many\""));
+
+    // closing windows one by one
+    std::vector<string> echoOnly;
+    echoOnly.push_back("echo");
+    mw.allowOnlyCommands(echoOnly);
+    app_test_close_window(wb);
+    drain(mw, 50);
+    check("two windows are left after b closed", mw.windows.count() == 2 && mw.handle == wa);
+    check("window a still works", roundTripOn(mw, wa, "e1", "[\"echo\",3]") == "0 3");
+    app_test_close_window(wa);
+    drain(mw, 50);
+    check("when the primary closes the next window becomes the primary", mw.windows.count() == 1 && mw.handle == wc);
+    check("window c still works", roundTripOn(mw, wc, "e2", "[\"echo\",4]") == "0 4");
+    app_test_close_window(wc);
+    check("when the last window closes serveOne reports it", mw.serveOne(500) == 0 && mw.windows.count() == 0);
+    mw.close();
+    app_test_remove_tree(mwDir);
 
     // ---- a window's own list of commands ----------------------------------------------------------------
     App narrow = new App();

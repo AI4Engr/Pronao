@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>multi: second</title></head>
+<body><h1>second window</h1>
+<script>
+  (async () => {
+    const me = await cling.invoke('whoami');
+    // the same call id may be in flight in the other window at the same moment: calls are told apart by window
+    await cling.invoke('report', { who: 'second', handle: me, path: location.pathname });
+  })().catch(function (e) { cling.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
+</script></body></html>

@@ -61,6 +61,17 @@ t2 = t.replace(key, '{ app->replies.push_back(')
 open(d, 'w', encoding='utf-8', newline='').write(t2)
 PYEOF
 [ $? -eq 0 ] || { echo "NEGATIVE CONTROL SETUP FAILED"; exit 1; }
+# control 4: the wait-any notification removed from the queue (every producer-side "something changed" bump): the ping-pong test, where the
+# consumer is already asleep when a call arrives, must see the wakeup arrive late and fail
+rm -rf "$BASE/nonotify"; cp -r "$BASE/repo" "$BASE/nonotify"
+python3 - "$BASE/nonotify/shim/queue.h" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8', newline='').read()
+assert s.count("if (notify_) notify_->bump();") == 3
+open(p, 'w', encoding='utf-8', newline='').write(s.replace("if (notify_) notify_->bump();", "/* notification removed */"))
+PYEOF
+[ $? -eq 0 ] || { echo "NEGATIVE CONTROL 4 SETUP FAILED"; exit 1; }
 # control 3: the same transpiled program with the lock taken out of Channel::send in every generated file (the runtime template is
 # emitted into each .cpp); the producer / consumer check in headless_main then races on the queue and TSan must say so
 rm -rf "$BASE/work_nochannel"; cp -r "$BASE/work" "$BASE/work_nochannel"

@@ -42,7 +42,9 @@ int app_open(std::string, int, int, std::string, std::string url, std::string, i
     int handle;
     {
         std::lock_guard<std::mutex> lock(g_tableMutex);
-        g_table.push_back(std::make_shared<App>());
+        auto fresh = std::make_shared<App>();
+        fresh->calls.setNotify(&waitSet());
+        g_table.push_back(fresh);
         handle = static_cast<int>(g_table.size());
     }
     if (!url.empty()) logWindow(handle, "open|" + url);
@@ -52,6 +54,11 @@ int app_next_call(int handle, int timeout_ms, std::string& id, std::string& requ
     auto app = lookup(handle);
     return app ? app->calls.pop(timeout_ms, id, request) : 0;
 }
+int app_wait_any(std::vector<int> handles, int timeout_ms, int& handle) {
+    static std::atomic<int> last{0};
+    return waitAny<App>(handles, [](int h) { return lookup(h); }, last, timeout_ms, handle);
+}
+
 int app_push(int handle, std::string id, std::string request, int max_queued) {
     auto app = lookup(handle);
     return app ? app->calls.push(std::move(id), std::move(request), max_queued) : -1;

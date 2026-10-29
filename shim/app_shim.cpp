@@ -53,6 +53,9 @@ LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         a->calls.push(std::string(), std::string("window\0close_requested\0", 23), 100);
         return 0;
     }
+    // The webview library ends a window's message loop only when the LAST window of the PROCESS is destroyed (a process-wide count), so with
+    // another window still open this window's thread would keep pumping nothing and its queue would never report that it closed.
+    if (msg == WM_DESTROY) PostQuitMessage(0);
     return CallWindowProcW(reinterpret_cast<WNDPROC>(a->oldProc), h, msg, wp, lp);
 }
 #endif
@@ -72,6 +75,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
     debug = 0;      // a release build (scripts/build.sh with RELEASE=1) ignores the argument: no developer tools, no context menu, whatever the program asks
 #endif
     auto app = std::make_shared<App>();
+    app->calls.setNotify(&waitSet());
     int handle = 0;
     {
         std::lock_guard<std::mutex> lock(g_tableMutex);
@@ -135,6 +139,11 @@ int app_next_call(int handle, int timeout_ms, std::string& id, std::string& requ
     return app ? app->calls.pop(timeout_ms, id, request) : 0;
 }
 
+int app_wait_any(std::vector<int> handles, int timeout_ms, int& handle) {
+    static std::atomic<int> last{0};
+    return waitAny<App>(handles, [](int h) { return lookup(h); }, last, timeout_ms, handle);
+}
+
 int app_push(int handle, std::string id, std::string request, int max_queued) {
     auto app = lookup(handle);
     return app ? app->calls.push(std::move(id), std::move(request), max_queued) : -1;
@@ -171,6 +180,7 @@ int app_window_state(int handle, int state) {
     return onUi(handle, [state](webview::webview& w) {
         HWND hwnd = static_cast<HWND>(w.window().value());
         if (state == 3) SetForegroundWindow(hwnd);
+        else if (state == 4) PostMessageW(hwnd, WM_CLOSE, 0, 0);       // as if the user pressed the X: the close guard, if any, is asked
         else ShowWindow(hwnd, state == 1 ? SW_MINIMIZE : state == 2 ? SW_MAXIMIZE : SW_RESTORE);
     });
 #else

@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>multi: first</title></head>
+<body><h1>first window</h1>
+<script>
+  (async () => {
+    cling.on('go', function () {                                    // sent once both windows have reported and the second is closing
+      setTimeout(async function () {
+        try { await cling.invoke('alive', { who: 'first' }); } catch (e) { cling.invoke('failed', { error: 'alive: ' + JSON.stringify(e) }); }
+      }, 300);
+    });
+    const me = await cling.invoke('whoami');                        // the handle of THIS window, from the application's side
+    await cling.invoke('report', { who: 'first', handle: me, path: location.pathname });
+    await cling.invoke('window.open', { start: '/third.html', title: 'third', width: 400, height: 300 });   // a page asks for a window
+  })().catch(function (e) { cling.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
+</script></body></html>

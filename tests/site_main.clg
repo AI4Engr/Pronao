@@ -11,6 +11,9 @@ ext_fn int app_test_read_raw(string path, ref string out);
 ext_fn int app_test_fetch(string method, string url, ref int status, ref string headers, ref string body);
 ext_fn int app_test_take_window_log(int handle, ref string line);
 ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
 
 void check(string name, bool ok) {
     if (ok) {
@@ -37,6 +40,24 @@ public:
         return containsText(headers, line + "\r\n");
     }
 };
+
+// one call into window h, served until it is answered
+string answerAt(App app, int h, string id, string request) {
+    app_test_inject(h, id, request);
+    int turns = 0;
+    while (app_test_response_ready(h) == 0 && turns < 200) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    if (app_test_take_response(h, gotId, status, json) != 1) {
+        return "NO RESPONSE";
+    }
+    app.serveOne(20);
+    return intToString(status) + " " + json;
+}
 
 int main() {
     string dir = "";
@@ -130,6 +151,21 @@ int main() {
         return createString("pong");
     });
     check("the window is told it may navigate to the site", app_test_take_window_log(app.handle, log) == 1 && log == "navigation|http://app.localhost/");
+
+    // ---- more windows of the same site, each starting on its own page ----
+    int aboutWin = app.openWindow("about", 300, 200, false, "/about.html");
+    check("another window opens on another page of the same origin", aboutWin != 0 && aboutWin != app.handle && app_test_take_window_log(aboutWin, log) == 1 && log == "open|http://app.localhost/about.html");
+    check("it may navigate within the same origin", app_test_take_window_log(aboutWin, log) == 1 && log == "navigation|http://app.localhost/");
+    check("a path with a parent folder is refused", app.openWindow("x", 100, 100, false, "/../index.html") == 0);
+    check("a path the site does not have still opens (the site answers 404)", app.openWindow("x", 100, 100, false, "/nothing-here.html") != 0);
+    check("opening the same site again with another origin is refused", !app.openSite("t", 100, 100, false, "http://other.localhost", ""));
+
+    // ---- a page asks for a window ----
+    check("window.open can be enabled for a few windows", app.enableWindowOpenCommand(4));
+    check("a page opens a window of the site", answerAt(app, app.handle, "o1", "[\"window.open\",{\"start\":\"/docs/\",\"title\":\"docs\",\"width\":300,\"height\":200}]") == "0 null" && app.windows.count() == 4);
+    int latest = app.windows.handles[3];
+    check("the new window starts on the page asked for", app_test_take_window_log(latest, log) == 1 && log == "open|http://app.localhost/docs/");
+    check("past the cap the call is refused", startsWithText(answerAt(app, app.handle, "o2", "[\"window.open\",{\"start\":\"/about.html\"}]"), "1 {\"code\":\"too_many\""));
     app.close();
     return 0;
 }

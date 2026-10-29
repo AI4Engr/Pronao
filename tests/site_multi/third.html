@@ -1,0 +1,9 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>multi: third</title></head>
+<body><h1>third window (opened by the first page)</h1>
+<script>
+  (async () => {
+    const me = await cling.invoke('whoami');
+    await cling.invoke('report', { who: 'third', handle: me, path: location.pathname });
+  })().catch(function (e) { cling.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
+</script></body></html>
