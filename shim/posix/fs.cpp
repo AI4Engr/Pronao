@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>
 #include <string>
 
 #include "../app_native.h"
@@ -143,6 +144,10 @@ int app_fs_list(int h, std::string& out) {
 
 int app_fs_mkdir(std::string path) {
     return mkdir(path.c_str(), 0755) == 0 ? 0 : mapErrno(errno);
+}
+
+int app_fs_replace(std::string from, std::string to) {
+    return rename(from.c_str(), to.c_str()) == 0 ? 0 : mapErrno(errno);
 }
 
 int app_fs_delete(int h) {

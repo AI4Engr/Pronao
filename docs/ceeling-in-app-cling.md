@@ -4,7 +4,7 @@ First version, 2026-10-29. It is meant to grow; see "To add" at the end. Everyth
 numbers come from `scripts/ceeling_stats.sh`, which you can run again.
 
 app-cling is written in CeeLing (the checked language, `src/*.clg`) on top of a small trusted C++ layer (`shim/`). This page is about the first part: what the
-language and its compiler give a real program of about 3,900 lines, and where they got in the way.
+language and its compiler give a real program of about 4,500 lines, and where they got in the way.
 
 ## In numbers
 
@@ -12,19 +12,21 @@ Measured on 2026-10-29 with `scripts/ceeling_stats.sh` after `tests/run_headless
 
 | | app-cling `src/` | tauriport (`examples/tauriport/tauriport.clg`) |
 |---|---|---|
-| CeeLing source (comments and blank lines left out) | 3,898 lines | 771 lines |
+| CeeLing source (comments and blank lines left out) | 4,458 lines | 771 lines |
 | Memory-management words in that source (`delete`, `.get()`, `reinterpret`, `std::move`, `unique_ptr`, `shared_ptr`, `weak_ptr`) | **0** | **0** |
-| Smart pointers the compiler chose and wrote in the generated C++ | 68 `unique_ptr`, 326 `shared_ptr`, 0 `weak_ptr` | 3 `unique_ptr`, 143 `shared_ptr`, 0 `weak_ptr` |
+| Smart pointers the compiler chose and wrote in the generated C++ | 75 `unique_ptr`, 372 `shared_ptr`, 0 `weak_ptr` | 3 `unique_ptr`, 143 `shared_ptr`, 0 `weak_ptr` |
 | `std::move` the compiler inserted | 34 | 28 |
-| Bounds checks the compiler inserted (`cling::at`) | 289 | 62 |
-| Null checks the compiler inserted (`cling::nn`) | 384 | 79 |
-| Closures, of which thread jobs (`spawn`) | 32, of which 6 | 23, of which 9 |
-| `ext_fn` declarations: the native surface the checked code can call | 48 | 1 |
+| Bounds checks the compiler inserted (`cling::at`) | 343 | 62 |
+| Null checks the compiler inserted (`cling::nn`) | 430 | 79 |
+| Closures, of which thread jobs (`spawn`) | 35, of which 6 | 23, of which 9 |
+| `ext_fn` functions: the native surface the checked code can call (different names; a function several files use is declared in each, 52 lines in all) | 48 | 1 |
 
 tauriport is a port of a Tauri application's backend (a folder under version control with the `lore` tool, shown by a web UI) written on top of app-cling; its column
 counts its own file only, not the app-cling modules it uses. Its single `ext_fn` is an environment-variable lookup. The count of `shared_ptr` is high relative to its size;
 I have not looked at why for each one, and the compiler's reasons are not printed.
 The numbers come from `scripts/ceeling_stats.sh` (for the second column: `SRC=examples/tauriport/tauriport.clg GEN=tauriport.cpp scripts/ceeling_stats.sh <work dir>`).
+
+(An earlier version of this page counted declaration lines, 48, as if they were functions; the count by name was 47.)
 
 The first row is the point. The program creates, shares, moves and drops many kinds of objects (windows, watches, command tables, the file policy, program runs) and its source
 never says who owns what.
@@ -37,7 +39,7 @@ caller both hold it) and writes `std::shared_ptr`; a value only one place owns b
 
 **Every subscript and every object dereference is checked at run time.** `v[i]` is `cling::at(v, i, line)` and `n.field` is `cling::nn(n, line)`; a bad index or an
 empty handle prints the `.clg` line and aborts instead of reading memory. `scripts/build.sh` builds app-cling with both checks on (the opt-out flags exist and are
-not used here). The program has 289 and 384 of them (previous section: what they cost).
+not used here). The program has 343 and 430 of them (previous section: what they cost).
 
 **Threads share nothing but plain values.** The 6 `spawn(closure Job [...])` in `src/app.clg` (the `proc.run` command, the four dialogs, the close
 confirmation) can capture strings, numbers and vectors of them, and structs made of those; the compiler refuses an object. That rule shapes the design:
@@ -50,7 +52,7 @@ confirmation) can capture strings, numbers and vectors of them, and structs made
 there is no `[&]`, so a command cannot keep a reference to something that is gone. A command that needs "the window that called me" captures a shared
 `CallContext` object instead of a global.
 
-**The trusted surface is a list.** The checked code reaches the operating system only through the 48 `ext_fn` declarations (the head of each `.clg` file, and
+**The trusted surface is a list.** The checked code reaches the operating system only through the 48 `ext_fn` functions (the head of each `.clg` file, and
 `shim/app_native.h` on the C++ side), all of them taking and returning numbers, strings and vectors of those. `scripts/shim_lines.sh` measures what is on the
 other side. Policy lives on this side: `FileGate` decides what a path may reach by asking the operating system where an already open handle really points;
 `runFitsOs` decides whether a program may be started; the C++ only opens and runs.

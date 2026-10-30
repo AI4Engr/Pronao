@@ -17,12 +17,12 @@ if [ -n "${SRC:-}" ]; then (cd "$HERE" && cat $SRC); else cat "$HERE"/src/*.clg;
 count() { grep -oE "$1" "${@:2}" 2> /dev/null | wc -l; }
 
 echo "CeeLing source (${SRC:-src/*.clg}): $(wc -l < "$SRC_CODE") lines of code (comments and blank lines left out)"
-echo "  ext_fn declarations (the trusted native surface): $(grep -c '^ext_fn' "$SRC_CODE")"
+echo "  ext_fn declarations (the trusted native surface): $(grep -E '^ext_fn' "$SRC_CODE" | awk -F'(' '{ n = split($1, w, " "); print w[n] }' | sort -u | wc -l) different functions ($(grep -c '^ext_fn' "$SRC_CODE") declaration lines: a function used by several files is declared in each)"
 echo "  closures: $(count 'closure [A-Z][A-Za-z]* \[' "$SRC_CODE") (spawn jobs among them: $(count 'spawn\(closure Job' "$SRC_CODE"))"
 echo "  manual-memory words in the source (delete, .get(), reinterpret, std::move, unique_ptr, shared_ptr, weak_ptr): $(grep -ciE 'delete |\.get\(\)|reinterpret|std::move|unique_ptr|shared_ptr|weak_ptr' "$SRC_CODE")"
 
 cd "$W"
-GEN="${GEN:-app.cpp files.cpp core.cpp text.cpp assets.cpp}"
+GEN="${GEN:-app.cpp files.cpp core.cpp text.cpp assets.cpp settings.cpp}"
 echo "Generated C++ from those files ($W):"
 echo "  std::unique_ptr: $(count 'std::unique_ptr' $GEN)   std::shared_ptr: $(count 'std::shared_ptr' $GEN)   std::weak_ptr: $(count 'std::weak_ptr' $GEN)   std::move: $(count 'std::move' $GEN)"
 echo "  bounds checks inserted (cling::at): $(count 'cling::at\(' $GEN)"

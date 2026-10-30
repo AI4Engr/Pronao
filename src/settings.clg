@@ -1,0 +1,536 @@
+// app-cling -- where an application keeps its own data, and the settings it saves there.
+//
+// Two things, both policy and so both here in checked CeeLing (the native layer only makes a folder and renames a file):
+//
+//  1. STANDARD FOLDERS. `appFolderPath(kind, appName)` names the per-user folder an application should use: kind "config", "data" or "cache"
+//     (Windows: %APPDATA%, %LOCALAPPDATA%, %LOCALAPPDATA%\<app>\cache; elsewhere the XDG folders under $HOME). There is no "temp" kind on purpose: a
+//     predictable name in the shared temporary folder can be taken over by another user of the machine. The name of the
+//     application is a plain name (letters, digits, `.`, `_`, `-`; at most 64 bytes), so it can never be a path. The folder is made by
+//     `makeAppFolder`. macOS is not told apart from Linux (it would need its own table).
+//
+//  2. SETTINGS. A SettingsStore keeps a small JSON object, `settings.json`, in the "config" folder. The APPLICATION declares every key it has, with a
+//     type and the values it will accept (`declareString(key, default, maxBytes)`, `declareInt(key, default, low, high)`, `declareBool`,
+//     `declareDouble`); a value that is not of the declared type, or outside its range, is refused (from the page, from the program, and when the
+//     file is read, where the default is used instead and `problem` says so). The file is written whole into `settings.json.tmp` and swapped in
+//     with FileGate.replace, so a crash leaves the old file or the new one. A key in the file that the program does not declare is kept as it is
+//     (a newer or older version of the program may know it) and is neither readable nor writable through the store.
+//
+// The store has its OWN FileGate that allows nothing but its folder. The page's file commands use the application's gate, so a page cannot read or
+// replace `settings.json` through fs.read / fs.write: it can only go through the commands the application registers (App.enableSettingsCommands),
+// which know the declared keys. What the page cannot do is also what the store does not do: it does not encrypt, and it does not protect the file
+// from other programs of the same user.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "files.clh"
+
+ext_fn int app_os_windows();
+ext_fn int app_os_env(string name, ref string out);
+ext_fn int app_fs_mkdir(string path);
+
+bool nameChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+}
+
+// 1 to 64 bytes of letters, digits, `.`, `_` and `-`, starting with a letter or a digit: the name of an application or of a setting
+bool plainName(string name) {
+    if (name.length() < 1 || name.length() > 64) {
+        return false;
+    }
+    if (name[0] == '.' || name[0] == '_' || name[0] == '-') {
+        return false;
+    }
+    int i = 0;
+    while (i < name.length()) {
+        if (!nameChar(name[i])) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// the value of an environment variable if it is set to plain text, else ""
+string envText(string name) {
+    string value = "";
+    if (app_os_env(name, value) != 1) {
+        return "";
+    }
+    if (value.length() == 0 || !plainText(value, 4000)) {
+        return "";
+    }
+    return value;
+}
+
+string withoutTrailingSeparator(string path) {
+    string p = path;
+    while (p.length() > 3 && isSeparator(p[p.length() - 1])) {
+        p = p.substr(0, p.length() - 1);
+    }
+    return p;
+}
+
+bool absoluteHere(string path) {
+    if (app_os_windows() == 1) {
+        return isDriveAbsolute(path) || (path.length() >= 3 && isSeparator(path[0]) && isSeparator(path[1]) && path[2] != '?' && path[2] != '.');
+    }
+    return path.length() > 0 && path[0] == '/';
+}
+
+string joinHere(string dir, string leaf) {
+    if (app_os_windows() == 1) {
+        return dir + "\\" + leaf;
+    }
+    return dir + "/" + leaf;
+}
+
+// The per-user folder for a kind of data, as the environment gives it ("" if the environment does not say, or says something that is not an absolute
+// path). Not the application's own folder yet: see appFolderPath.
+string baseFolder(string kind) {
+    bool windows = app_os_windows() == 1;
+    string base = "";
+    if (kind == "config" || kind == "data" || kind == "cache") {
+        if (windows) {
+            if (kind == "config") {
+                base = envText("APPDATA");
+            } else {
+                base = envText("LOCALAPPDATA");
+            }
+        } else {
+            string home = envText("HOME");
+            string xdg = "";
+            string below = "";
+            if (kind == "config") {
+                xdg = envText("XDG_CONFIG_HOME");
+                below = ".config";
+            } else if (kind == "data") {
+                xdg = envText("XDG_DATA_HOME");
+                below = ".local/share";
+            } else {
+                xdg = envText("XDG_CACHE_HOME");
+                below = ".cache";
+            }
+            if (xdg.length() > 0) {
+                base = xdg;
+            } else if (home.length() > 0) {
+                base = home + "/" + below;
+            }
+        }
+    }
+    if (base.length() == 0) {
+        return "";
+    }
+    base = withoutTrailingSeparator(base);
+    if (!absoluteHere(base)) {
+        return "";
+    }
+    return base;
+}
+
+// The folder an application should use for `kind`: "" if the name or the kind is not acceptable or the environment does not say where.
+string appFolderPath(string kind, string appName) {
+    if (!plainName(appName)) {
+        return "";
+    }
+    string base = baseFolder(kind);
+    if (base.length() == 0) {
+        return "";
+    }
+    string folder = joinHere(base, appName);
+    if (kind == "cache" && app_os_windows() == 1) {
+        folder = joinHere(folder, "cache");
+    }
+    return folder;
+}
+
+// Makes the application's folder for `kind`. Only what the environment's folder needs and nothing above it: the application's own folder, the
+// "cache" level below it on Windows, and the base folder and its parent if they are missing (a fresh account has no ~/.local/share yet). Every
+// mkdir is one level and a level that exists is passed over; whether the result is a usable folder is for the caller to find out by opening it.
+void makeAppFolder(string kind, string appName) {
+    string base = baseFolder(kind);
+    string folder = appFolderPath(kind, appName);
+    if (base.length() == 0 || folder.length() == 0) {
+        return;
+    }
+    int cut = base.length() - 1;
+    while (cut > 0 && !isSeparator(base[cut])) {
+        cut = cut - 1;
+    }
+    if (cut >= 3) {
+        app_fs_mkdir(base.substr(0, cut));
+    }
+    app_fs_mkdir(base);
+    string own = joinHere(base, appName);
+    app_fs_mkdir(own);
+    if (folder != own) {
+        app_fs_mkdir(folder);
+    }
+}
+
+class SettingsStore {
+public:
+    FileGate gate;
+    string folder;                       // "" until open() succeeded
+    bool loaded;
+    string problem;                      // what was wrong in the file that was read ("" if nothing)
+    std::vector<string> names;
+    std::vector<string> kinds;           // "string", "int", "bool", "double"
+    std::vector<string> texts;           // the value of a string; the default of a string is kept in defTexts
+    std::vector<double> numbers;         // the value of an int, bool (0 / 1) or double
+    std::vector<string> defTexts;
+    std::vector<double> defNumbers;
+    std::vector<double> lows;            // int and double: the accepted range
+    std::vector<double> highs;
+    std::vector<int> limits;             // string: the longest accepted, in bytes
+    std::vector<string> otherNames;      // keys of the file that the program did not declare, kept as printed JSON
+    std::vector<string> otherTexts;
+
+    SettingsStore() {
+        gate = new FileGate();
+        folder = "";
+        loaded = false;
+        problem = "";
+    }
+
+    bool isOpen() {
+        return folder.length() > 0;
+    }
+
+    string filePath() {
+        return gate.join(folder, "settings.json");
+    }
+
+    // Finds (or makes) the application's "config" folder and allows it in this store's own gate. "" on success, else why not.
+    string open(string appName) {
+        if (isOpen()) {
+            return "already open";
+        }
+        if (!plainName(appName)) {
+            return "the application name must be 1 to 64 letters, digits, `.`, `_` or `-`";
+        }
+        string path = appFolderPath("config", appName);
+        if (path.length() == 0) {
+            return "the environment does not say where the configuration folder is";
+        }
+        makeAppFolder("config", appName);
+        int st = gate.allow(path);
+        if (st != 0) {
+            return "the configuration folder cannot be used";
+        }
+        folder = path;
+        return "";
+    }
+
+    int indexOf(string key) {
+        int i = 0;
+        while (i < names.size()) {
+            if (names[i] == key) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    bool declared(string key) {
+        return indexOf(key) >= 0;
+    }
+
+    // Declaring is possible until load() was called. false if the key is not a plain name, is declared already, there are too many, or the default
+    // does not fit the declaration.
+    bool addKey(string key, string kind) {
+        if (loaded || !plainName(key) || indexOf(key) >= 0 || names.size() >= 200) {
+            return false;
+        }
+        names.push_back(key);
+        kinds.push_back(kind);
+        texts.push_back("");
+        numbers.push_back(0.0);
+        defTexts.push_back("");
+        defNumbers.push_back(0.0);
+        lows.push_back(0.0);
+        highs.push_back(0.0);
+        limits.push_back(0);
+        return true;
+    }
+
+    bool declareString(string key, string fallback, int maxBytes) {
+        if (maxBytes < 0 || maxBytes > 65536 || fallback.length() > maxBytes || !isUtf8(fallback) || !addKey(key, "string")) {
+            return false;
+        }
+        int i = names.size() - 1;
+        limits[i] = maxBytes;
+        defTexts[i] = fallback;
+        texts[i] = fallback;
+        return true;
+    }
+
+    bool declareInt(string key, int fallback, int low, int high) {
+        if (low > high || fallback < low || fallback > high || !addKey(key, "int")) {
+            return false;
+        }
+        int i = names.size() - 1;
+        lows[i] = double(low);
+        highs[i] = double(high);
+        defNumbers[i] = double(fallback);
+        numbers[i] = double(fallback);
+        return true;
+    }
+
+    bool declareBool(string key, bool fallback) {
+        if (!addKey(key, "bool")) {
+            return false;
+        }
+        int i = names.size() - 1;
+        double v = 0.0;
+        if (fallback) {
+            v = 1.0;
+        }
+        defNumbers[i] = v;
+        numbers[i] = v;
+        return true;
+    }
+
+    bool declareDouble(string key, double fallback, double low, double high) {
+        if (low > high || fallback < low || fallback > high || !addKey(key, "double")) {
+            return false;
+        }
+        int i = names.size() - 1;
+        lows[i] = low;
+        highs[i] = high;
+        defNumbers[i] = fallback;
+        numbers[i] = fallback;
+        return true;
+    }
+
+    // Checks `value` against what key number `i` was declared as and, if it fits, takes it. "" on success, else why not (the old value stays).
+    string apply(int i, Item value) {
+        string kind = kinds[i];
+        string key = names[i];
+        if (value == nullptr) {
+            return "`" + key + "` has no value";
+        }
+        if (kind == "string") {
+            if (!isString(value)) {
+                return "`" + key + "` must be a string";
+            }
+            string s = value.valuestring;
+            if (s.length() > limits[i]) {
+                return "`" + key + "` is longer than " + intToString(limits[i]) + " bytes";
+            }
+            if (!isUtf8(s)) {
+                return "`" + key + "` must be valid UTF-8";
+            }
+            texts[i] = s;
+            return "";
+        }
+        if (kind == "bool") {
+            if (!isBool(value)) {
+                return "`" + key + "` must be true or false";
+            }
+            if (isTrue(value)) {
+                numbers[i] = 1.0;
+            } else {
+                numbers[i] = 0.0;
+            }
+            return "";
+        }
+        if (!isNumber(value)) {
+            return "`" + key + "` must be a number";
+        }
+        double v = value.valuedouble;
+        if (v < lows[i] || v > highs[i]) {
+            return "`" + key + "` must be from " + numberText(lows[i]) + " to " + numberText(highs[i]);
+        }
+        if (kind == "int" && v != double(int(v))) {
+            return "`" + key + "` must be a whole number";
+        }
+        numbers[i] = v;
+        return "";
+    }
+
+    string numberText(double v) {
+        Item n = createNumber(v);
+        return printUnformatted(n);
+    }
+
+    // Reads settings.json (a missing file is not a problem: every key has its default). Nothing can be declared afterwards. Returns what was wrong
+    // in the file, "" if nothing; it is kept in `problem` too. A file that is not a JSON object, or a value that does not fit its declaration, is
+    // reported and the defaults stay; the file itself is only replaced by the next successful set().
+    string load() {
+        if (!isOpen() || loaded) {
+            return "";
+        }
+        loaded = true;
+        problem = "";
+        FsResult r = gate.read(filePath(), 1048576);
+        if (r.status == 2) {
+            return "";
+        }
+        if (r.status != 0) {
+            problem = "settings.json cannot be read";
+            return problem;
+        }
+        Item root = parse(r.text);
+        if (root == nullptr || !isObject(root)) {
+            problem = "settings.json is not a JSON object: defaults are used";
+            return problem;
+        }
+        int bad = 0;
+        Item child = root.child;
+        while (child != nullptr) {
+            int i = indexOf(child.key);
+            if (i < 0) {
+                otherNames.push_back(child.key);
+                otherTexts.push_back(printUnformatted(child));
+            } else {
+                string why = apply(i, child);
+                if (why.length() > 0) {
+                    bad = bad + 1;
+                    if (problem.length() == 0) {
+                        problem = why;
+                    }
+                }
+            }
+            child = child.next;
+        }
+        if (bad > 0) {
+            problem = intToString(bad) + " setting(s) in settings.json were not valid and use their defaults; the first: " + problem;
+        }
+        return problem;
+    }
+
+    // ---- reading ----
+
+    int need(string key, string kind) {
+        int i = indexOf(key);
+        if (i < 0) {
+            string message = "unknown_setting: `" + key + "` is not a declared setting";
+            throw message;
+        }
+        if (kinds[i] != kind) {
+            string message = "wrong_type: `" + key + "` is a " + kinds[i] + ", not a " + kind;
+            throw message;
+        }
+        return i;
+    }
+
+    string getString(string key) {
+        int i = need(key, "string");
+        return texts[i];
+    }
+
+    int getInt(string key) {
+        int i = need(key, "int");
+        return int(numbers[i]);
+    }
+
+    bool getBool(string key) {
+        int i = need(key, "bool");
+        return numbers[i] != 0.0;
+    }
+
+    double getDouble(string key) {
+        int i = need(key, "double");
+        return numbers[i];
+    }
+
+    // The value of a declared key as JSON (null for a key that is not declared).
+    Item valueItem(string key) {
+        int i = indexOf(key);
+        if (i < 0) {
+            return nullptr;
+        }
+        string kind = kinds[i];
+        Item made = createNumber(numbers[i]);
+        if (kind == "string") {
+            made = createString(texts[i]);
+        }
+        if (kind == "bool") {
+            made = createBool(numbers[i] != 0.0);
+        }
+        return made;
+    }
+
+    // Every declared setting as one object: {key: value, ...}
+    Item allItem() {
+        Item all = createObject();
+        int i = 0;
+        while (i < names.size()) {
+            addItemToObject(all, names[i], valueItem(names[i]));
+            i = i + 1;
+        }
+        return all;
+    }
+
+    // ---- writing ----
+
+    // Takes a new value for a declared key and saves the file. "" on success, else why not: "unknown_setting: ..." for a key nobody declared,
+    // "invalid_argument: ..." for a value that does not fit, "io_error: ..." if the file could not be written (the value is then changed in memory
+    // but not on disk).
+    string set(string key, Item value) {
+        if (!isOpen() || !loaded) {
+            return "not_ready: the settings are not open";
+        }
+        int i = indexOf(key);
+        if (i < 0) {
+            return "unknown_setting: `" + key + "` is not a declared setting";
+        }
+        string why = apply(i, value);
+        if (why.length() > 0) {
+            return "invalid_argument: " + why;
+        }
+        int st = save();
+        if (st != 0) {
+            return "io_error: settings.json could not be written";
+        }
+        problem = "";
+        return "";
+    }
+
+    string setString(string key, string value) {
+        return set(key, createString(value));
+    }
+
+    string setInt(string key, int value) {
+        return set(key, createNumber(double(value)));
+    }
+
+    string setBool(string key, bool value) {
+        return set(key, createBool(value));
+    }
+
+    string setDouble(string key, double value) {
+        return set(key, createNumber(value));
+    }
+
+    // The file is written whole to settings.json.tmp, then swapped in.
+    int save() {
+        Item root = createObject();
+        int i = 0;
+        while (i < names.size()) {
+            addItemToObject(root, names[i], valueItem(names[i]));
+            i = i + 1;
+        }
+        int k = 0;
+        while (k < otherNames.size()) {
+            Item kept = parse(otherTexts[k]);
+            if (kept != nullptr) {
+                addItemToObject(root, otherNames[k], kept);
+            }
+            k = k + 1;
+        }
+        string text = print(root);
+        if (text.length() == 0) {
+            return 4;
+        }
+        string tmp = gate.join(folder, "settings.json.tmp");
+        int st = gate.write(tmp, text, 0);
+        if (st != 0) {
+            return st;
+        }
+        return gate.replace(tmp, filePath());
+    }
+};

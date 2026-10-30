@@ -61,6 +61,13 @@
     open: call('dialog.open'), save: call('dialog.save'), folder: call('dialog.folder'), message: call('dialog.message')
   };
   window.cling.proc = { run: call('proc.run') };
+  // settings: only the keys the application declared. get(key) -> value, getAll() -> {key: value}, set(key, value) -> null; the event
+  // "settings.changed" {key, value} reaches every window after a set.
+  window.cling.settings = {
+    get: function (key) { return window.cling.invoke('settings.get', { key: key }); },
+    getAll: call('settings.getAll'),
+    set: function (key, value) { return window.cling.invoke('settings.set', { key: key, value: value }); }
+  };
   window.cling.window = {
     setTitle: call('window.setTitle'), setSize: call('window.setSize'), minimize: call('window.minimize'),
     maximize: call('window.maximize'), restore: call('window.restore'), focus: call('window.focus'),

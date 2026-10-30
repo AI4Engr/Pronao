@@ -166,6 +166,22 @@ int main() {
     check("write over a folder", g.write(join(allowed, "sub"), "x", 0) == 8);
     check("write outside", g.write(join(outside, "w.txt"), "x", 0) == 1 && !exists(join(outside, "w.txt")));
     check("write via dot-dot", g.write(join(allowed, dd + "outside" + sep() + "w2.txt"), "x", 0) == 1 && !exists(join(outside, "w2.txt")));
+    // ---- replacing (write a temporary file, then swap it in) ----
+    string r1 = join(allowed, "r1.txt");
+    string r2 = join(allowed, "r2.txt");
+    put(r1, "new");
+    put(r2, "old");
+    check("replace swaps the new file in over an old one", g.replace(r1, r2) == 0 && slurp(r2) == "new" && !exists(r1));
+    put(r1, "x");
+    check("replace to a name that is free", g.replace(r1, join(allowed, "r3.txt")) == 0 && slurp(join(allowed, "r3.txt")) == "x" && !exists(r1));
+    check("replace of a missing source", g.replace(join(allowed, "nothing.txt"), r2) == 2 && slurp(r2) == "new");
+    put(r1, "y");
+    check("replace into another folder is refused", g.replace(r1, join(join(allowed, "sub"), "r1.txt")) == 1 && exists(r1));
+    check("replace over a folder is refused", g.replace(r1, join(allowed, "sub")) == 1 && exists(r1));
+    check("replace of a folder is refused", g.replace(join(allowed, "sub"), join(allowed, "subx")) == 1 && !exists(join(allowed, "subx")));
+    put(join(outside, "o1.txt"), "o");
+    check("replace outside the allowed folders is refused", g.replace(join(outside, "o1.txt"), join(outside, "o2.txt")) == 1 && exists(join(outside, "o1.txt")) && !exists(join(outside, "o2.txt")));
+    check("replace to a name outside is refused", g.replace(r1, join(allowed, dd + "outside" + sep() + "o3.txt")) == 1 && exists(r1) && !exists(join(outside, "o3.txt")));
     int wroteEmpty = g.write(join(allowed, "empty.txt"), "", 0);
     check("empty file", wroteEmpty == 0 && slurp(join(allowed, "empty.txt")) == "");
     string binary = "a";

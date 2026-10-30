@@ -1,0 +1,254 @@
+// The standard folders and the settings store (src/settings.clg), against the real file system, and the commands a page gets for them (src/app.clg).
+// The environment variables that name the per-user folders are pointed at a temporary folder first, so nothing outside it is touched.
+#include "text.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "app.clh"
+
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_setenv(string name, string value);
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_exists(string path);
+ext_fn int app_test_mkdir_raw(string path);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+bool startsWith(string text, string prefix) {
+    return startsWithText(text, prefix);
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+string badUtf8() {
+    string s = "ok";
+    s.push_back(char(255));
+    s.push_back(char(254));
+    return s;
+}
+
+string slurpFile(string path) {
+    string out = "";
+    app_test_read_raw(path, out);
+    return out;
+}
+
+bool has(string text, string part) {
+    return containsText(text, part);
+}
+
+string under(string dir, string leaf) {
+    if (app_os_windows() == 1) {
+        return dir + "\\" + leaf;
+    }
+    return dir + "/" + leaf;
+}
+
+Item keyArgs(string key) {
+    Item o = createObject();
+    addStringToObject(o, "key", key);
+    return o;
+}
+
+Item pathArgs(string p) {
+    Item o = createObject();
+    addStringToObject(o, "path", p);
+    return o;
+}
+
+string requestText(string command, Item args) {
+    Item arr = createArray();
+    addItemToArray(arr, createString(command));
+    addItemToArray(arr, args);
+    return printUnformatted(arr);
+}
+
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    if (gotId != id) {
+        return "WRONG ID " + gotId;
+    }
+    return intToString(status) + " " + json;
+}
+
+// the settings of the test application: one key of each type
+SettingsStore freshStore() {
+    SettingsStore st = new SettingsStore();
+    st.declareString("name", "untitled", 40);
+    st.declareInt("size", 12, 8, 32);
+    st.declareBool("dark", false);
+    st.declareDouble("zoom", 1.0, 0.5, 3.0);
+    return st;
+}
+
+int main() {
+    string sbase = "";
+    app_test_make_temp_dir(sbase);
+    string roaming = under(sbase, "roaming");
+    string local = under(sbase, "local");
+    string home = under(sbase, "home");
+    string xdg = under(sbase, "xdg");
+    app_test_mkdir_raw(roaming);
+    app_test_mkdir_raw(local);
+    app_test_mkdir_raw(home);
+    app_test_setenv("APPDATA", roaming);
+    app_test_setenv("LOCALAPPDATA", local);
+    app_test_setenv("HOME", home);
+    app_test_setenv("XDG_CONFIG_HOME", under(xdg, "config"));
+    app_test_setenv("XDG_DATA_HOME", under(xdg, "data"));
+    app_test_setenv("XDG_CACHE_HOME", under(xdg, "cache"));
+
+    // ---- standard folders ----
+    check("a plain application name", plainName("my-app.2") && plainName("A"));
+    check("names that could be paths or hidden are refused", !plainName("") && !plainName("..") && !plainName("a/b") && !plainName("a\\b") && !plainName(".hidden") && !plainName("-x") && !plainName("a b") && !plainName(repeated("a", 65)));
+    string cfg = appFolderPath("config", "t-app");
+    check("the config folder is named under the environment's base", cfg.length() > 0 && startsWith(cfg, sbase) && has(cfg, "t-app"));
+    check("config, data and cache are three different folders", appFolderPath("data", "t-app") != cfg && appFolderPath("cache", "t-app") != cfg && appFolderPath("cache", "t-app") != appFolderPath("data", "t-app"));
+    check("there is no temp kind and no unknown kind", appFolderPath("temp", "t-app") == "" && appFolderPath("other", "t-app") == "" && appFolderPath("", "t-app") == "");
+    check("a name that is a path gives no folder", appFolderPath("config", "../x") == "" && appFolderPath("config", "") == "");
+    app_test_setenv("APPDATA", "relative");
+    app_test_setenv("XDG_CONFIG_HOME", "relative");
+    app_test_setenv("HOME", "relative");
+    check("a base that is not absolute is not used", appFolderPath("config", "t-app") == "");
+    app_test_setenv("APPDATA", roaming);
+    app_test_setenv("XDG_CONFIG_HOME", under(xdg, "config"));
+    app_test_setenv("HOME", home);
+
+    // ---- the store ----
+    SettingsStore s1 = freshStore();
+    check("settings are not ready before open", s1.setString("name", "x") == "not_ready: the settings are not open");
+    check("open makes the folder (and the base above it)", s1.open("t-app") == "" && app_test_exists(cfg) == 1);
+    check("the defaults are there before anything is read", s1.getString("name") == "untitled" && s1.getInt("size") == 12 && !s1.getBool("dark") && s1.getDouble("zoom") == 1.0);
+    check("a missing file is not a problem", s1.load() == "" && s1.problem == "");
+    check("nothing can be declared after load", !s1.declareInt("late", 1, 0, 2));
+    check("a second open is refused", s1.open("t-app") == "already open");
+    check("set a string", s1.setString("name", "Notes") == "" && s1.getString("name") == "Notes");
+    check("set an int", s1.setInt("size", 14) == "" && s1.getInt("size") == 14);
+    check("set a bool", s1.setBool("dark", true) == "" && s1.getBool("dark"));
+    check("set a double", s1.setDouble("zoom", 1.5) == "" && s1.getDouble("zoom") == 1.5);
+    check("the file is there and no temporary file is left", app_test_exists(under(cfg, "settings.json")) == 1 && app_test_exists(under(cfg, "settings.json.tmp")) == 0);
+
+    SettingsStore s2 = freshStore();
+    s2.open("t-app");
+    check("another run reads what was saved", s2.load() == "" && s2.getString("name") == "Notes" && s2.getInt("size") == 14 && s2.getBool("dark") && s2.getDouble("zoom") == 1.5);
+    check("an undeclared key is refused", startsWith(s2.setString("nope", "x"), "unknown_setting"));
+    check("a value of the wrong type is refused and the old one stays", startsWith(s2.setInt("name", 3), "invalid_argument") && s2.getString("name") == "Notes");
+    check("an int outside its range is refused", startsWith(s2.setInt("size", 99), "invalid_argument") && s2.getInt("size") == 14);
+    check("a fractional int is refused", startsWith(s2.setDouble("size", 12.5), "invalid_argument") && s2.getInt("size") == 14);
+    check("a string over its limit is refused", startsWith(s2.setString("name", repeated("x", 41)), "invalid_argument") && s2.getString("name") == "Notes");
+    check("a string that is not UTF-8 is refused", startsWith(s2.setString("name", badUtf8()), "invalid_argument"));
+    check("a double outside its range is refused", startsWith(s2.setDouble("zoom", 9.0), "invalid_argument") && s2.getDouble("zoom") == 1.5);
+    check("a bool that is a number is refused", startsWith(s2.setInt("dark", 1), "invalid_argument") && s2.getBool("dark"));
+    string kindError = "";
+    try {
+        s2.getInt("name");
+    } catch (string e) {
+        kindError = e;
+    }
+    check("asking for a key as the wrong type throws", startsWith(kindError, "wrong_type"));
+    string unknownError = "";
+    try {
+        s2.getString("nope");
+    } catch (string e) {
+        unknownError = e;
+    }
+    check("asking for an undeclared key throws", startsWith(unknownError, "unknown_setting"));
+    SettingsStore s3 = new SettingsStore();
+    check("a key that is not a plain name is not declared", !s3.declareInt("a/b", 1, 0, 2) && !s3.declareInt("", 1, 0, 2));
+    check("a default outside the range is not accepted", !s3.declareInt("n", 5, 0, 2) && !s3.declareString("s", "toolong", 3) && !s3.declareDouble("d", 3.0, 0.0, 1.0));
+    check("a key is declared once", s3.declareInt("k", 1, 0, 2) && !s3.declareBool("k", true));
+
+    app_test_write_raw(under(cfg, "settings.json"), "{\"name\": \"Disk\", \"size\": \"big\", \"dark\": true, \"future\": {\"x\": [1, 2]}}");
+    SettingsStore s4 = freshStore();
+    s4.open("t-app");
+    string note = s4.load();
+    check("a value that does not fit uses its default and is reported", startsWith(note, "1 setting(s)") && s4.getInt("size") == 12 && s4.getString("name") == "Disk" && s4.getBool("dark"));
+    app_test_write_raw(under(cfg, "settings.json.tmp"), "left over from a crash");
+    check("saving works with a stale temporary file there", s4.setInt("size", 13) == "" && s4.problem == "" && app_test_exists(under(cfg, "settings.json.tmp")) == 0);
+    Item saved = parse(slurpFile(under(cfg, "settings.json")));
+    check("saving keeps a key the program does not know", saved != nullptr && getObjectItem(saved, "future") != nullptr && getObjectItem(saved, "size") != nullptr);
+    app_test_write_raw(under(cfg, "settings.json"), "{not json");
+    SettingsStore s5 = freshStore();
+    s5.open("t-app");
+    string note5 = s5.load();
+    check("a file that is not JSON gives the defaults and a problem", note5.length() > 0 && s5.getString("name") == "untitled");
+    check("the next set writes a good file again", s5.setString("name", "Fresh") == "" && parse(slurpFile(under(cfg, "settings.json"))) != nullptr);
+
+    // ---- the commands a page gets ----
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    SettingsStore live = app.settings;
+    live.declareString("theme", "light", 16);
+    live.declareInt("fontSize", 12, 8, 32);
+    live.declareBool("compact", false);
+    check("the app's store opens", live.open("t-app-live") == "");
+    live.load();
+    app.enableSettingsCommands();
+    check("settings.get", roundTrip(app, "s1", requestText("settings.get", keyArgs("theme"))) == "0 \"light\"");
+    check("settings.get of an undeclared key", roundTrip(app, "s2", requestText("settings.get", keyArgs("secret"))) == "1 {\"code\":\"unknown_setting\",\"message\":\"`secret` is not a declared setting\"}");
+    check("settings.getAll", roundTrip(app, "s3", requestText("settings.getAll", createObject())) == "0 {\"theme\":\"light\",\"fontSize\":12,\"compact\":false}");
+    string ev = "";
+    while (app_test_take_eval(app.handle, ev) == 1) {
+    }
+    Item setArgs = keyArgs("theme");
+    addStringToObject(setArgs, "value", "dark");
+    check("settings.set", roundTrip(app, "s4", requestText("settings.set", setArgs)) == "0 null" && live.getString("theme") == "dark");
+    check("settings.set tells every window", app_test_take_eval(app.handle, ev) == 1 && ev == "window.__cling_emit([\"settings.changed\",{\"key\":\"theme\",\"value\":\"dark\"}]);");
+    Item badSet = keyArgs("fontSize");
+    addStringToObject(badSet, "value", "huge");
+    check("settings.set with the wrong type", startsWith(roundTrip(app, "s5", requestText("settings.set", badSet)), "1 {\"code\":\"invalid_argument\"") && live.getInt("fontSize") == 12);
+    Item unknownSet = keyArgs("hidden");
+    addStringToObject(unknownSet, "value", "x");
+    check("settings.set of an undeclared key", startsWith(roundTrip(app, "s6", requestText("settings.set", unknownSet)), "1 {\"code\":\"unknown_setting\""));
+    check("settings.set needs a value", startsWith(roundTrip(app, "s7", requestText("settings.set", keyArgs("theme"))), "1 {\"code\":\"invalid_argument\""));
+    check("a rejected set sent no event", app_test_take_eval(app.handle, ev) == 0);
+    check("what was set is on disk", has(slurpFile(under(appFolderPath("config", "t-app-live"), "settings.json")), "\"dark\""));
+
+    // ---- what the file commands can and cannot reach ----
+    app.enableFileCommands(1048576);
+    check("allowAppFolder refuses the config folder", !app.allowAppFolder("t-app-live", "config"));
+    check("allowAppFolder refuses a bad name and a kind that does not exist", !app.allowAppFolder("../x", "data") && !app.allowAppFolder("t-app", "temp"));
+    check("allowAppFolder makes the data folder and allows it", app.allowAppFolder("t-app-data", "data") && app_test_exists(appFolderPath("data", "t-app-data")) == 1);
+    string dataFile = under(appFolderPath("data", "t-app-data"), "note.txt");
+    app_test_write_raw(dataFile, "hello");
+    check("the page reaches a file in it", roundTrip(app, "f1", requestText("fs.read", pathArgs(dataFile))) == "0 {\"text\":\"hello\"}");
+    string settingsFile = under(appFolderPath("config", "t-app-live"), "settings.json");
+    check("the page cannot read settings.json with the file commands", startsWith(roundTrip(app, "f2", requestText("fs.read", pathArgs(settingsFile))), "1 {\"code\":\"forbidden\""));
+    Item writeArgs = pathArgs(settingsFile);
+    addStringToObject(writeArgs, "text", "{}");
+    check("nor replace it", startsWith(roundTrip(app, "f3", requestText("fs.write", writeArgs)), "1 {\"code\":\"forbidden\"") && has(slurpFile(settingsFile), "\"dark\""));
+
+    app_test_remove_tree(sbase);
+    return 0;
+}

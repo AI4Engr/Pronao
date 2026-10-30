@@ -86,6 +86,38 @@ Not covered: a local attacker who can create links inside an allowed folder at t
 created and then removed again if it turns out to lie outside), non-ASCII case differences in a path's text on Windows
 (the text pre-check refuses them; the OS's own answer is what allows), and whatever an allowed folder itself contains.
 
+## The application's own folders and settings
+
+Where a program keeps its data (`src/settings.clg`; the native layer only makes a folder and renames a file):
+
+```
+app.allowAppFolder("my-app", "data");            // makes %LOCALAPPDATA%\my-app (XDG: ~/.local/share/my-app) and lets the page's fs.* commands reach it
+SettingsStore settings = app.settings;           // the program's settings file, in the "config" folder (%APPDATA%\my-app\settings.json)
+settings.declareString("theme", "light", 16);    // every key is declared: type, default and the values accepted
+settings.declareInt("fontSize", 12, 8, 32);
+settings.declareBool("compact", false);
+settings.open("my-app");                         // makes the folder; "" if it worked, else why not
+settings.load();                                 // reads the file (a missing one is fine); what was wrong in it is in settings.problem
+app.enableSettingsCommands();                    // the page may now call settings.get / getAll / set, for these keys only
+int size = settings.getInt("fontSize");          // the program reads and writes with getX / setX
+```
+
+```js
+await cling.settings.get('theme');               // "light"
+await cling.settings.set('fontSize', 14);        // saved at once; every window gets the event settings.changed {key, value}
+await cling.settings.getAll();                   // {theme, fontSize, compact}
+```
+
+- **Kinds of folder:** `"data"` and `"cache"` can be allowed to the page; `"config"` cannot, because it holds `settings.json`, which a page may change only through the settings commands. There is no
+  `"temp"` kind: a predictable name in the shared temporary folder can be taken over by another user. The application name is 1 to 64 letters, digits, `.`, `_` or `-` (so it can never be a path).
+  macOS is treated like Linux (no `~/Library` table yet).
+- **The page cannot reach `settings.json`** with `fs.read` / `fs.write`: the store has its own file gate that allows only its folder, and the page's gate does not include it. It sees only the keys the program declared;
+  a key that was not declared is `unknown_setting`, a value of the wrong type or outside its range is `invalid_argument`.
+- **Saving** writes `settings.json.tmp` and swaps it in over `settings.json` in one step (`FileGate.replace`), so a crash leaves the old file or the new one. A key in the file that the program does not
+  declare is kept when it saves; a value in the file that does not fit its declaration is replaced by the default and reported in `settings.problem`; a file that is not JSON is reported and the defaults are used.
+- **What this is not:** the file is not encrypted and not protected from other programs of the same user; two instances of the program writing at once are not coordinated (the last one wins); the
+  settings commands run on the main thread, so a slow disk stalls the loop for the length of one small write.
+
 ## Watching folders
 
 ```
@@ -404,7 +436,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 139 file policy and text + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher, no window (SLOW=1: build at -O1)
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # ~80 s, WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # ~65 s: removes one check at a time from src/ and shows the tests fail
@@ -432,6 +464,7 @@ a fresh project builds in all three ways and its window starts.
 | `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
+| `src/settings.clg` | the per-user folders of an application and `SettingsStore`, its declared, typed settings file |
 | `src/app.clg` | `Dispatcher`, `App`, the commands (files, programs, dialogs, watches, window), program lookup and slots, watch merging |
 | `src/bridge.js` | defines `window.cling.*`; embedded into the program at build time |
 | `shim/` | the native layer: `app_native.h` lists every primitive; `app_shim.cpp` window and queue; `win/` and `posix/` the OS parts |

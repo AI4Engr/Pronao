@@ -61,6 +61,7 @@ int app_fs_write(int h, std::string data, int append);                    // rep
 int app_fs_list(int h, std::string& out);                                 // per entry, NUL terminated: kind letter, size, mtime, name
 int app_fs_mkdir(std::string path);                                       // one folder; 6 if the name is taken
 int app_fs_delete(int h);                                                 // a file, a link or an EMPTY folder (7 otherwise)
+int app_fs_replace(std::string from, std::string to);                     // renames `from` to `to`, replacing a file already there in one step (readers see the old or the new one, never half)
 
 // ---- programs and the environment -----------------------------------------------------------------------------------------
 int app_sleep_ms(int ms);                                                 // pauses the calling thread (a job polling for a cancel, a retry loop)

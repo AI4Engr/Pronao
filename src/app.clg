@@ -18,6 +18,7 @@
 #include "core.clh"
 #include "files.clh"
 #include "assets.clh"
+#include "settings.clh"
 
 ext_fn int app_open(string title, int width, int height, string html, string url, string initJs, int debug);
 ext_fn int app_wait_any(std::vector<int> handles, int timeoutMs, ref int handle);
@@ -1662,6 +1663,16 @@ public:
     std::vector<Window> items;
     WindowBook() { }
 
+    // Pushes an event to the page of every open window.
+    void emitAll(string name, string payloadJson) {
+        int i = 0;
+        while (i < items.size()) {
+            Window w = items[i];
+            emitEvent(w.handle, name, payloadJson);
+            i = i + 1;
+        }
+    }
+
     int indexOf(int handle) {
         int i = 0;
         while (i < handles.size()) {
@@ -1787,6 +1798,7 @@ public:
     LaterBook laters;
     PumpBook pumps;
     FileGate gate;
+    SettingsStore settings;            // the application's own settings file (empty until open() is called on it)
     WindowBook windows;                // the open windows
     std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
     Watches watches;                   // the first window's (see `handle`); each Window has its own
@@ -1808,6 +1820,7 @@ public:
         laters = new LaterBook();
         pumps = new PumpBook();
         gate = new FileGate();
+        settings = new SettingsStore();
         cling::setExitGraceMs(5000);
         windows = new WindowBook();
         watches = new Watches();
@@ -1849,6 +1862,60 @@ public:
     // a relative path from the page means "inside the first folder added". false if the folder does not exist.
     bool allowFolder(string dir) {
         return gate.allow(dir) == 0;
+    }
+
+    // Makes the application's own folder for `kind` ("data" or "cache", see appFolderPath in settings.clg) and adds it to the folders the page may
+    // reach through the file commands. false if the name or the kind is not acceptable, the environment does not say where the folder is, or it
+    // cannot be made. "config" is refused on purpose: it holds settings.json, which a page may change only through the settings commands (and only
+    // the keys the application declared).
+    bool allowAppFolder(string appName, string kind) {
+        if (kind == "config") {
+            return false;
+        }
+        string path = appFolderPath(kind, appName);
+        if (path.length() == 0) {
+            return false;
+        }
+        makeAppFolder(kind, appName);
+        return gate.allow(path) == 0;
+    }
+
+    // Registers settings.get {key} -> the value, settings.getAll {} -> {key: value, ...} and settings.set {key, value} -> null for the settings the
+    // application declared in `app.settings` (open it, declare the keys, load it: see SettingsStore in settings.clg). Nothing else is reachable: a key that is not declared is "unknown_setting", a value that does not
+    // fit its declaration is "invalid_argument", and a write that could not be saved is "io_error" (the page's promise is rejected; the value in
+    // memory is changed). Every window may call them unless its command list says otherwise. After a successful set the page of EVERY window gets
+    // the event "settings.changed" {key, value}.
+    void enableSettingsCommands() {
+        SettingsStore settings = this.settings;
+        command("settings.get", closure Command [settings] (Item args) {
+            string key = requiredString(args, "key");
+            Item value = settings.valueItem(key);
+            if (value == nullptr) {
+                string message = "unknown_setting: `" + key + "` is not a declared setting";
+                throw message;
+            }
+            return value;
+        });
+        command("settings.getAll", closure Command [settings] (Item args) {
+            return settings.allItem();
+        });
+        WindowBook book = windows;
+        command("settings.set", closure Command [settings, book] (Item args) {
+            string key = requiredString(args, "key");
+            Item given = getObjectItem(objectArg(args), "value");
+            if (given == nullptr) {
+                throw "invalid_argument: `value` is missing";
+            }
+            string why = settings.set(key, given);
+            if (why.length() > 0) {
+                throw why;
+            }
+            Item changed = createObject();
+            addStringToObject(changed, "key", key);
+            addItemToObject(changed, "value", settings.valueItem(key));
+            book.emitAll("settings.changed", printUnformatted(changed));
+            return createNull();
+        });
     }
 
     // Withdraws everything the user granted through dialogs (the folders added with allowFolder stay).

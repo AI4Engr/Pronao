@@ -144,6 +144,11 @@ int app_fs_mkdir(std::string path) {
     return CreateDirectoryW(w.c_str(), nullptr) ? 0 : mapError(GetLastError());
 }
 
+int app_fs_replace(std::string from, std::string to) {
+    const std::wstring a = widen(from), b = widen(to);
+    return MoveFileExW(a.c_str(), b.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : mapError(GetLastError());
+}
+
 int app_fs_delete(int h) {
     HANDLE f;
     FILE_DISPOSITION_INFO d;

@@ -23,6 +23,7 @@ ext_fn int app_fs_write(int h, string data, int append);
 ext_fn int app_fs_list(int h, ref string out);
 ext_fn int app_fs_mkdir(string path);
 ext_fn int app_fs_delete(int h);
+ext_fn int app_fs_replace(string from, string to);
 
 // open modes of app_fs_open
 //   0 read a file   1 a folder (to list)   2 attributes only, following links   3 attributes only, NOT following a final link
@@ -833,6 +834,63 @@ public:
             i = i + 4;
         }
         return remove(path);
+    }
+
+    // Renames a file to another name in the SAME allowed folder, replacing a file that is already there in one step: what a reader sees is the old
+    // file or the new one, never half of either (write a temporary file, then replace). Both must be plain file names; the source must be a
+    // regular file, and a target that exists must be one too (never a folder or a link). Not for a granted file: the folder itself must be allowed.
+    int replace(string fromPath, string toPath) {
+        FsResult a = normalize(fromPath, true, true);
+        if (a.status != 0) {
+            return a.status;
+        }
+        FsResult b = normalize(toPath, true, true);
+        if (b.status != 0) {
+            return b.status;
+        }
+        string folder = parentOf(a.text);
+        if (folder != parentOf(b.text)) {
+            return 1;
+        }
+        string fromLeaf = leafOf(a.text);
+        string toLeaf = leafOf(b.text);
+        if (!nameOk(fromLeaf) || !nameOk(toLeaf)) {
+            return 1;
+        }
+        Opened parent = openAt(folder, 1);
+        if (parent.status != 0) {
+            return parent.status;
+        }
+        int pk = kindOf(parent.h);
+        app_fs_close(parent.h);
+        if (pk != 100) {
+            return 9;
+        }
+        if (!allowedFinal(parent.fin)) {
+            return 1;
+        }
+        string source = join(parent.fin, fromLeaf);
+        string target = join(parent.fin, toLeaf);
+        Opened s = openAllowed(source, 3);
+        if (s.status != 0) {
+            return s.status;
+        }
+        int sourceKind = kindOf(s.h);
+        app_fs_close(s.h);
+        if (sourceKind != 102) {
+            return 1;
+        }
+        Opened t = openAllowed(target, 3);
+        if (t.status == 0) {
+            int targetKind = kindOf(t.h);
+            app_fs_close(t.h);
+            if (targetKind != 102) {
+                return 1;
+            }
+        } else if (t.status != 2) {
+            return t.status;
+        }
+        return app_fs_replace(source, target);
     }
 
     // Removes a file, a link (the link, never its target), or an EMPTY folder. Never an allowed folder itself.
