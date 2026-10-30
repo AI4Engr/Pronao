@@ -8,6 +8,9 @@ bash build.sh --release     # same, with the developer tools and the development
 bash build.sh --headless    # no window; only checks that it transpiles and compiles
 ```
 
+`icon.ico` is a placeholder (a coloured square made from the project's name): replace it with your own icon, a Windows `.ico` with several sizes.
+It is compiled into the exe and shown by Explorer, the title bar and the taskbar.
+
 While writing the front end, run its dev server and start the program with `APP_DEV_URL=http://localhost:5173/ out/__NAME__`.
 `APP_DEBUG=1` turns the developer tools on.
 

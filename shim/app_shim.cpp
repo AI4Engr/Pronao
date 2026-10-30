@@ -133,6 +133,12 @@ int app_open(std::string title, int width, int height, std::string html, std::st
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(w.window().value());
             SetPropW(hwnd, L"app_cling", raw);
+            // the program's icon (resource 1, from scripts/build.sh ICON=...) for the title bar, Alt+Tab and the taskbar; none linked in: the default stays
+            for (int big = 0; big < 2; big++) {
+                const int cx = GetSystemMetrics(big ? SM_CXICON : SM_CXSMICON), cy = GetSystemMetrics(big ? SM_CYICON : SM_CYSMICON);
+                if (HANDLE icon = LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR))
+                    SendMessageW(hwnd, WM_SETICON, big ? ICON_BIG : ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+            }
             raw->oldProc = reinterpret_cast<void*>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(guardProc)));
 #endif
             { std::lock_guard<std::mutex> lock(raw->m); raw->w = &w; raw->created = raw->ready = true; }

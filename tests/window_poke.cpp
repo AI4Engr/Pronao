@@ -4,6 +4,8 @@
 //   window_poke.exe move TITLE x y w h       SetWindowPos, then WM_EXITSIZEMOVE
 //   window_poke.exe maximize|restore|close TITLE
 //   window_poke.exe inside TITLE             exit 0 if the window lies wholly inside the work area of one monitor
+//   window_poke.exe icon TITLE big|small    prints the colour in the middle of the window's icon, "RRGGBB alpha"; exit 1 if the window has none
+//   window_poke.exe exeicon FILE             the same for the first icon of a program file
 //   window_poke.exe wait TITLE               waits up to 20 s for the window to be visible; exit 1 if it never is
 #include <windows.h>
 
@@ -41,6 +43,36 @@ std::wstring wide(const char* text) {
     return std::wstring(s.begin(), s.end());
 }
 
+// "RRGGBB alpha" of the middle of an icon
+bool middleOf(HICON icon, std::string& out) {
+    ICONINFO info = {};
+    if (!icon || !GetIconInfo(icon, &info)) return false;
+    BITMAP bm = {};
+    bool ok = info.hbmColor && GetObject(info.hbmColor, sizeof bm, &bm) && bm.bmWidth > 0 && bm.bmHeight > 0;
+    if (ok) {
+        std::vector<unsigned char> bits(static_cast<size_t>(bm.bmWidth) * bm.bmHeight * 4);
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = bm.bmWidth;
+        bi.bmiHeader.biHeight = -bm.bmHeight;                          // top-down
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        HDC dc = GetDC(nullptr);
+        ok = GetDIBits(dc, info.hbmColor, 0, bm.bmHeight, bits.data(), &bi, DIB_RGB_COLORS) != 0;
+        ReleaseDC(nullptr, dc);
+        if (ok) {
+            const unsigned char* p = &bits[(static_cast<size_t>(bm.bmHeight / 2) * bm.bmWidth + bm.bmWidth / 2) * 4];
+            char text[40];
+            std::snprintf(text, sizeof text, "%02x%02x%02x %d", p[2], p[1], p[0], p[3]);
+            out = text;
+        }
+    }
+    if (info.hbmColor) DeleteObject(info.hbmColor);
+    if (info.hbmMask) DeleteObject(info.hbmMask);
+    return ok;
+}
+
 // the restored rectangle in screen coordinates, and whether the window is maximized
 bool describe(HWND h, RECT& r, bool& maximized) {
     WINDOWPLACEMENT wp = {};
@@ -69,8 +101,24 @@ int main(int argc, char** argv) {
         }
         return 1;
     }
+    if (action == "exeicon") {
+        HICON large = nullptr;
+        std::string text;
+        const std::string file(argv[2]);
+        if (ExtractIconExW(std::wstring(file.begin(), file.end()).c_str(), 0, &large, nullptr, 1) < 1 || !middleOf(large, text)) return 1;
+        std::printf("%s\n", text.c_str());
+        return 0;
+    }
     HWND h = findWindow(title);
     if (!h) return 1;
+    if (action == "icon" && argc >= 4) {
+        std::string text;
+        const bool big = std::string(argv[3]) == "big";
+        HICON icon = reinterpret_cast<HICON>(SendMessageW(h, WM_GETICON, big ? ICON_BIG : ICON_SMALL, 0));
+        if (!middleOf(icon, text)) return 1;
+        std::printf("%s\n", text.c_str());
+        return 0;
+    }
     if (action == "find") {
         RECT r;
         bool maximized = false;

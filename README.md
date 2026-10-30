@@ -144,6 +144,19 @@ await cling.shell.reveal({ path: '...' });                          // shown in 
   itself was checked only for its refusals. Click it once by hand on a machine with a browser.
 - **What it cannot know:** what the browser or the default program will do with what it gets. Listing `html` or `svg` for `openFile` is the application's choice.
 
+## The program's icon
+
+```
+ICON=app.ico bash scripts/build.sh main.clg out.exe          # a project made by scripts/new_project.sh already has icon.ico and uses it
+python3 scripts/make_icon.py app.ico my-app [RRGGBB]         # a placeholder: a coloured rounded square with a ring, 16 / 32 / 48 px, the colour from the name
+```
+
+- **Where it shows (Windows):** in Explorer (the icon is compiled into the exe as resource 1), in the window's title bar, in Alt+Tab and on the taskbar (the window takes the same resource, big and small).
+  Without `ICON` the system's default icon stays. The build refuses a file that is not an `.ico` and one that does not exist.
+- **Replace the placeholder** with a real `.ico` that has several sizes (16, 24, 32, 48, 256). The placeholder is a plain 32-bit image so that no tool is needed to make it.
+- **Not done:** the tray icon (it will use the same resource), Linux and macOS icons, a version resource (the "Details" tab of the exe's properties).
+- **Test:** `tests/run_icon.sh` builds with and without an icon and reads the colour in the middle of the icon back from the exe and from the running window, big and small; the build without an icon must not show it.
+
 ## Remembering where windows were
 
 ```
@@ -507,6 +520,7 @@ bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
 bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_icon.sh                # the icon is in the exe and on the running window; the build without one is the control
 bash tests/run_placement_window.sh    # a real window is moved, maximized and closed from outside; the next start must open it there; with a control that must fail
 bash tests/run_instance_window.sh     # two real processes, one window: the second hands over its arguments and ends; with a control that must fail
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
@@ -536,6 +550,7 @@ a fresh project builds in all three ways and its window starts.
 | `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
+| `scripts/make_icon.py` | a placeholder `.ico` (the build option `ICON=`) |
 | `src/placement.clg` | where windows were: `WindowMemory` and `fitToMonitors` |
 | `shim/win/instance.cpp` | one running copy per user: the mutex, the pipe and the hand-over of a later launch's arguments |
 | `src/links.clg` | what a page may ask the system to open: addresses, files, show in the file manager |

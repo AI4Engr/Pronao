@@ -17,5 +17,6 @@ for a in "$@"; do
 done
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=.exe ;; *) EXE= ;; esac
 mkdir -p "$HERE/out"
+[ -f "$HERE/icon.ico" ] && export ICON="$HERE/icon.ico"      # the program's icon: replace icon.ico with your own (a Windows .ico, several sizes)
 PAGE="$HERE/index.html" WORK="${WORK:-$HERE/out/work}" bash "$APP_CLING/scripts/build.sh" "$HERE/main.clg" "$HERE/out/__NAME__$EXE" $MODE
 echo "built out/__NAME__$EXE"

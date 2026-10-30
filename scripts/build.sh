@@ -8,6 +8,8 @@
 # app_page_html(); empty if unset). src/bridge.js is always embedded as app_bridge_js().
 # RELEASE=1: the window ignores the debug argument of open (no developer tools, no context menu) and the program refuses a development
 # server (APP_DEV_URL): compiled out, not a runtime switch. It also strips the symbols (STRIP=1 does that alone).
+# ICON=<file.ico>: the program's icon (Windows): compiled into the exe as resource 1, so Explorer shows it, and the window (and so the taskbar) uses it. Without
+# it the system's default icon is shown. scripts/make_icon.py makes a placeholder.
 # JOBS (parallel compiles, default: the cores), OBJ_CACHE (a folder of compiled objects shared by builds), OPT (optimisation level, default -O1).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -128,4 +130,14 @@ done
 spawn cc "$EMBED" "$WORK/embedded.o"
 finish
 [ -f "$WORK/assets/assets_blob.o" ] && OBJS+=("$WORK/assets/assets_blob.o")
+if [ -n "${ICON:-}" ] && [ "$MODE" != "--headless" ] && [ "$PLAT" = win ]; then
+    [ -f "$ICON" ] || { echo "ICON $ICON does not exist" >&2; exit 1; }
+    [ "$(head -c4 "$ICON" | od -An -tx1 | tr -d ' \n')" = "00000100" ] || { echo "ICON $ICON is not an .ico file" >&2; exit 1; }
+    ICON_FULL="$(cygpath -m "$(cd "$(dirname "$ICON")" && pwd)/$(basename "$ICON")")"
+    printf '1 ICON "%s"\n' "$ICON_FULL" > "$WORK/icon.rc"
+    WINDRES="${WINDRES:-$(dirname "$(command -v "$CXX")")/windres}"
+    [ -x "$WINDRES" ] || WINDRES=windres
+    "$WINDRES" -O coff -i "$WORK/icon.rc" -o "$WORK/icon.o" || { echo "windres failed for $ICON" >&2; exit 1; }
+    OBJS+=("$WORK/icon.o")
+fi
 "$CXX" "${OBJS[@]}" "$WORK/embedded.o" $GC $STRIP_FLAG $LINK -o "$OUT"

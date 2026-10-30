@@ -20,5 +20,6 @@ for f in main.clg index.html build.sh README.md; do
     sed -e "s|__NAME__|$NAME|g" -e "s|__APP_CLING__|$ROOT|g" "$ROOT/examples/template/$f" > "$DIR/$f"
 done
 cp "$ROOT/examples/template/gitignore.txt" "$DIR/.gitignore"
+python3 "$ROOT/scripts/make_icon.py" "$DIR/icon.ico" "$NAME" || echo "(no placeholder icon: python3 was not found; the program will show the system's default icon)" >&2
 chmod +x "$DIR/build.sh"
 echo "created $DIR ($NAME). Next:  cd $DIR && bash build.sh"

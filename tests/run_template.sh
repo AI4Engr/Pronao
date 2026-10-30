@@ -15,6 +15,9 @@ if [ -n "$EXE" ]; then
     bash build.sh > build-window.log 2>&1 || { cat build-window.log; echo "WINDOW BUILD FAILED"; exit 1; }
     cp "out/my-app$EXE" "out/window$EXE"
     bash build.sh --release > build-release.log 2>&1 || { cat build-release.log; echo "RELEASE BUILD FAILED"; exit 1; }
+    [ -f icon.ico ] || { echo "the new project has no icon.ico"; exit 1; }
+    g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$W/poke.exe" -luser32 -lgdi32 > /dev/null 2>&1 || { echo "POKE BUILD FAILED"; exit 1; }
+    "$W/poke.exe" exeicon "$(cygpath -w "$PWD/out/my-app$EXE")" > /dev/null || { echo "the program has no icon of its own"; exit 1; }
     export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$W/profile-$$")"
     (cd out && timeout 6 "./window$EXE" > run.log 2>&1); RC=$?
     [ "$RC" -eq 124 ] || { cat out/run.log; echo "the window program did not stay up (exit $RC)"; exit 1; }
