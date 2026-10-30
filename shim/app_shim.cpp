@@ -179,7 +179,7 @@ int app_window_state(int handle, int state) {
 #ifdef _WIN32
     return onUi(handle, [state](webview::webview& w) {
         HWND hwnd = static_cast<HWND>(w.window().value());
-        if (state == 3) SetForegroundWindow(hwnd);
+        if (state == 3) { if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); }     // (a minimized window comes back first)
         else if (state == 4) PostMessageW(hwnd, WM_CLOSE, 0, 0);       // as if the user pressed the X: the close guard, if any, is asked
         else ShowWindow(hwnd, state == 1 ? SW_MINIMIZE : state == 2 ? SW_MAXIMIZE : SW_RESTORE);
     });

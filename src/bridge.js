@@ -60,6 +60,8 @@
   window.cling.dialog = {
     open: call('dialog.open'), save: call('dialog.save'), folder: call('dialog.folder'), message: call('dialog.message')
   };
+  // a later launch of the program (single instance, App.claimInstance) hands over {cwd, args}; the window has already come to the front
+  window.cling.onSecondInstance = function (fn) { return window.cling.on('app.secondInstance', fn); };
   window.cling.proc = { run: call('proc.run') };
   // shell: openUrl({url}) opens an address in the default browser, openFile({path}) a file in its default program, reveal({path}) shows a file in the file
   // manager. Only what the application allowed (schemes, file types, the folders of the file commands).

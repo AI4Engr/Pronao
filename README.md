@@ -144,6 +144,34 @@ await cling.shell.reveal({ path: '...' });                          // shown in 
   itself was checked only for its refusals. Click it once by hand on a machine with a browser.
 - **What it cannot know:** what the browser or the default program will do with what it gets. Listing `html` or `svg` for `openFile` is the application's choice.
 
+## One running copy of the program
+
+Two copies writing the same files corrupt them. A program can say it wants one (Windows; elsewhere nothing is enforced and the call says so):
+
+```
+if (!app.singleInstance("my-app")) { return 0; }      // before the first window; another copy runs and was told -- end
+std::vector<string> given = app.arguments();           // the arguments THIS process was started with (without the program name)
+```
+
+`app.claimInstance("my-app")` returns the reason: `0` this is the instance, `1` another one runs and was told, `2` another one holds the name but could not be
+told (it may be starting or stuck), `3` not supported here, `4` the name is not a plain name (1 to 64 letters, digits, `.`, `_`, `-`).
+
+What the running copy does when a later launch hands over its working folder and arguments:
+
+```js
+cling.onSecondInstance(function (e) { /* e = { cwd: 'C:\\work', args: ['report.txt', '--flag'] } */ });
+```
+
+- The first window comes to the front (a minimized one is restored first), and its page gets the event `app.secondInstance`.
+- **The arguments are text from another process.** At most 64 of them, each plain text of at most 4096 bytes, the others are left out; nothing in them is allowed or opened by this.
+  If an argument names a file, whether the page may reach it is the application's decision.
+- How it is done (`shim/win/instance.cpp`): a named mutex in the user's session decides who is first; a later launch writes its folder and arguments to a named pipe whose name contains the user's SID,
+  created with an access list for this user and SYSTEM only and refusing remote clients; a message is at most 64 KiB and at most 16 are kept before the first window exists.
+- **Not covered:** two *users* are separate instances (the name is per user); a process that takes the name first without being this program stops it from starting (the mutex is a name, not a proof);
+  the event goes to the first window, and if that one is closed while others stay open it is lost; on POSIX nothing is enforced yet. Whether the window really comes to the front
+  (Windows may refuse to move a window to the front for a process that did not just receive input) is not checked by the tests: `tests/run_instance_window.sh` checks the whole
+  story with two real processes and a real window except the focus itself.
+
 ## Watching folders
 
 ```
@@ -462,7 +490,8 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_instance_window.sh     # two real processes, one window: the second hands over its arguments and ends; with a control that must fail
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # ~80 s, WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # ~65 s: removes one check at a time from src/ and shows the tests fail
@@ -490,6 +519,7 @@ a fresh project builds in all three ways and its window starts.
 | `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
+| `shim/win/instance.cpp` | one running copy per user: the mutex, the pipe and the hand-over of a later launch's arguments |
 | `src/links.clg` | what a page may ask the system to open: addresses, files, show in the file manager |
 | `src/settings.clg` | the per-user folders of an application and `SettingsStore`, its declared, typed settings file |
 | `src/app.clg` | `Dispatcher`, `App`, the commands (files, programs, dialogs, watches, window), program lookup and slots, watch merging |

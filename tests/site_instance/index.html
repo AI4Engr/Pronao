@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>instance test</title></head>
+<body><h1>the instance</h1>
+<script>
+  // a later launch of the program reaches this page as an event; the application brings the window to the front first
+  cling.onSecondInstance(function (e) { cling.invoke('second', e); });
+  cling.invoke('ready', {}).catch(function (e) { cling.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
+</script></body></html>

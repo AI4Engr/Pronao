@@ -27,7 +27,7 @@ int app_close(int handle);                                                  // t
 // (X, Alt+F4) no longer closes it but queues the record "window" "close_requested" for the main loop.
 int app_window_title(int handle, std::string title);
 int app_window_size(int handle, int width, int height);
-int app_window_state(int handle, int state);
+int app_window_state(int handle, int state);     // 3 also brings a minimized window back
 int app_window_guard(int handle, int on);
 int app_release_build();                                                          // 1 if built with RELEASE=1 (no development server, no developer tools)
 // Limits on what a page may send: a call over `max_request` bytes or arriving while `max_queued` wait is answered at once with
@@ -88,6 +88,17 @@ int app_dialog_pick(int handle, int mode, std::string title, std::string default
                     std::string& path);
 // kind 0 info 1 warning 2 error 3 question; buttons 0 ok, 1 ok+cancel, 2 yes+no. 1 ok, 2 cancel, 3 yes, 4 no; -1 not shown.
 int app_dialog_message(int handle, std::string title, std::string message, int kind, int buttons);
+
+// ---- one running copy per user (Windows; the POSIX answers are "not supported", -1) ------------------------------------------------------------
+// app_instance_claim: `name` is a plain name. first = 1 if this process is now THE instance with that name (it keeps the claim until it ends); 0 if
+// another one holds it, and then this process's arguments and working folder were handed to that one (and it was allowed to take the focus).
+// Returns 0 ok, 4 another one holds it but could not be told (it may be starting up or hanging), -1 not supported here (first is 1: nothing is enforced).
+int app_instance_claim(std::string name, int& first);
+// From now on what later launches hand over is queued on window `handle` as the record "instance", then the second process's working folder and each of
+// its arguments, every field followed by a NUL (what arrived earlier is queued now). At most 16 are kept before this is called; one message is at most 64 KiB.
+int app_instance_listen(int handle);
+// The arguments this process was started with, without the program name, each followed by a NUL.
+int app_command_line(std::string& out);
 
 // ---- the shell: an address in the default browser, a file in its default program, a file shown in the file manager -----------------------------
 // mode 0 open `target` (an http, https or mailto address, or the absolute path of a file), 1 show the file (or folder) in the file manager. 0 asked the

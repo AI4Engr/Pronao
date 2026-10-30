@@ -1,0 +1,160 @@
+// One running copy of a program (claimInstance / singleInstance, the "instance" record, arguments()) in src/app.clg. The system is replaced by test doubles:
+// tests/doubles/instance_double.cpp answers the claim as the test says and logs the calls, so no second process is needed here. The real thing, with a
+// real second process and the named pipe, is tests/instance_shim_test.cpp.
+#include "text.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "app.clh"
+
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_push_internal(int handle, string request);
+ext_fn int app_test_dialog_take_request(ref string request);
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_instance(int first, int status, string commandLine);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+// everything the doubles logged, joined with ; ("" if nothing)
+string calls() {
+    string all = "";
+    string one = "";
+    while (app_test_dialog_take_request(one) == 1) {
+        if (all.length() > 0) {
+            all = all + ";";
+        }
+        all = all + one;
+    }
+    return all;
+}
+
+string fields(string a, string b, string c) {
+    string r = "instance";
+    r.push_back(char(0));
+    r = r + a;
+    r.push_back(char(0));
+    if (b.length() > 0) {
+        r = r + b;
+        r.push_back(char(0));
+    }
+    if (c.length() > 0) {
+        r = r + c;
+        r.push_back(char(0));
+    }
+    return r;
+}
+
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        all = all + one + ";";
+    }
+    return all;
+}
+
+int main() {
+    // ---- claiming ----
+    App a = new App();
+    check("a name that is not plain claims nothing", a.claimInstance("bad/name") == 4 && a.claimInstance("") == 4 && calls() == "");
+    app_test_instance(1, 0, "");
+    check("the first process is the instance", a.claimInstance("my-app") == 0 && calls() == "instance|claim|my-app");
+    check("and may go on", a.singleInstance("my-app"));
+    calls();
+    int h = 0;
+    a.open("t", 100, 100, "<html></html>", "", false);
+    h = a.handle;
+    check("its first window listens for later launches", calls() == "instance|listen|" + intToString(h));
+    a.openWindow("two", 100, 100, false, "");
+    check("a second window does not", calls() == "");
+
+    App b = new App();
+    app_test_instance(0, 0, "");
+    check("another one is running and was told: end", b.claimInstance("my-app") == 1 && !b.singleInstance("my-app"));
+    calls();
+    b.open("t", 100, 100, "<html></html>", "", false);
+    check("such a process does not listen", calls() == "");
+
+    App c = new App();
+    app_test_instance(0, 4, "");
+    check("another one holds the name but could not be told", c.claimInstance("my-app") == 2 && !c.singleInstance("my-app"));
+    app_test_instance(1, -1, "");
+    App d = new App();
+    check("where it is not supported the program goes on", d.claimInstance("my-app") == 3 && d.singleInstance("my-app"));
+    calls();
+    d.open("t", 100, 100, "<html></html>", "", false);
+    check("without a claim there is nothing to listen for", calls() == "");
+
+    // ---- the arguments of this process ----
+    string raw = "a";
+    raw.push_back(char(0));
+    raw = raw + "b c";
+    raw.push_back(char(0));
+    app_test_instance(1, 0, raw);
+    std::vector<string> mine = a.arguments();
+    check("arguments() gives this process's arguments", mine.size() == 2 && mine[0] == "a" && mine[1] == "b c");
+    app_test_instance(1, 0, "");
+    std::vector<string> none = a.arguments();
+    check("and none when there are none", none.size() == 0);
+
+    // ---- what a later launch hands over ----
+    string ev = "";
+    while (app_test_take_eval(h, ev) == 1) {
+    }
+    windowLog(h);
+    app_test_push_internal(h, fields("/work", "report.txt", "--flag"));
+    a.serveOne(100);
+    check("the page of the window gets app.secondInstance with the folder and the arguments", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[\"report.txt\",\"--flag\"]}]);");
+    check("and the window is brought to the front", windowLog(h) == "state|3;");
+    app_test_push_internal(h, fields("/work", "", ""));
+    a.serveOne(100);
+    check("a launch without arguments is an event with an empty list", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[]}]);");
+
+    string badBytes = "x";
+    badBytes.push_back(char(255));
+    badBytes.push_back(char(254));
+    app_test_push_internal(h, fields(badBytes, "ok", badBytes));
+    a.serveOne(100);
+    check("an argument or folder that is not text is left out", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"\",\"args\":[\"ok\"]}]);");
+
+    app_test_push_internal(h, fields("/work", repeated("x", 4097), "short"));
+    a.serveOne(100);
+    check("an argument over 4096 bytes is left out", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[\"short\"]}]);");
+
+    string many = "instance";
+    many.push_back(char(0));
+    many = many + "/work";
+    many.push_back(char(0));
+    int i = 0;
+    while (i < 100) {
+        many = many + "a" + intToString(i);
+        many.push_back(char(0));
+        i = i + 1;
+    }
+    app_test_push_internal(h, many);
+    a.serveOne(100);
+    app_test_take_eval(h, ev);
+    check("at most 64 arguments are passed on", containsText(ev, "\"a63\"") && !containsText(ev, "\"a64\""));
+
+    string bare = "instance";
+    bare.push_back(char(0));
+    app_test_push_internal(h, bare);
+    a.serveOne(100);
+    check("a record without a folder is ignored", app_test_take_eval(h, ev) == 0);
+    return 0;
+}

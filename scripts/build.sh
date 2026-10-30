@@ -89,7 +89,7 @@ cc() { # source object flags...
     if [ -n "${OBJ_CACHE:-}" ]; then
         mkdir -p "$OBJ_CACHE"
         key="$({ cat "$src"; echo "$HKEY ${NKEY:-} $CXX $*"; } | md5sum | cut -d' ' -f1)"
-        if [ -f "$OBJ_CACHE/$key.o" ]; then cp "$OBJ_CACHE/$key.o" "$obj"; return 0; fi
+        if [ -f "$OBJ_CACHE/$key.o" ] && cp "$OBJ_CACHE/$key.o" "$obj" 2> /dev/null; then return 0; fi     # (a cached object being replaced by another build at this moment is simply compiled again)
     fi
     "$CXX" "$@" -c "$src" -o "$obj" || return 1
     if [ -n "$key" ]; then cp "$obj" "$OBJ_CACHE/$key.$$.tmp" && mv -f "$OBJ_CACHE/$key.$$.tmp" "$OBJ_CACHE/$key.o"; fi
@@ -109,13 +109,13 @@ NKEY="$(cat "$SHIM"/*.h "$SHIM/$PLAT"/*.h "$DOUBLES"/*.h 2>/dev/null | md5sum | 
 bash "$HERE/scripts/pack_assets.sh" "${ASSETS:--}" "$WORK/assets" || exit 1
 NATIVE=("$SHIM/watch.cpp" "$SHIM/assets.cpp" "$WORK/assets/assets_embedded.cpp" "$SHIM/os.cpp" "$SHIM/$PLAT/fs.cpp" "$SHIM/$PLAT/proc.cpp" "$SHIM/$PLAT/watch.cpp")
 if [ "$MODE" = "--headless" ]; then
-    NATIVE+=("$DOUBLES/headless_shim.cpp" "$DOUBLES/test_support.cpp")
+    NATIVE+=("$DOUBLES/headless_shim.cpp" "$DOUBLES/test_support.cpp" "$DOUBLES/instance_double.cpp")
     LINK="-pthread"
 else
     INC="-I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
     spawn cc "$SHIM/app_shim.cpp" "$WORK/app_shim.o" --std=c++14 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE} $INC
     OBJS+=("$WORK/app_shim.o")
-    NATIVE+=("$SHIM/$PLAT/dialog.cpp" "$SHIM/$PLAT/shell.cpp")
+    NATIVE+=("$SHIM/$PLAT/dialog.cpp" "$SHIM/$PLAT/shell.cpp" "$SHIM/$PLAT/instance.cpp")
     [ -f "$SHIM/$PLAT/nav.cpp" ] && NATIVE+=("$SHIM/$PLAT/nav.cpp")
     [ -f "$SHIM/$PLAT/assets.cpp" ] && NATIVE+=("$SHIM/$PLAT/assets.cpp")
     LINK="-static -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"

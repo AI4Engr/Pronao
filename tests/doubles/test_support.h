@@ -26,6 +26,9 @@ int app_test_make_dir_link(std::string link, std::string target);  // a junction
 // dialogs: the next answer is scripted ("cancel", "path:<text>", "button:<1-4>"); app_dialog_* then return it
 int app_test_dialog_push(std::string answer);
 int app_test_dialog_take_request(std::string& request);
+// what app_instance_claim answers (first, status) and the command line app_command_line gives (arguments each followed by a NUL); the claim and the
+// listen calls are logged as "instance|claim|NAME" and "instance|listen|HANDLE" for app_test_dialog_take_request
+int app_test_instance(int first, int status, std::string commandLine);
 
 // a program for the process tests to run (the environment variable APP_PROC_ECHO); 0 if unset
 int app_test_helper(std::string& path);

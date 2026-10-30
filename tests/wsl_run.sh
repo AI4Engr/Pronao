@@ -12,6 +12,7 @@ EXPECTED_FILES=131
 EXPECTED_PROGRAMS=15
 EXPECTED_STORE=54
 EXPECTED_LINKS=49
+EXPECTED_INSTANCE=19
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print text core files assets settings links app embedded"
@@ -31,7 +32,7 @@ cc_o() { # src obj flags...
 }
 
 # the native layer and the test doubles (POSIX files), compiled from <repo dir> with <flags>; prints the object list
-NATIVE_SRC="shim/watch.cpp shim/assets.cpp shim/os.cpp shim/posix/fs.cpp shim/posix/proc.cpp shim/posix/watch.cpp tests/doubles/headless_shim.cpp tests/doubles/test_support.cpp"
+NATIVE_SRC="shim/watch.cpp shim/assets.cpp shim/os.cpp shim/posix/fs.cpp shim/posix/proc.cpp shim/posix/watch.cpp tests/doubles/headless_shim.cpp tests/doubles/test_support.cpp tests/doubles/instance_double.cpp"
 native_objs() { # repo flags
     local o="" f t pids=() p rc=0
     t=$(tag "$2")
@@ -99,6 +100,7 @@ sec_asan_files() { sec_asan_program files_main $EXPECTED_FILES; }
 sec_asan_programs() { sec_asan_program programs_main $EXPECTED_PROGRAMS; }
 sec_asan_store() { sec_asan_program store_main $EXPECTED_STORE; }
 sec_asan_links() { sec_asan_program links_main $EXPECTED_LINKS; }
+sec_asan_instance() { sec_asan_program instance_main $EXPECTED_INSTANCE; }
 
 sec_asan_site() {
     local rc pass bad
@@ -225,9 +227,9 @@ sec_control3() {
 
 # Phase 1 runs everything that does not depend on timing; phase 2 (the queue stress, whose ping-pong test measures how late a wakeup is, and the two
 # controls built on it) runs alone afterwards, so a busy machine cannot make a correct wakeup look late.
-PHASE1="sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_tsan_work sec_tsan_pool sec_control2 sec_control3"
+PHASE1="sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_instance sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_tsan_work sec_tsan_pool sec_control2 sec_control3"
 PHASE2="sec_stress_asan sec_stress_tsan sec_control1 sec_control4"
-SECTIONS="sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_stress_asan sec_stress_tsan sec_tsan_work sec_tsan_pool sec_control1 sec_control2 sec_control4 sec_control3"
+SECTIONS="sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_instance sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_stress_asan sec_stress_tsan sec_tsan_work sec_tsan_pool sec_control1 sec_control2 sec_control4 sec_control3"
 
 # the libraries and the native layer every ASan / TSan program shares are compiled first, all at once
 ( build_program work repo "$ASAN" /dev/null headless_main > /dev/null 2>&1 ) &

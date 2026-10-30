@@ -40,6 +40,9 @@ ext_fn int app_watch_start(int handle, string root, int recursive, ref int watch
 ext_fn int app_watch_stop(int handle, int watchId);
 ext_fn int app_os_windows();
 ext_fn int app_shell_open(string target, int mode);
+ext_fn int app_instance_claim(string name, ref int first);
+ext_fn int app_instance_listen(int handle);
+ext_fn int app_command_line(ref string out);
 ext_fn int app_os_env(string name, ref string out);
 ext_fn int app_release_build();
 ext_fn int app_os_path_kind(string path);
@@ -1801,6 +1804,7 @@ public:
     PumpBook pumps;
     FileGate gate;
     SettingsStore settings;            // the application's own settings file (empty until open() is called on it)
+    bool instanceClaimed;              // claimInstance made this process the one instance: the first window listens for later launches
     LinkRules links;                   // what a page may ask the system to open (allowLinkSchemes, allowOpenExtensions, enableShellCommands)
     WindowBook windows;                // the open windows
     std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
@@ -1825,6 +1829,7 @@ public:
         gate = new FileGate();
         settings = new SettingsStore();
         links = new LinkRules();
+        instanceClaimed = false;
         cling::setExitGraceMs(5000);
         windows = new WindowBook();
         watches = new Watches();
@@ -2703,6 +2708,9 @@ public:
         if (confirmDefault) {
             w.confirmClose(confirmTitle, confirmMessage);
         }
+        if (instanceClaimed && windows.count() == 1) {
+            app_instance_listen(h);
+        }
         return h;
     }
 
@@ -2831,6 +2839,73 @@ public:
     }
 
     // A record the native layer queued itself (empty id) for window `from`: "watch", "pick", "window", "later" or "pump".
+    // A later launch of this program handed over its working folder and arguments (record "instance", folder, arguments...). They are text from
+    // another process and reach the page as the event app.secondInstance {cwd, args}; at most 64 arguments of plain text up to 4096 bytes each. The window
+    // comes to the front. Nothing in them is allowed or opened by this: if an argument names a file, whether the page may reach it is the application's call.
+    void onSecondInstance(int from, std::vector<string> f) {
+        if (f.size() < 2) {
+            return;
+        }
+        string cwd = f[1];
+        if (!plainText(cwd, 32000)) {
+            cwd = "";
+        }
+        Item e = createObject();
+        addStringToObject(e, "cwd", cwd);
+        Item list = createArray();
+        int i = 2;
+        int kept = 0;
+        while (i < f.size() && kept < 64) {
+            if (plainText(f[i], 4096)) {
+                addItemToArray(list, createString(f[i]));
+                kept = kept + 1;
+            }
+            i = i + 1;
+        }
+        addItemToObject(e, "args", list);
+        emitEvent(from, "app.secondInstance", printUnformatted(e));
+        app_window_state(from, 3);
+    }
+
+    // ---- one running copy (Windows; elsewhere nothing is enforced) ----
+
+    // Makes this process THE instance named `appName` (a plain name), or finds that another one is running and hands it this process's folder and
+    // arguments. 0 this is the instance (the first window listens for later launches); 1 another one runs and was told: exit now; 2 another one holds
+    // the name but could not be told (it may be starting or stuck): exit now, or tell the user; 3 not supported on this system, nothing is enforced;
+    // 4 the name is not a plain name. Call before the first window is opened.
+    int claimInstance(string appName) {
+        if (!plainName(appName)) {
+            return 4;
+        }
+        int first = 1;
+        int st = app_instance_claim(appName, first);
+        if (st == 0 && first == 1) {
+            instanceClaimed = true;
+            return 0;
+        }
+        if (st == 0) {
+            return 1;
+        }
+        if (st == 4 && first == 0) {
+            return 2;
+        }
+        return 3;
+    }
+
+    // true if this process may go on: it is the instance, or nothing can be enforced here. false: another copy is running (and, if it could be reached,
+    // was told); the program should end. `if (!app.singleInstance("my-app")) { return 0; }`
+    bool singleInstance(string appName) {
+        int code = claimInstance(appName);
+        return code == 0 || code == 3;
+    }
+
+    // The arguments this process was started with, without the program name.
+    std::vector<string> arguments() {
+        string raw = "";
+        app_command_line(raw);
+        return splitFields(raw);
+    }
+
     void onInternalRecord(int from, string request) {
         std::vector<string> f = splitFields(request);
         if (f.size() == 0) {
@@ -2847,6 +2922,8 @@ public:
             onPickRecord(from, f);
         } else if (f[0] == "window") {
             onWindowRecord(from, f);
+        } else if (f[0] == "instance") {
+            onSecondInstance(from, f);
         } else if (f[0] == "pump" && f.size() >= 2) {
             int index = pumps.indexOf(f[1]);
             if (index >= 0) {
