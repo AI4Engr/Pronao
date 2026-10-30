@@ -21,6 +21,7 @@
 #include "settings.clh"
 #include "links.clh"
 #include "placement.clh"
+#include "menu.clh"
 
 ext_fn int app_open(string title, int width, int height, string html, string url, string initJs, int debug);
 ext_fn int app_wait_any(std::vector<int> handles, int timeoutMs, ref int handle);
@@ -43,6 +44,8 @@ ext_fn int app_os_windows();
 ext_fn int app_shell_open(string target, int mode);
 ext_fn int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
 ext_fn int app_window_track(int handle, int on);
+ext_fn int app_menu_set(int handle, string spec);
+ext_fn int app_menu_item(int handle, string id, int enabled, int checked);
 ext_fn int app_instance_claim(string name, ref int first);
 ext_fn int app_instance_listen(int handle);
 ext_fn int app_command_line(ref string out);
@@ -1598,7 +1601,9 @@ public:
     std::vector<string> navigation;
     CommandRules rules;
     string memoryKey;                  // the name under which WindowMemory keeps this window's place ("" = not remembered)
+    Menu menu;                         // the menu bar now on the window (empty = none)
     Window(int h, CommandRules r) {
+        menu = new Menu();
         memoryKey = "";
         handle = h;
         state = new WindowState();
@@ -1610,6 +1615,69 @@ public:
     // Pushes an event to this window's page (see emitEvent).
     bool emit(string name, string payloadJson) {
         return emitEvent(handle, name, payloadJson);
+    }
+
+    // Puts a menu bar on this window (src/menu.clg): every id, label and shortcut was checked when the menu was built, and the top level must be only submenus.
+    // The menu is taken over by the window; to change it later use setEnabled / setChecked or set a new one. false if the menu is not a complete bar, or the system
+    // cannot show one (not Windows).
+    bool setMenu(Menu bar) {
+        if (!bar.complete() || !bar.isBar()) {
+            return false;
+        }
+        if (app_menu_set(handle, bar.spec()) != 0) {
+            return false;
+        }
+        menu = bar;
+        return true;
+    }
+
+    bool removeMenu() {
+        menu = new Menu();
+        return app_menu_set(handle, "") == 0;
+    }
+
+    // Greys out or enables an item of the menu bar (and its shortcut stops working while it is grey).
+    bool setEnabled(string id, bool enabled) {
+        int i = menu.indexOfId(id);
+        if (i < 0) {
+            return false;
+        }
+        int on = 0;
+        if (enabled) {
+            on = 1;
+        }
+        menu.flags[i] = menu.flags[i] % 2 + 2 - 2 * on;
+        return app_menu_item(handle, id, on, -1) == 0;
+    }
+
+    // Ticks or unticks an item that was made with check().
+    bool setChecked(string id, bool checked) {
+        int i = menu.indexOfId(id);
+        if (i < 0 || menu.kinds[i] != "c") {
+            return false;
+        }
+        int on = 0;
+        if (checked) {
+            on = 1;
+        }
+        menu.flags[i] = (menu.flags[i] / 2) * 2 + on;
+        return app_menu_item(handle, id, -1, on) == 0;
+    }
+
+    // true if the item was made with check() and is ticked now
+    bool isChecked(string id) {
+        int i = menu.indexOfId(id);
+        return i >= 0 && menu.kinds[i] == "c" && menu.flags[i] % 2 == 1;
+    }
+
+    // true if the item exists, can be clicked (not a submenu) and is not greyed out
+    bool menuItemEnabled(string id) {
+        int i = menu.indexOfId(id);
+        if (i < 0) {
+            return false;
+        }
+        string kind = menu.kinds[i];
+        return (kind == "i" || kind == "c") && (menu.flags[i] / 2) % 2 == 0;
     }
 
     // Closes the window at once, without asking (see requestClose).
@@ -1811,6 +1879,8 @@ public:
     SettingsStore settings;            // the application's own settings file (empty until open() is called on it)
     bool instanceClaimed;              // claimInstance made this process the one instance: the first window listens for later launches
     WindowMemory memory;               // where windows were last (rememberWindows)
+    MenuAction menuHandler;            // what runs when a menu item is clicked (onMenu)
+    bool menuToPage;                   // a click is also an event for the page of the window (menuEventsToPage)
     LinkRules links;                   // what a page may ask the system to open (allowLinkSchemes, allowOpenExtensions, enableShellCommands)
     WindowBook windows;                // the open windows
     std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
@@ -1836,6 +1906,8 @@ public:
         settings = new SettingsStore();
         links = new LinkRules();
         memory = new WindowMemory();
+        menuHandler = new MenuAction();
+        menuToPage = false;
         instanceClaimed = false;
         cling::setExitGraceMs(5000);
         windows = new WindowBook();
@@ -2736,6 +2808,47 @@ public:
         return h;
     }
 
+    // ---- menus (src/menu.clg) ----
+
+    // What runs when an item of a menu bar is clicked or its shortcut is pressed: `clicked(id)`, with an id the application gave. One handler for the
+    // application; it runs on the main thread. A throw in it is dropped (nobody is waiting for an answer).
+    void onMenu(MenuAction handler) {
+        menuHandler = handler;
+    }
+
+    // From now on a click is also sent to the page of the window it came from, as the event menu.click {id}. Off by default: a page that is not told
+    // has nothing to react to.
+    void menuEventsToPage(bool on) {
+        menuToPage = on;
+    }
+
+    // The menu bar of the first window.
+    bool setMenu(Menu bar) {
+        Window w = windows.get(handle);
+        if (w == nullptr) {
+            return false;
+        }
+        return w.setMenu(bar);
+    }
+
+    void onMenuClick(int from, string id) {
+        Window w = windows.get(from);
+        if (w == nullptr || !w.menuItemEnabled(id)) {
+            return;                       // an id this window's menu does not have, or an item that is greyed out: nothing happens
+        }
+        try {
+            MenuAction handler = menuHandler;
+            handler.clicked(id);
+        } catch (string message) {
+            // nobody is waiting for an answer
+        }
+        if (menuToPage) {
+            Item e = createObject();
+            addStringToObject(e, "id", id);
+            emitEvent(from, "menu.click", printUnformatted(e));
+        }
+    }
+
     // ---- remembering where windows were (src/placement.clg) ----
 
     // From now on windows open where they were the last time (the restored rectangle and whether they were maximized, kept per window in windows.json in the
@@ -2978,6 +3091,8 @@ public:
             onWindowRecord(from, f);
         } else if (f[0] == "instance") {
             onSecondInstance(from, f);
+        } else if (f[0] == "menu" && f.size() >= 2) {
+            onMenuClick(from, f[1]);
         } else if (f[0] == "pump" && f.size() >= 2) {
             int index = pumps.indexOf(f[1]);
             if (index >= 0) {

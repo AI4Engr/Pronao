@@ -74,6 +74,7 @@ void reportPlacement(App* a, HWND h) {
 
 LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     App* a = static_cast<App*>(GetPropW(h, L"app_cling"));
+    if (msg == WM_COMMAND && HIWORD(wp) == 0 && lp == 0 && app_menu_command(a->nav->handle, LOWORD(wp))) return 0;      // a menu item (not a control, not an accelerator)
     if (msg == WM_ENTERSIZEMOVE) a->moving = true;
     if (msg == WM_EXITSIZEMOVE) { a->moving = false; reportPlacement(a, h); }
     if (msg == WM_SIZE && !a->moving && (wp == SIZE_MAXIMIZED || wp == SIZE_RESTORED)) reportPlacement(a, h);     // (the maximize button, a double click on the title)
@@ -322,6 +323,7 @@ int app_close(int handle) {
     auto app = lookup(handle);
     if (!app) return 0;
     app_watch_stop_all(handle);
+    app_menu_forget(handle);
     app_terminate(handle);
     if (app->ui.joinable()) app->ui.join();
     std::lock_guard<std::mutex> lock(g_tableMutex);

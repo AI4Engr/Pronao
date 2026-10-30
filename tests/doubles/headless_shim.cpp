@@ -117,6 +117,28 @@ int app_navigation_allow(int handle, std::vector<std::string> prefixes) {
     logWindow(handle, line);
     return lookup(handle) ? 1 : 0;
 }
+int app_menu_set(int handle, std::string spec) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::string shown = spec;
+    for (char& c : shown) if (c == '\0') c = '|';
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("menu|set|" + shown);
+    return 0;
+}
+int app_menu_item(int handle, std::string id, int enabled, int checked) {
+    auto app = lookup(handle);
+    if (!app) return 5;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("menu|item|" + id + "|" + std::to_string(enabled) + "|" + std::to_string(checked));
+    return 0;
+}
+int app_test_menu_click(int handle, std::string id) {
+    std::string record("menu\0", 5);
+    record += id;
+    record += '\0';
+    return app_push(handle, std::string(), record, 100);
+}
 int app_window_placement(int handle, int x, int y, int width, int height, int maximized) {
     auto app = lookup(handle);
     if (!app) return 0;

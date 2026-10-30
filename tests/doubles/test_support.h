@@ -31,6 +31,8 @@ int app_test_dialog_take_request(std::string& request);
 int app_test_instance(int first, int status, std::string commandLine);
 // what app_monitors answers: left, top, right, bottom of each monitor's work area, every number followed by a NUL ("" = no monitor can be found)
 int app_test_monitors(std::string fields);
+// a click on a menu item: queues the record "menu" id on the window, as the native layer does (the window log shows menu|set| and menu|item| calls)
+int app_test_menu_click(int handle, std::string id);
 
 // a program for the process tests to run (the environment variable APP_PROC_ECHO); 0 if unset
 int app_test_helper(std::string& path);

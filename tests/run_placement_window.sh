@@ -35,6 +35,7 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     waitfile() { # pattern -> waits up to 5 s for it to appear in the file
         local n=0
         until grep -Eq "$1" "$FILE" 2> /dev/null; do sleep 0.2; n=$((n + 1)); [ "$n" -gt 25 ] && { echo "the file never had $1: $(cat "$FILE" 2> /dev/null | tr -d '\n ')"; return 1; }; done
+        return 0                       # (without this the status would be that of the last test in the loop: false)
     }
 
     # 1: the user moves and resizes the window, maximizes it, restores it and moves it again

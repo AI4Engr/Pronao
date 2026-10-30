@@ -144,6 +144,39 @@ await cling.shell.reveal({ path: '...' });                          // shown in 
   itself was checked only for its refusals. Click it once by hand on a machine with a browser.
 - **What it cannot know:** what the browser or the default program will do with what it gets. Listing `html` or `svg` for `openFile` is the application's choice.
 
+## Menus: the window's menu bar and keyboard shortcuts
+
+The application declares every menu (`src/menu.clg`); a page cannot add, change or show an item. It can only be told which item was chosen.
+
+```
+Menu bar = new Menu();
+bar.begin("&File");                                  // a submenu (begin / end nest at most 4 deep); the letter after & is the keyboard mnemonic
+bar.item("file.open", "&Open...", "Ctrl+O");         // id, label, shortcut ("" = none)
+bar.item("file.save", "&Save", "Ctrl+S");
+bar.separator();
+bar.item("file.quit", "&Quit", "Ctrl+Q");
+bar.end();
+bar.begin("&View");
+bar.check("view.grid", "&Grid", "F5", false);        // an item with a tick
+bar.end();
+app.setMenu(bar);                                    // the first window; Window.setMenu(bar) for another one
+app.onMenu(closure MenuAction [app] (string id) { /* id is "file.open", ... */ });
+app.menuEventsToPage(true);                          // optional: the page also gets the event menu.click {id}
+Window w = app.windows.get(app.handle);
+w.setEnabled("file.save", false);                    // grey an item out (its shortcut stops working too)
+w.setChecked("view.grid", true);
+```
+
+- **What is checked when the menu is built** (each call returns false and sets `bar.problem`): an id is 1 to 64 letters, digits, `.`, `_`, `-` and used once; a label is 1 to 200 bytes of text without control characters and at most one `&`; at most 200 entries;
+  a shortcut is Ctrl / Alt / Shift and a key (letters, digits, F1 to F12, Enter, Esc, Space, Tab, Backspace, Delete, Insert, Home, End, PageUp / PageDown, the arrows) and is used once. **A key that types into a page needs Ctrl or Alt**, or the menu would take it away from the page;
+  F1 to F12 may stand alone. A menu bar's top level must be submenus only.
+- **A click** (or a shortcut pressed while the page has the keyboard) reaches `onMenu` with the id. An id the menu does not have, a submenu and a greyed item are ignored even if the native layer reported them.
+- **Shortcuts** are matched in the browser engine before the page sees the key, so they work while the page holds the keyboard; the key is not passed on. Held-down keys do not repeat the action.
+- **Where it works:** Windows. Elsewhere `setMenu` returns false and the program runs without a bar.
+- **Test:** `tests/menu_main.clg` (53 checks: the rules, the flat spec the native layer gets, click handling with a test double) and `tests/run_menu_window.sh` (a real window; items are chosen and keys typed from outside with `tests/window_poke.cpp`:
+  the bar has the declared items, a chosen item and a shortcut reach the program, F5 ticks and unticks, a greyed item and its shortcut do nothing, the page fits under the bar, two controls that must fail).
+- **Not verified automatically:** opening the menu with the mouse and looking at it (drawing, high-DPI, keyboard navigation inside the menu), the Alt mnemonics, and that a screen reader can use the menu.
+
 ## The program's icon
 
 ```
@@ -519,7 +552,8 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 53 menus + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_menu_window.sh         # a real window: the menu bar, choosing items, shortcuts, greyed items, ticks; two controls that must fail
 bash tests/run_icon.sh                # the icon is in the exe and on the running window; the build without one is the control
 bash tests/run_placement_window.sh    # a real window is moved, maximized and closed from outside; the next start must open it there; with a control that must fail
 bash tests/run_instance_window.sh     # two real processes, one window: the second hands over its arguments and ends; with a control that must fail
@@ -550,6 +584,7 @@ a fresh project builds in all three ways and its window starts.
 | `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
+| `src/menu.clg` | menus: `Menu` (the rules for ids, labels, shortcuts) and the flat spec the native layer builds a menu from |
 | `scripts/make_icon.py` | a placeholder `.ico` (the build option `ICON=`) |
 | `src/placement.clg` | where windows were: `WindowMemory` and `fitToMonitors` |
 | `shim/win/instance.cpp` | one running copy per user: the mutex, the pipe and the hand-over of a later launch's arguments |

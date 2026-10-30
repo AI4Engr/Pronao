@@ -1,0 +1,354 @@
+// app-cling -- menus: the window's menu bar, the tray icon's menu, and a menu a page may ask to have popped up. THE APPLICATION declares every menu; a page can only
+// choose among the names of menus the application declared, and it learns the id of what was clicked. Nothing a page sends can add, change or show an item.
+//
+// A Menu is built with a flat list of calls (CeeLing has no chaining on a call's result):
+//
+//     Menu bar = new Menu();
+//     bar.begin("&File");                                   // a submenu; begin / end nest at most 4 deep
+//     bar.item("file.open", "&Open...", "Ctrl+O");          // id, label, shortcut ("" = none)
+//     bar.check("view.grid", "Show &grid", "", false);      // an item with a tick
+//     bar.separator();
+//     bar.item("file.quit", "&Quit", "Ctrl+Q");
+//     bar.end();
+//     bar.problem                                            // "" while everything so far was accepted; else why the last call was refused
+//
+// Rules (every call that breaks one returns false, changes nothing and sets `problem`): an id is 1 to 64 letters, digits, `.`, `_`, `-` and is used once in the
+// whole menu; a label is 1 to 200 bytes of text with no control character and at most one `&` (the letter after it is the keyboard mnemonic); at most 200 entries;
+// a shortcut is Ctrl / Alt / Shift plus a key (see parseShortcut) and appears once in the whole menu. The native layer is handed `spec()` and builds the menu from
+// it; what it reports back is an id it was given, never anything else.
+#include "text.clh"
+#include "settings.clh"
+
+// the id of a menu entry or of a popup name: 1 to 64 letters, digits, `.`, `_`, `-`
+bool menuId(string id) {
+    if (id.length() < 1 || id.length() > 64) {
+        return false;
+    }
+    int i = 0;
+    while (i < id.length()) {
+        if (!nameChar(id[i])) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// 1 to 200 bytes of UTF-8 text without control characters, at most one `&` (a doubled `&&` is one literal ampersand, as in Windows)
+bool menuLabel(string label) {
+    if (label.length() < 1 || label.length() > 200 || !isUtf8(label)) {
+        return false;
+    }
+    int marks = 0;
+    int i = 0;
+    while (i < label.length()) {
+        int c = int(label[i]);
+        if ((c >= 0 && c < 32) || c == 127) {
+            return false;
+        }
+        if (label[i] == '&') {
+            if (i + 1 < label.length() && label[i + 1] == '&') {
+                i = i + 1;
+            } else {
+                marks = marks + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return marks <= 1;
+}
+
+// The virtual-key code of a key name ("S", "7", "F5", "Enter", "PageUp" ...), 0 if the name is not one of them.
+int keyCode(string key) {
+    if (key.length() == 1) {
+        char c = key[0];
+        if (c >= 'A' && c <= 'Z') {
+            return int(c);
+        }
+        if (c >= 'a' && c <= 'z') {
+            return int(c) - 32;
+        }
+        if (c >= '0' && c <= '9') {
+            return int(c);
+        }
+        return 0;
+    }
+    string k = lowerAscii(key);
+    if (k.length() >= 2 && k.length() <= 3 && k[0] == 'f') {
+        string digits = k.substr(1, k.length() - 1);
+        if (isDigits(digits)) {
+            int n = int(decimalValue(digits));
+            if (n >= 1 && n <= 12) {
+                return 111 + n;
+            }
+        }
+        return 0;
+    }
+    if (k == "enter") { return 13; }
+    if (k == "esc" || k == "escape") { return 27; }
+    if (k == "space") { return 32; }
+    if (k == "tab") { return 9; }
+    if (k == "backspace") { return 8; }
+    if (k == "delete" || k == "del") { return 46; }
+    if (k == "insert" || k == "ins") { return 45; }
+    if (k == "home") { return 36; }
+    if (k == "end") { return 35; }
+    if (k == "pageup") { return 33; }
+    if (k == "pagedown") { return 34; }
+    if (k == "left") { return 37; }
+    if (k == "up") { return 38; }
+    if (k == "right") { return 39; }
+    if (k == "down") { return 40; }
+    return 0;
+}
+
+// A shortcut written as "Ctrl+Shift+S": modifiers Ctrl, Alt, Shift (each once, any order) and one key. Returns "vk mods" (mods: Ctrl 1, Alt 2, Shift 4) or "" if it
+// is not acceptable. A key that types into a page (a letter, a digit, Space, Enter, Tab, Backspace, Delete, Insert, Home, End, the arrows, PageUp / PageDown)
+// needs Ctrl or Alt, or the menu would take it away from the page; F1 to F12 may stand alone.
+string parseShortcut(string text) {
+    std::vector<string> parts = splitOn(text, '+');
+    if (parts.size() < 1 || parts.size() > 4) {
+        return "";
+    }
+    int mods = 0;
+    int vk = 0;
+    int i = 0;
+    while (i < parts.size()) {
+        string p = lowerAscii(parts[i]);
+        int bit = 0;
+        if (p == "ctrl") { bit = 1; }
+        if (p == "alt") { bit = 2; }
+        if (p == "shift") { bit = 4; }
+        if (bit != 0) {
+            if (i == parts.size() - 1 || (mods / bit) % 2 == 1) {
+                return "";
+            }
+            mods = mods + bit;
+        } else {
+            if (i != parts.size() - 1) {
+                return "";
+            }
+            vk = keyCode(parts[i]);
+        }
+        i = i + 1;
+    }
+    if (vk == 0) {
+        return "";
+    }
+    bool functionKey = vk >= 112 && vk <= 123;
+    bool commandKey = (mods / 1) % 2 == 1 || (mods / 2) % 2 == 1;
+    if (!functionKey && !commandKey) {
+        return "";
+    }
+    return intToString(vk) + " " + intToString(mods);
+}
+
+class Menu {
+public:
+    std::vector<string> kinds;         // "b" begin a submenu, "e" end it, "i" item, "c" item with a tick, "s" separator
+    std::vector<string> ids;
+    std::vector<string> labels;
+    std::vector<string> shortcuts;     // as written, "" = none
+    std::vector<int> keys;             // virtual-key code, 0 = none
+    std::vector<int> modifiers;
+    std::vector<int> flags;            // 1 ticked, 2 disabled
+    int depth;
+    int entries;                       // items and submenus
+    string problem;
+
+    Menu() {
+        depth = 0;
+        entries = 0;
+        problem = "";
+    }
+
+    bool refuse(string why) {
+        problem = why;
+        return false;
+    }
+
+    int indexOfId(string id) {
+        int i = 0;
+        while (i < ids.size()) {
+            string one = ids[i];
+            if (one == id && one.length() > 0) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    bool known(string id) {
+        return indexOfId(id) >= 0;
+    }
+
+    // Adds one entry. kind "b", "i" or "c". Everything is checked before anything is added.
+    bool add(string kind, string id, string label, string shortcut, int flag) {
+        if (entries >= 200) {
+            return refuse("a menu has at most 200 entries");
+        }
+        if (!menuId(id)) {
+            return refuse("`" + id + "` is not an id: 1 to 64 letters, digits, `.`, `_` or `-`");
+        }
+        if (known(id)) {
+            return refuse("the id `" + id + "` is used twice");
+        }
+        if (!menuLabel(label)) {
+            return refuse("the label of `" + id + "` must be 1 to 200 bytes of text with no control character and at most one `&`");
+        }
+        int vk = 0;
+        int mods = 0;
+        if (shortcut.length() > 0) {
+            string parsed = parseShortcut(shortcut);
+            if (parsed.length() == 0) {
+                return refuse("`" + shortcut + "` is not a shortcut: Ctrl / Alt / Shift and a key, and a letter or digit needs Ctrl or Alt");
+            }
+            std::vector<string> two = splitOn(parsed, ' ');
+            vk = int(decimalValue(two[0]));
+            mods = int(decimalValue(two[1]));
+            int i = 0;
+            while (i < keys.size()) {
+                if (keys[i] == vk && modifiers[i] == mods) {
+                    return refuse("the shortcut `" + shortcut + "` is used twice");
+                }
+                i = i + 1;
+            }
+        }
+        kinds.push_back(kind);
+        ids.push_back(id);
+        labels.push_back(label);
+        shortcuts.push_back(shortcut);
+        keys.push_back(vk);
+        modifiers.push_back(mods);
+        flags.push_back(flag);
+        entries = entries + 1;
+        problem = "";
+        return true;
+    }
+
+    // A submenu starts; everything up to the matching end() is in it. A submenu has no id of its own that anything reports: it gets one made from its position.
+    bool begin(string label) {
+        if (depth >= 4) {
+            return refuse("submenus are nested at most 4 deep");
+        }
+        if (!add("b", "sub" + intToString(entries), label, "", 0)) {
+            return false;
+        }
+        depth = depth + 1;
+        return true;
+    }
+
+    bool end() {
+        if (depth == 0) {
+            return refuse("end() without a begin()");
+        }
+        kinds.push_back("e");
+        ids.push_back("");
+        labels.push_back("");
+        shortcuts.push_back("");
+        keys.push_back(0);
+        modifiers.push_back(0);
+        flags.push_back(0);
+        depth = depth - 1;
+        problem = "";
+        return true;
+    }
+
+    bool item(string id, string label, string shortcut) {
+        return add("i", id, label, shortcut, 0);
+    }
+
+    bool check(string id, string label, string shortcut, bool ticked) {
+        int flag = 0;
+        if (ticked) {
+            flag = 1;
+        }
+        return add("c", id, label, shortcut, flag);
+    }
+
+    bool separator() {
+        if (entries >= 200) {
+            return refuse("a menu has at most 200 entries");
+        }
+        kinds.push_back("s");
+        ids.push_back("");
+        labels.push_back("");
+        shortcuts.push_back("");
+        keys.push_back(0);
+        modifiers.push_back(0);
+        flags.push_back(0);
+        problem = "";
+        return true;
+    }
+
+    // Marks an item that is already in the menu as greyed out.
+    bool disable(string id) {
+        int i = indexOfId(id);
+        if (i < 0) {
+            return refuse("there is no item `" + id + "`");
+        }
+        flags[i] = flags[i] % 2 + 2;
+        problem = "";
+        return true;
+    }
+
+    // true when every begin() was closed
+    bool complete() {
+        return depth == 0 && entries > 0;
+    }
+
+    // true when the top level is only submenus: what a menu BAR is made of
+    bool isBar() {
+        int level = 0;
+        int i = 0;
+        while (i < kinds.size()) {
+            if (kinds[i] == "b") {
+                level = level + 1;
+            } else if (kinds[i] == "e") {
+                level = level - 1;
+            } else if (level == 0) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+
+    // The ids that can be clicked (submenus and separators have none that matter).
+    std::vector<string> clickable() {
+        std::vector<string> out;
+        int i = 0;
+        while (i < kinds.size()) {
+            if (kinds[i] == "i" || kinds[i] == "c") {
+                out.push_back(ids[i]);
+            }
+            i = i + 1;
+        }
+        return out;
+    }
+
+    // The menu as the native layer reads it: per entry seven fields, each followed by a NUL: kind, id, label, shortcut text, key, modifiers, flags.
+    string spec() {
+        string out = "";
+        int i = 0;
+        while (i < kinds.size()) {
+            out = out + kinds[i];
+            out.push_back(char(0));
+            out = out + ids[i];
+            out.push_back(char(0));
+            out = out + labels[i];
+            out.push_back(char(0));
+            out = out + shortcuts[i];
+            out.push_back(char(0));
+            out = out + intToString(keys[i]);
+            out.push_back(char(0));
+            out = out + intToString(modifiers[i]);
+            out.push_back(char(0));
+            out = out + intToString(flags[i]);
+            out.push_back(char(0));
+            i = i + 1;
+        }
+        return out;
+    }
+};

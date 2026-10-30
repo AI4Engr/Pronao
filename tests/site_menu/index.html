@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>menu test</title></head>
+<body style="margin:0"><h1>menu test</h1><input id="box" style="width:90%" value="typing goes here">
+<script>
+  // reports how tall the page is (device pixels) so the test can see that the menu bar did not squeeze or cut the page
+  cling.invoke('ready', { height: Math.round(window.innerHeight * window.devicePixelRatio), width: Math.round(window.innerWidth * window.devicePixelRatio) });
+  // after the menu bar has been put on the window, and again after the user could have resized it: how big is the page now?
+  setTimeout(function () { cling.invoke('sized', { width: Math.round(window.innerWidth * window.devicePixelRatio), height: Math.round(window.innerHeight * window.devicePixelRatio) }); }, 1500);
+  cling.on('menu.click', function (e) { cling.invoke('pageSaw', { id: e.id }); });
+</script></body></html>

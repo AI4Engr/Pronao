@@ -29,3 +29,10 @@ void app_assets_install(void* controller, std::shared_ptr<AssetStore> store);
 
 // Stops every watch of a window (its window is closing): used by app_close, never by CeeLing.
 int app_watch_stop_all(int handle);
+
+// The menu bar of a window (shim/win/menu.cpp; the POSIX file answers "nothing"). From the window procedure: a WM_COMMAND from the menu, true if the number is one of
+// this window's items (the record "menu" id is then queued). From the browser engine: a key the page is about to get, true if it is a shortcut of an enabled item
+// (then the page does not get it). app_menu_forget: the window is closing.
+bool app_menu_command(int handle, unsigned command);
+bool app_menu_shortcut(int handle, unsigned vk, unsigned mods, bool repeat);
+void app_menu_forget(int handle);

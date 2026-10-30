@@ -6,6 +6,7 @@
 #include "../app_shim_internal.h"
 #include <WebView2.h>
 #include "util.h"
+#include "menu_native.h"
 
 namespace {
 // one COM event handler that calls a function
@@ -51,6 +52,8 @@ void app_nav_install(void* controller, std::shared_ptr<NavRules> rules, int debu
                 app_push(rules->handle, std::string(), record, 100);   // so the application can log it (or open it in the browser: App.openLinksInBrowser)
             });
     };
+    const int handle = rules->handle;
+    app_accelerators_install(controller, [handle](UINT vk, UINT mods, bool repeat) { return app_menu_shortcut(handle, vk, mods, repeat); });
     view->add_NavigationStarting(guard(false), &token);
     view->add_FrameNavigationStarting(guard(true), &token);
     view->add_NewWindowRequested(new Handler<ICoreWebView2NewWindowRequestedEventHandler, ICoreWebView2NewWindowRequestedEventArgs>(

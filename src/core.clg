@@ -166,6 +166,13 @@ public:
     virtual void fail(string message) { }
 };
 
+// What runs when a menu item is clicked (App.onMenu): `clicked` gets the id the application gave the item.
+class MenuAction {
+public:
+    MenuAction() { }
+    virtual void clicked(string id) { }
+};
+
 // Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
 void replyOk(int handle, string id, string json) {
     app_return(handle, id, 0, json);

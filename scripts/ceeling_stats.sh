@@ -22,7 +22,7 @@ echo "  closures: $(count 'closure [A-Z][A-Za-z]* \[' "$SRC_CODE") (spawn jobs a
 echo "  manual-memory words in the source (delete, .get(), reinterpret, std::move, unique_ptr, shared_ptr, weak_ptr): $(grep -ciE 'delete |\.get\(\)|reinterpret|std::move|unique_ptr|shared_ptr|weak_ptr' "$SRC_CODE")"
 
 cd "$W"
-GEN="${GEN:-app.cpp files.cpp core.cpp text.cpp assets.cpp settings.cpp links.cpp placement.cpp}"
+GEN="${GEN:-app.cpp files.cpp core.cpp text.cpp assets.cpp settings.cpp links.cpp placement.cpp menu.cpp}"
 echo "Generated C++ from those files ($W):"
 echo "  std::unique_ptr: $(count 'std::unique_ptr' $GEN)   std::shared_ptr: $(count 'std::shared_ptr' $GEN)   std::weak_ptr: $(count 'std::weak_ptr' $GEN)   std::move: $(count 'std::move' $GEN)"
 echo "  bounds checks inserted (cling::at): $(count 'cling::at\(' $GEN)"

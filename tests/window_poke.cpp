@@ -6,10 +6,15 @@
 //   window_poke.exe inside TITLE             exit 0 if the window lies wholly inside the work area of one monitor
 //   window_poke.exe icon TITLE big|small    prints the colour in the middle of the window's icon, "RRGGBB alpha"; exit 1 if the window has none
 //   window_poke.exe exeicon FILE             the same for the first icon of a program file
+//   window_poke.exe menu TITLE              prints the menu bar: "File: Open|Save|-|Quit ; View: Grid*" (- a separator, * a ticked item, ~ a greyed one); exit 1 if it has none
+//   window_poke.exe click TITLE LABEL        chooses the menu item with that label (as if clicked: WM_COMMAND), exit 1 if there is none
+//   window_poke.exe key TITLE ctrl+s         presses the keys with the window in front and the page holding the keyboard (SendInput); keys: ctrl, alt, shift, a letter, a digit, f1..f12
+//   window_poke.exe client TITLE            prints "width height" of the window's client area in pixels (the part below the menu bar)
 //   window_poke.exe wait TITLE               waits up to 20 s for the window to be visible; exit 1 if it never is
 #include <windows.h>
 
 #include <cstdio>
+#include <cctype>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -73,6 +78,41 @@ bool middleOf(HICON icon, std::string& out) {
     return ok;
 }
 
+// the menu item text without its mnemonic mark and shortcut ("&Open...\tCtrl+O" -> "Open...")
+std::string plainLabel(HMENU m, UINT pos) {
+    wchar_t text[256];
+    if (GetMenuStringW(m, pos, text, 256, MF_BYPOSITION) <= 0) return "";
+    std::string out;
+    for (const wchar_t* c = text; *c && *c != L'\t'; ++c) if (*c != L'&' || (c[1] == L'&')) out += static_cast<char>(*c);
+    return out;
+}
+
+// "Open|Save|-|Quit" for one submenu
+std::string describeItems(HMENU m) {
+    std::string out;
+    for (int i = 0; i < GetMenuItemCount(m); i++) {
+        if (i) out += "|";
+        const UINT state = GetMenuState(m, i, MF_BYPOSITION);
+        if (state & MF_SEPARATOR) { out += "-"; continue; }
+        out += plainLabel(m, i);
+        if (state & MF_CHECKED) out += "*";
+        if (state & MF_GRAYED) out += "~";
+    }
+    return out;
+}
+
+// the command number of the item with this label, searching every submenu; 0 if none
+UINT commandOf(HMENU m, const std::string& label) {
+    for (int i = 0; i < GetMenuItemCount(m); i++) {
+        if (HMENU sub = GetSubMenu(m, i)) {
+            if (UINT c = commandOf(sub, label)) return c;
+        } else if (plainLabel(m, i) == label) {
+            return GetMenuItemID(m, i);
+        }
+    }
+    return 0;
+}
+
 // the restored rectangle in screen coordinates, and whether the window is maximized
 bool describe(HWND h, RECT& r, bool& maximized) {
     WINDOWPLACEMENT wp = {};
@@ -111,6 +151,70 @@ int main(int argc, char** argv) {
     }
     HWND h = findWindow(title);
     if (!h) return 1;
+    if (action == "client") {
+        RECT c;
+        if (!GetClientRect(h, &c)) return 1;
+        std::printf("%ld %ld\n", c.right - c.left, c.bottom - c.top);
+        return 0;
+    }
+    if (action == "menu") {
+        HMENU bar = GetMenu(h);
+        if (!bar) return 1;
+        std::string out;
+        for (int i = 0; i < GetMenuItemCount(bar); i++) {
+            if (i) out += " ; ";
+            out += plainLabel(bar, i) + ": " + (GetSubMenu(bar, i) ? describeItems(GetSubMenu(bar, i)) : std::string());
+        }
+        std::printf("%s\n", out.c_str());
+        return 0;
+    }
+    if (action == "click" && argc >= 4) {
+        HMENU bar = GetMenu(h);
+        const UINT command = bar ? commandOf(bar, argv[3]) : 0;
+        if (!command) return 1;
+        PostMessageW(h, WM_COMMAND, MAKEWPARAM(command, 0), 0);
+        return 0;
+    }
+    if (action == "key" && argc >= 4) {
+        std::vector<WORD> keys;
+        std::string spec = argv[3];
+        for (size_t start = 0; start <= spec.size();) {
+            const size_t plus = spec.find('+', start);
+            const std::string part = spec.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
+            WORD vk = 0;
+            if (part == "ctrl") vk = VK_CONTROL; else if (part == "alt") vk = VK_MENU; else if (part == "shift") vk = VK_SHIFT;
+            else if (part.size() == 1) vk = static_cast<WORD>(std::toupper(part[0]));
+            else if (part.size() >= 2 && part[0] == 'f') vk = static_cast<WORD>(VK_F1 + std::atoi(part.c_str() + 1) - 1);
+            if (!vk) return 2;
+            keys.push_back(vk);
+            if (plus == std::string::npos) break;
+            start = plus + 1;
+        }
+        // Windows lets a program bring a window to the front only if it was the last to receive input: a tap on Shift, then SetForegroundWindow, gets round that
+        keybd_event(VK_SHIFT, 0, 0, 0);                  // (not Alt: a tap on Alt switches a menu bar into its keyboard mode, which would swallow the keys)
+        keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0);
+        SetForegroundWindow(h);
+        Sleep(300);
+        if (GetForegroundWindow() != h) { std::fprintf(stderr, "the window could not be brought to the front: no keys are sent\n"); return 3; }
+        // the page (the browser engine's child window) must hold the keyboard, not the frame: give it the focus through the window's own thread (no mouse is used)
+        HWND page = nullptr;
+        EnumChildWindows(h, [](HWND c, LPARAM p) -> BOOL {
+            wchar_t name[64];
+            if (GetClassNameW(c, name, 64) && std::wstring(name) == L"Chrome_RenderWidgetHostHWND") { *reinterpret_cast<HWND*>(p) = c; return FALSE; }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&page));
+        if (page && std::getenv("POKE_FOCUS")) {
+            const DWORD theirs = GetWindowThreadProcessId(h, nullptr), mine = GetCurrentThreadId();
+            AttachThreadInput(mine, theirs, TRUE);
+            SetFocus(page);
+            AttachThreadInput(mine, theirs, FALSE);
+        }
+        Sleep(200);
+        std::vector<INPUT> in;
+        for (WORD vk : keys) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = vk; in.push_back(i); }
+        for (size_t k = keys.size(); k-- > 0;) { INPUT i = {}; i.type = INPUT_KEYBOARD; i.ki.wVk = keys[k]; i.ki.dwFlags = KEYEVENTF_KEYUP; in.push_back(i); }
+        return SendInput(static_cast<UINT>(in.size()), in.data(), sizeof(INPUT)) == in.size() ? 0 : 1;
+    }
     if (action == "icon" && argc >= 4) {
         std::string text;
         const bool big = std::string(argv[3]) == "big";

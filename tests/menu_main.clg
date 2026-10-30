@@ -1,0 +1,189 @@
+// Menus (src/menu.clg, and the parts of src/app.clg that use them). The native menus, the keyboard shortcuts and the tray icon are tests/run_menu_window.sh.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "menu.clh"
+#include "app.clh"
+
+ext_fn int app_test_menu_click(int handle, string id);
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_take_window_log(int handle, ref string line);
+
+class Clicks {
+public:
+    string last;
+    int count;
+    Clicks() {
+        last = "";
+        count = 0;
+    }
+};
+
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        all = all + one + ";";
+    }
+    return all;
+}
+
+Menu sampleBar() {
+    Menu bar = new Menu();
+    bar.begin("&File");
+    bar.item("file.open", "&Open", "Ctrl+O");
+    bar.item("file.save", "&Save", "Ctrl+S");
+    bar.separator();
+    bar.item("file.quit", "&Quit", "");
+    bar.end();
+    bar.begin("&View");
+    bar.check("view.grid", "Grid", "", false);
+    bar.end();
+    return bar;
+}
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+int main() {
+    // ---- ids, labels, shortcuts ----
+    check("menu ids", menuId("file.open") && menuId("a") && menuId("A_b-1") && !menuId("") && !menuId("a b") && !menuId("a/b") && !menuId(repeated("a", 65)) && menuId(repeated("a", 64)));
+    check("menu labels", menuLabel("&Open...") && menuLabel("Save && close") && menuLabel("x") && !menuLabel("") && !menuLabel("a&b&c") && !menuLabel("tab\there") && !menuLabel(repeated("x", 201)) && menuLabel(repeated("x", 200)));
+    check("a label that is not UTF-8 is refused", !menuLabel("a\xff\xfe"));
+    check("key names", keyCode("S") == 83 && keyCode("s") == 83 && keyCode("7") == 55 && keyCode("F1") == 112 && keyCode("f12") == 123 && keyCode("Enter") == 13 && keyCode("PageUp") == 33 && keyCode("Down") == 40 && keyCode("F13") == 0 && keyCode("F0") == 0 && keyCode("Ctrl") == 0 && keyCode("") == 0 && keyCode("@") == 0);
+    check("shortcuts", parseShortcut("Ctrl+S") == "83 1" && parseShortcut("ctrl+shift+s") == "83 5" && parseShortcut("Shift+Ctrl+S") == "83 5" && parseShortcut("Alt+F4") == "115 2" && parseShortcut("F5") == "116 0" && parseShortcut("Ctrl+Alt+Shift+Delete") == "46 7");
+    check("a key that types into a page needs Ctrl or Alt", parseShortcut("S") == "" && parseShortcut("Shift+S") == "" && parseShortcut("Enter") == "" && parseShortcut("Shift+Delete") == "" && parseShortcut("Space") == "" && parseShortcut("Left") == "" && parseShortcut("Ctrl+Left") == "37 1");
+    check("bad shortcuts", parseShortcut("") == "" && parseShortcut("Ctrl+") == "" && parseShortcut("Ctrl+Ctrl+S") == "" && parseShortcut("Ctrl+S+D") == "" && parseShortcut("S+Ctrl") == "" && parseShortcut("Ctrl+Shift") == "" && parseShortcut("Win+S") == "" && parseShortcut("Ctrl+F13") == "");
+
+    // ---- building ----
+    Menu m = new Menu();
+    check("a new menu is not complete", !m.complete());
+    check("a submenu", m.begin("&File") && m.depth == 1);
+    check("an item", m.item("file.open", "&Open...", "Ctrl+O") && m.known("file.open"));
+    check("a ticked item", m.check("view.grid", "Show &grid", "", true));
+    check("a separator", m.separator());
+    check("the same id again is refused and nothing is added", !m.item("file.open", "Other", "") && m.problem.length() > 0 && m.entries == 3);
+    check("the same shortcut again is refused", !m.item("file.open2", "Open 2", "ctrl+o") && m.indexOfId("file.open2") == -1);
+    check("an id that is not an id", !m.item("a b", "x", ""));
+    check("a label that is not a label", !m.item("x1", "", "") && !m.item("x1", "a&b&c", ""));
+    check("a shortcut that is not one", !m.item("x1", "x", "S") && m.problem.length() > 0);
+    check("after a good call the problem is cleared", m.item("file.quit", "&Quit", "Ctrl+Q") && m.problem == "");
+    check("not complete until the submenu ends", !m.complete());
+    check("end", m.end() && m.depth == 0 && m.complete());
+    check("end without begin", !m.end());
+    check("the top level is only submenus: a bar", m.isBar());
+    m.item("loose", "Loose", "");
+    check("a loose item at the top is not a bar", !m.isBar());
+    std::vector<string> clicks = m.clickable();
+    check("the clickable ids", clicks.size() == 4);
+
+    Menu deep = new Menu();
+    check("four levels", deep.begin("a") && deep.begin("b") && deep.begin("c") && deep.begin("d"));
+    check("not five", !deep.begin("e") && deep.depth == 4);
+
+    Menu big = new Menu();
+    int n = 0;
+    bool all = true;
+    while (n < 200) {
+        all = big.item("i" + intToString(n), "Item", "") && all;
+        n = n + 1;
+    }
+    check("200 entries", all && !big.item("one-more", "x", "") && !big.separator());
+
+    // ---- what the native layer is given ----
+    Menu s = new Menu();
+    s.begin("&File");
+    s.item("file.open", "&Open", "Ctrl+O");
+    s.check("view.grid", "Grid", "", true);
+    s.separator();
+    s.end();
+    s.disable("file.open");
+    string spec = s.spec();
+    std::vector<string> f = splitFields(spec);
+    check("seven fields per entry", f.size() == 5 * 7);
+    check("the first entry is the submenu", f[0] == "b" && f[2] == "&File" && f[6] == "0");
+    check("the item: id, label, shortcut, key, modifiers, disabled", f[7] == "i" && f[8] == "file.open" && f[9] == "&Open" && f[10] == "Ctrl+O" && f[11] == "79" && f[12] == "1" && f[13] == "2");
+    check("the ticked item", f[14] == "c" && f[15] == "view.grid" && f[20] == "1");
+    check("the separator and the end", f[21] == "s" && f[28] == "e");
+    check("disable of an id that is not there", !s.disable("nope") && s.problem.length() > 0);
+
+    // ---- a window's menu bar ----
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    int h = app.handle;
+    windowLog(h);
+    Clicks seen = new Clicks();
+    app.onMenu(closure MenuAction [seen] (string id) {
+        seen.last = id;
+        seen.count = seen.count + 1;
+    });
+    Menu notBar = new Menu();
+    notBar.item("loose", "Loose", "");
+    check("a menu with an item at the top is not a bar", !app.setMenu(notBar) && windowLog(h) == "");
+    Menu open = new Menu();
+    open.begin("File");
+    check("a menu with an open submenu is refused", !app.setMenu(open) && windowLog(h) == "");
+    check("a bar is set", app.setMenu(sampleBar()));
+    string logged = windowLog(h);
+    check("the native layer got the spec", containsText(logged, "menu|set|b|sub0|&File|") && containsText(logged, "i|file.save|&Save|Ctrl+S|83|1|0|"));
+
+    app_test_menu_click(h, "file.open");
+    app.serveOne(100);
+    check("a click runs the handler with the id", seen.count == 1 && seen.last == "file.open");
+    string ev = "";
+    check("and tells the page nothing by default", app_test_take_eval(h, ev) == 0);
+    app.menuEventsToPage(true);
+    app_test_menu_click(h, "file.save");
+    app.serveOne(100);
+    check("with menuEventsToPage the page gets menu.click", seen.last == "file.save" && app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"menu.click\",{\"id\":\"file.save\"}]);");
+    app_test_menu_click(h, "not.an.item");
+    app.serveOne(100);
+    check("an id the menu does not have does nothing", seen.count == 2 && seen.last == "file.save" && app_test_take_eval(h, ev) == 0);
+    app_test_menu_click(h, "sub0");
+    app.serveOne(100);
+    check("a submenu is not clickable", seen.count == 2);
+
+    Window w = app.windows.get(h);
+    check("an item is greyed out", w.setEnabled("file.save", false) && windowLog(h) == "menu|item|file.save|0|-1;");
+    app_test_menu_click(h, "file.save");
+    app.serveOne(100);
+    check("a greyed item does nothing", seen.count == 2);
+    check("and comes back", w.setEnabled("file.save", true) && windowLog(h) == "menu|item|file.save|1|-1;");
+    app_test_menu_click(h, "file.save");
+    app.serveOne(100);
+    check("then it works again", seen.count == 3);
+    check("a tick", w.setChecked("view.grid", true) && windowLog(h) == "menu|item|view.grid|-1|1;");
+    check("only a check item can be ticked", !w.setChecked("file.open", true) && windowLog(h) == "");
+    check("an item that is not there", !w.setEnabled("nothing", false) && !w.setChecked("nothing", true) && windowLog(h) == "");
+    check("the bar is removed", w.removeMenu() && windowLog(h) == "menu|set|;");
+    app_test_menu_click(h, "file.open");
+    app.serveOne(100);
+    check("after that no id is accepted", seen.count == 3);
+
+    int second = app.openWindow("two", 100, 100, false, "");
+    windowLog(second);
+    Window w2 = app.windows.get(second);
+    check("another window has its own menu", w2.setMenu(sampleBar()) && w.setMenu(sampleBar()));
+    windowLog(h);
+    windowLog(second);
+    app_test_menu_click(second, "view.grid");
+    app.serveOne(100);
+    check("a click on the second window is a click", seen.count == 4 && seen.last == "view.grid");
+    return 0;
+}

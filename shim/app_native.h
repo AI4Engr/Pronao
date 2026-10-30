@@ -34,6 +34,11 @@ int app_window_guard(int handle, int on);
 // maximizes it if asked (Windows; -1 elsewhere). The caller has fitted it to the monitors. app_window_track(on): from now on, after the user moves or resizes
 // the window (or maximizes / restores it) the record "window" "placement" x y width height maximized is queued for the main loop (the restored rectangle).
 int app_monitors(std::string& out);
+// Menus (Windows; -1 elsewhere). app_menu_set: the window's menu bar from the flat spec src/menu.clg writes ("" removes it); 0 ok, 5 the spec is malformed, 4 no such window.
+// Clicking an item, or pressing its shortcut while the page has the keyboard, queues the record "menu" id on the window; the id is always one the spec contained.
+// app_menu_item: ticks / unticks (checked 1 / 0) and enables / greys (enabled 1 / 0) an item of the menu bar, -1 leaves a state alone; 5 if the id is not in it.
+int app_menu_set(int handle, std::string spec);
+int app_menu_item(int handle, std::string id, int enabled, int checked);
 int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
 int app_window_track(int handle, int on);
 int app_release_build();                                                          // 1 if built with RELEASE=1 (no development server, no developer tools)
