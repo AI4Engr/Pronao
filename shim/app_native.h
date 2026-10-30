@@ -89,6 +89,11 @@ int app_dialog_pick(int handle, int mode, std::string title, std::string default
 // kind 0 info 1 warning 2 error 3 question; buttons 0 ok, 1 ok+cancel, 2 yes+no. 1 ok, 2 cancel, 3 yes, 4 no; -1 not shown.
 int app_dialog_message(int handle, std::string title, std::string message, int kind, int buttons);
 
+// ---- the shell: an address in the default browser, a file in its default program, a file shown in the file manager -----------------------------
+// mode 0 open `target` (an http, https or mailto address, or the absolute path of a file), 1 show the file (or folder) in the file manager. 0 asked the
+// system to do it (not that it succeeded: a program starts on its own), 4 could not, 5 the target is not acceptable. The caller has vetted the target.
+int app_shell_open(std::string target, int mode);
+
 // ---- watching a folder: a thread per watch queues records "watch" id kind path from (empty id) for the main loop ---------------
 // kind: created, modified, removed, renamed (path is the new name), overflow (records were lost), stopped (path says why).
 // Paths are relative to `root`, with / separators. `root` must be vetted by the caller. The thread has ended when stop returns.

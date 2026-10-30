@@ -1,0 +1,233 @@
+// What a page may ask the system to open (src/links.clg, and the shell commands and link handling in src/app.clg). The system is replaced by a test double
+// that records what it was asked (nothing is started): the checks read those requests back.
+#include "text.clh"
+#include "files.clh"
+#include "links.clh"
+#include "app.clh"
+
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_push_internal(int handle, string request);
+ext_fn int app_test_dialog_take_request(ref string request);
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_mkdir_raw(string path);
+ext_fn int app_test_sleep_ms(int ms);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+bool startsWith(string text, string prefix) {
+    return startsWithText(text, prefix);
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+string under(string dir, string leaf) {
+    if (app_os_windows() == 1) {
+        return dir + "\\" + leaf;
+    }
+    return dir + "/" + leaf;
+}
+
+Item pathArgs(string p) {
+    Item o = createObject();
+    addStringToObject(o, "path", p);
+    return o;
+}
+
+Item urlArgs(string u) {
+    Item o = createObject();
+    addStringToObject(o, "url", u);
+    return o;
+}
+
+string requestText(string command, Item args) {
+    Item arr = createArray();
+    addItemToArray(arr, createString(command));
+    addItemToArray(arr, args);
+    return printUnformatted(arr);
+}
+
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    if (gotId != id) {
+        return "WRONG ID " + gotId;
+    }
+    return intToString(status) + " " + json;
+}
+
+// what the system was last asked to do ("" if nothing)
+string lastAsked() {
+    string one = "";
+    string got = "";
+    while (app_test_dialog_take_request(one) == 1) {
+        got = one;
+    }
+    return got;
+}
+
+std::vector<string> names(string a, string b, string c) {
+    std::vector<string> out;
+    if (a.length() > 0) {
+        out.push_back(a);
+    }
+    if (b.length() > 0) {
+        out.push_back(b);
+    }
+    if (c.length() > 0) {
+        out.push_back(c);
+    }
+    return out;
+}
+
+string blockedRecord(string url, string byUser) {
+    string r = "window";
+    r.push_back(char(0));
+    r = r + "navigation_blocked";
+    r.push_back(char(0));
+    r = r + url;
+    r.push_back(char(0));
+    r = r + byUser;
+    r.push_back(char(0));
+    return r;
+}
+
+int main() {
+    // ---- the rules, without any window ----
+    LinkRules none = new LinkRules();
+    check("no address is allowed until a scheme is", !none.addressAllowed("https://example.com/"));
+    LinkRules r = new LinkRules();
+    check("schemes: only http, https, mailto", !r.allowSchemes(names("", "", "")) && !r.allowSchemes(names("ftp", "", "")) && !r.allowSchemes(names("file", "", "")) && !r.allowSchemes(names("javascript", "", "")) && !r.allowSchemes(names("https", "HTTP", "")));
+    check("a list of allowed schemes is taken", r.allowSchemes(names("http", "https", "")));
+    check("an https address", r.addressAllowed("https://example.com/a/b?c=d&e=f#g"));
+    check("an http address with a port", r.addressAllowed("http://localhost:8080/x"));
+    check("the scheme is not case sensitive", r.addressAllowed("HTTPS://Example.com/"));
+    check("a scheme that is not allowed", !r.addressAllowed("ftp://example.com/") && !r.addressAllowed("file:///C:/Windows/notepad.exe") && !r.addressAllowed("javascript:alert(1)") && !r.addressAllowed("data:text/html,x"));
+    check("mailto needs its own permission", !r.addressAllowed("mailto:a@b.example"));
+    check("a user name in front of the host is refused", !r.addressAllowed("https://good.example@evil.example/"));
+    check("no host", !r.addressAllowed("https://") && !r.addressAllowed("https:///x") && !r.addressAllowed("https:example.com") && !r.addressAllowed("//example.com/"));
+    check("a space, a quote, a backslash or a bracket is refused", !r.addressAllowed("https://example.com/a b") && !r.addressAllowed("https://example.com/\"x") && !r.addressAllowed("https://example.com\\x") && !r.addressAllowed("https://example.com/<x>"));
+    check("a leading space is refused", !r.addressAllowed(" https://example.com/"));
+    check("non-ASCII must be percent-encoded", !r.addressAllowed("https://example.com/caf\xc3\xa9") && r.addressAllowed("https://example.com/caf%C3%A9"));
+    check("a control character is refused", !r.addressAllowed("https://example.com/\x01"));
+    check("an address over 2048 bytes is refused", !r.addressAllowed("https://example.com/" + repeated("a", 2040)) && r.addressAllowed("https://example.com/" + repeated("a", 100)));
+    check("an empty address", !r.addressAllowed(""));
+    check("mailto is allowed when asked for", r.allowSchemes(names("https", "mailto", "")) && r.addressAllowed("mailto:a@b.example?subject=hi") && !r.addressAllowed("mailto:") && !r.addressAllowed("mailto:/x") && !r.addressAllowed("http://example.com/"));
+
+    check("extensions: a program or script type is refused, even when asked for", !r.allowExtensions(names("exe", "", "")) && !r.allowExtensions(names("pdf", "bat", "")) && !r.allowExtensions(names("js", "", "")) && !r.allowExtensions(names("lnk", "", "")) && !r.allowExtensions(names("sh", "", "")) && !r.allowExtensions(names("ps1", "", "")) && !r.allowExtensions(names("hta", "", "")) && !r.allowExtensions(names("py", "", "")));
+    check("extensions: only lower-case letters and digits, 1 to 8", !r.allowExtensions(names("PDF", "", "")) && !r.allowExtensions(names("a.b", "", "")) && !r.allowExtensions(names("", "", "")) && !r.allowExtensions(names("abcdefghi", "", "")) && !r.allowExtensions(names("pdf", "*", "")));
+    check("a list of extensions is taken", r.allowExtensions(names("pdf", "txt", "png")));
+    check("extensionOf", extensionOf("C:\\x\\Report.PDF") == "pdf" && extensionOf("/a/b.tar.gz") == "gz" && extensionOf("/a/.hidden") == "" && extensionOf("/a/noext") == "" && extensionOf("/a/dir.d/file") == "" && extensionOf("") == "");
+    check("extensionAllowed", r.extensionAllowed("C:\\x\\Report.PDF") && r.extensionAllowed("/a/n.txt") && !r.extensionAllowed("/a/n.docx") && !r.extensionAllowed("/a/noext") && !r.extensionAllowed("/a/x.pdf.exe"));
+    LinkRules forced = new LinkRules();
+    forced.extensions.push_back("exe");
+    forced.extensions.push_back("txt");
+    check("a program type is refused even if the list was filled by another way", !forced.extensionAllowed("/a/x.exe") && forced.extensionAllowed("/a/x.txt"));
+    LinkRules timing = new LinkRules();
+    check("one open per 300 ms", timing.mayOpenNow() && !timing.mayOpenNow());
+    app_test_sleep_ms(350);
+    check("and again after that", timing.mayOpenNow());
+
+    // ---- the commands a page gets ----
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    check("without enableShellCommands there is no such command", startsWith(roundTrip(app, "c0", requestText("shell.openUrl", urlArgs("https://example.com/"))), "1 {\"code\":\"unknown_command\""));
+    app.enableShellCommands();
+    check("no scheme is allowed yet", startsWith(roundTrip(app, "c1", requestText("shell.openUrl", urlArgs("https://example.com/"))), "1 {\"code\":\"invalid_argument\"") && lastAsked() == "");
+    check("allowLinkSchemes refuses a scheme that is not on the short list", !app.allowLinkSchemes(names("ftp", "", "")) && !app.allowOpenExtensions(names("exe", "", "")));
+    check("the application allows https", app.allowLinkSchemes(names("https", "", "")));
+    check("shell.openUrl", roundTrip(app, "c2", requestText("shell.openUrl", urlArgs("https://example.com/a?b=c"))) == "0 null" && lastAsked() == "shell|0|https://example.com/a?b=c");
+    check("a second open at once is held back", startsWith(roundTrip(app, "c3", requestText("shell.openUrl", urlArgs("https://example.com/"))), "1 {\"code\":\"too_many\"") && lastAsked() == "");
+    app_test_sleep_ms(350);
+    check("an address that is not allowed asks for nothing", startsWith(roundTrip(app, "c4", requestText("shell.openUrl", urlArgs("http://example.com/"))), "1 {\"code\":\"invalid_argument\"") && startsWith(roundTrip(app, "c5", requestText("shell.openUrl", urlArgs("file:///C:/Windows/System32/cmd.exe"))), "1 {\"code\":\"invalid_argument\"") && lastAsked() == "");
+    check("shell.openUrl needs a url", startsWith(roundTrip(app, "c6", requestText("shell.openUrl", createObject())), "1 {\"code\":\"invalid_argument\",\"message\":\"`url` must be a string\""));
+
+    string base = "";
+    app_test_make_temp_dir(base);
+    string folder = under(base, "docs");
+    app_test_mkdir_raw(folder);
+    app_test_mkdir_raw(under(folder, "sub"));
+    app_test_mkdir_raw(under(base, "outside"));
+    app_test_write_raw(under(folder, "doc.pdf"), "x");
+    app_test_write_raw(under(folder, "tool.exe"), "x");
+    app_test_write_raw(under(folder, "noext"), "x");
+    app_test_write_raw(under(folder, "page.html"), "x");
+    app_test_write_raw(under(under(base, "outside"), "secret.pdf"), "x");
+    check("no folder is allowed yet, so nothing is reachable", startsWith(roundTrip(app, "d0", requestText("shell.openFile", pathArgs(under(folder, "doc.pdf")))), "1 {\"code\":\"forbidden\"") && lastAsked() == "");
+    check("the application allows a folder and two file types", app.allowFolder(folder) && app.allowOpenExtensions(names("pdf", "txt", "")));
+    app_test_sleep_ms(350);
+    string opened = roundTrip(app, "d1", requestText("shell.openFile", pathArgs(under(folder, "doc.pdf"))));
+    string asked = lastAsked();
+    check("shell.openFile hands over the resolved path of a file of an allowed type", opened == "0 null" && startsWith(asked, "shell|0|") && endsWithText(asked, "doc.pdf"));
+    app_test_sleep_ms(350);
+    check("a program is never opened", startsWith(roundTrip(app, "d2", requestText("shell.openFile", pathArgs(under(folder, "tool.exe")))), "1 {\"code\":\"forbidden\"") && lastAsked() == "");
+    check("a type the application did not list is not opened", startsWith(roundTrip(app, "d3", requestText("shell.openFile", pathArgs(under(folder, "page.html")))), "1 {\"code\":\"forbidden\"") && startsWith(roundTrip(app, "d4", requestText("shell.openFile", pathArgs(under(folder, "noext")))), "1 {\"code\":\"forbidden\"") && lastAsked() == "");
+    check("a folder is not opened as a file", startsWith(roundTrip(app, "d5", requestText("shell.openFile", pathArgs(under(folder, "sub")))), "1 {\"code\":\"is_directory\"") && lastAsked() == "");
+    check("a file outside the allowed folders is not opened", startsWith(roundTrip(app, "d6", requestText("shell.openFile", pathArgs(under(under(base, "outside"), "secret.pdf")))), "1 {\"code\":\"forbidden\"") && lastAsked() == "");
+    check("a file that is not there", startsWith(roundTrip(app, "d7", requestText("shell.openFile", pathArgs(under(folder, "gone.pdf")))), "1 {\"code\":\"not_found\"") && lastAsked() == "");
+    app_test_sleep_ms(350);
+    string shown = roundTrip(app, "e1", requestText("shell.reveal", pathArgs(under(folder, "tool.exe"))));
+    string shownAsked = lastAsked();
+    check("shell.reveal shows any file the page can reach, and starts nothing", shown == "0 null" && startsWith(shownAsked, "shell|1|") && endsWithText(shownAsked, "tool.exe"));
+    app_test_sleep_ms(350);
+    check("shell.reveal of a folder", roundTrip(app, "e2", requestText("shell.reveal", pathArgs(under(folder, "sub")))) == "0 null" && startsWith(lastAsked(), "shell|1|"));
+    app_test_sleep_ms(350);
+    check("shell.reveal outside the allowed folders", startsWith(roundTrip(app, "e3", requestText("shell.reveal", pathArgs(under(base, "outside")))), "1 {\"code\":\"forbidden\"") && lastAsked() == "");
+
+    // ---- a click on a link ----
+    string ev = "";
+    while (app_test_take_eval(app.handle, ev) == 1) {
+    }
+    app_test_sleep_ms(350);
+    app_test_push_internal(app.handle, blockedRecord("https://example.com/click", "1"));
+    app.serveOne(100);
+    check("by default a click on a link only reports the blocked navigation", lastAsked() == "" && app_test_take_eval(app.handle, ev) == 1 && startsWith(ev, "window.__cling_emit([\"window.navigationBlocked\""));
+    app.openLinksInBrowser(true);
+    app_test_push_internal(app.handle, blockedRecord("https://example.com/click", "1"));
+    app.serveOne(100);
+    check("with openLinksInBrowser a click opens the address", lastAsked() == "shell|0|https://example.com/click");
+    app_test_sleep_ms(350);
+    app_test_push_internal(app.handle, blockedRecord("https://example.com/script", "0"));
+    app.serveOne(100);
+    check("a script that sets location is not a click", lastAsked() == "");
+    app_test_push_internal(app.handle, blockedRecord("http://example.com/plain", "1"));
+    app.serveOne(100);
+    check("a click on an address of a scheme that is not allowed asks for nothing", lastAsked() == "");
+    app_test_push_internal(app.handle, blockedRecord("https://example.com/again", "1"));
+    app.serveOne(100);
+    app_test_push_internal(app.handle, blockedRecord("https://example.com/at-once", "1"));
+    app.serveOne(100);
+    check("a flood of clicks opens at most one", lastAsked() == "shell|0|https://example.com/again");
+
+    app_test_remove_tree(base);
+    return 0;
+}

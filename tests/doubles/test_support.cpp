@@ -118,6 +118,11 @@ int app_dialog_pick(int, int mode, std::string title, std::string default_name, 
     path = answer.substr(5);
     return 1;
 }
+int app_shell_open(std::string target, int mode) {
+    std::lock_guard<std::mutex> lock(g_scriptMutex);
+    g_requests.push_back("shell|" + std::to_string(mode) + "|" + target);     // (read with app_test_dialog_take_request; nothing is started)
+    return 0;
+}
 int app_dialog_message(int, std::string title, std::string message, int kind, int buttons) {
     std::string answer;
     if (!nextAnswer("message|" + title + "|" + message + "|" + std::to_string(kind) + "|" + std::to_string(buttons), answer)) return -1;

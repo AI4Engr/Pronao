@@ -44,14 +44,28 @@ void app_nav_install(void* controller, std::shared_ptr<NavRules> rules, int debu
                 for (const auto& p : rules->prefixes) ok = ok || uri.compare(0, p.size(), p) == 0;
                 if (ok) return;
                 a->put_Cancel(TRUE);
-                std::string record = "window"; record += '\0'; record += "navigation_blocked"; record += '\0'; record += uri.substr(0, 300); record += '\0';
-                app_push(rules->handle, std::string(), record, 100);   // so the application can log it
+                BOOL byUser = FALSE;                                   // a click, as opposed to a script setting location
+                a->get_IsUserInitiated(&byUser);
+                std::string record = "window"; record += '\0'; record += "navigation_blocked"; record += '\0'; record += uri.substr(0, 2100); record += '\0';
+                record += byUser ? "1" : "0"; record += '\0';
+                app_push(rules->handle, std::string(), record, 100);   // so the application can log it (or open it in the browser: App.openLinksInBrowser)
             });
     };
     view->add_NavigationStarting(guard(false), &token);
     view->add_FrameNavigationStarting(guard(true), &token);
     view->add_NewWindowRequested(new Handler<ICoreWebView2NewWindowRequestedEventHandler, ICoreWebView2NewWindowRequestedEventArgs>(
-        IID_ICoreWebView2NewWindowRequestedEventHandler, [](ICoreWebView2NewWindowRequestedEventArgs* a) { a->put_Handled(TRUE); }), &token);
+        IID_ICoreWebView2NewWindowRequestedEventHandler, [rules](ICoreWebView2NewWindowRequestedEventArgs* a) {
+            a->put_Handled(TRUE);                                      // (a link with target=_blank, window.open): never a second window of ours
+            LPWSTR raw = nullptr;
+            a->get_Uri(&raw);
+            const std::string uri = raw ? narrow(raw) : std::string();
+            CoTaskMemFree(raw);
+            BOOL byUser = FALSE;
+            a->get_IsUserInitiated(&byUser);
+            std::string record = "window"; record += '\0'; record += "navigation_blocked"; record += '\0'; record += uri.substr(0, 2100); record += '\0';
+            record += byUser ? "1" : "0"; record += '\0';
+            app_push(rules->handle, std::string(), record, 100);
+        }), &token);
     ICoreWebView2Settings* settings = nullptr;                    // no right-click menu (save as, print, view source) in a release build
     if (SUCCEEDED(view->get_Settings(&settings)) && settings) settings->put_AreDefaultContextMenusEnabled(debug ? TRUE : FALSE);
 }

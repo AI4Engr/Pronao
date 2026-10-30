@@ -61,6 +61,9 @@
     open: call('dialog.open'), save: call('dialog.save'), folder: call('dialog.folder'), message: call('dialog.message')
   };
   window.cling.proc = { run: call('proc.run') };
+  // shell: openUrl({url}) opens an address in the default browser, openFile({path}) a file in its default program, reveal({path}) shows a file in the file
+  // manager. Only what the application allowed (schemes, file types, the folders of the file commands).
+  window.cling.shell = { openUrl: call('shell.openUrl'), openFile: call('shell.openFile'), reveal: call('shell.reveal') };
   // settings: only the keys the application declared. get(key) -> value, getAll() -> {key: value}, set(key, value) -> null; the event
   // "settings.changed" {key, value} reaches every window after a set.
   window.cling.settings = {

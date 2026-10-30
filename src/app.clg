@@ -19,6 +19,7 @@
 #include "files.clh"
 #include "assets.clh"
 #include "settings.clh"
+#include "links.clh"
 
 ext_fn int app_open(string title, int width, int height, string html, string url, string initJs, int debug);
 ext_fn int app_wait_any(std::vector<int> handles, int timeoutMs, ref int handle);
@@ -38,6 +39,7 @@ ext_fn int app_navigation_allow(int handle, std::vector<string> prefixes);
 ext_fn int app_watch_start(int handle, string root, int recursive, ref int watchId);
 ext_fn int app_watch_stop(int handle, int watchId);
 ext_fn int app_os_windows();
+ext_fn int app_shell_open(string target, int mode);
 ext_fn int app_os_env(string name, ref string out);
 ext_fn int app_release_build();
 ext_fn int app_os_path_kind(string path);
@@ -1799,6 +1801,7 @@ public:
     PumpBook pumps;
     FileGate gate;
     SettingsStore settings;            // the application's own settings file (empty until open() is called on it)
+    LinkRules links;                   // what a page may ask the system to open (allowLinkSchemes, allowOpenExtensions, enableShellCommands)
     WindowBook windows;                // the open windows
     std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
     Watches watches;                   // the first window's (see `handle`); each Window has its own
@@ -1821,6 +1824,7 @@ public:
         pumps = new PumpBook();
         gate = new FileGate();
         settings = new SettingsStore();
+        links = new LinkRules();
         cling::setExitGraceMs(5000);
         windows = new WindowBook();
         watches = new Watches();
@@ -1914,6 +1918,69 @@ public:
             addStringToObject(changed, "key", key);
             addItemToObject(changed, "value", settings.valueItem(key));
             book.emitAll("settings.changed", printUnformatted(changed));
+            return createNull();
+        });
+    }
+
+    // ---- opening things in the system (src/links.clg) ----
+
+    // The address schemes a page may open in the default browser, from http, https and mailto. Until this is called no address is opened.
+    bool allowLinkSchemes(std::vector<string> schemes) {
+        return links.allowSchemes(schemes);
+    }
+
+    // The extensions ("pdf", "txt") of the files a page may open in their default program. Extensions that start a program or a script are refused.
+    bool allowOpenExtensions(std::vector<string> extensions) {
+        return links.allowExtensions(extensions);
+    }
+
+    // A click (not a script) on a link that leaves the application, or on one with target=_blank, opens the address in the default browser when its
+    // scheme is allowed (allowLinkSchemes). Off by default; the event window.navigationBlocked is sent either way.
+    void openLinksInBrowser(bool on) {
+        links.browserLinks = on;
+    }
+
+    // Registers shell.openUrl {url}, shell.openFile {path} and shell.reveal {path}, all answering null:
+    //   openUrl   an address of an allowed scheme, in the default browser;
+    //   openFile  a regular file the file policy lets the page reach, with an extension from allowOpenExtensions, in its default program;
+    //   reveal    a file or folder the file policy lets the page reach, shown in the file manager (starts nothing).
+    // At most about three opens a second. A refused address or file is "invalid_argument" / "forbidden" / "not_found" ..., a limit is "too_many".
+    void enableShellCommands() {
+        LinkRules rules = links;
+        FileGate files = gate;
+        command("shell.openUrl", closure Command [rules] (Item args) {
+            string url = requiredString(args, "url");
+            string why = rules.openAddress(url);
+            if (why.length() > 0) {
+                throw why;
+            }
+            return createNull();
+        });
+        command("shell.openFile", closure Command [rules, files] (Item args) {
+            string path = requiredString(args, "path");
+            FsResult r = files.resolve(path, 1);
+            fsCheck(r.status, "cannot open " + path);
+            if (!rules.extensionAllowed(r.text)) {
+                throw "forbidden: this application does not open files of that type";
+            }
+            if (!rules.mayOpenNow()) {
+                throw "too_many: files are opened at most about three times a second";
+            }
+            if (app_shell_open(r.text, 0) != 0) {
+                throw "io_error: the file could not be handed to the system";
+            }
+            return createNull();
+        });
+        command("shell.reveal", closure Command [rules, files] (Item args) {
+            string path = requiredString(args, "path");
+            FsResult r = files.resolve(path, 0);
+            fsCheck(r.status, "cannot show " + path);
+            if (!rules.mayOpenNow()) {
+                throw "too_many: files are shown at most about three times a second";
+            }
+            if (app_shell_open(r.text, 1) != 0) {
+                throw "io_error: the file could not be shown";
+            }
             return createNull();
         });
     }
@@ -2490,6 +2557,10 @@ public:
                 Item e = createObject();
                 addStringToObject(e, "url", f[2]);
                 emitEvent(from, "window.navigationBlocked", printUnformatted(e));
+                // a click (not a script) on a link that leaves the application: the browser opens it if the application said so
+                if (links.browserLinks && f.size() >= 4 && f[3] == "1") {
+                    links.openAddress(f[2]);
+                }
             }
             return;
         }

@@ -118,6 +118,32 @@ await cling.settings.getAll();                   // {theme, fontSize, compact}
 - **What this is not:** the file is not encrypted and not protected from other programs of the same user; two instances of the program writing at once are not coordinated (the last one wins); the
   settings commands run on the main thread, so a slow disk stalls the loop for the length of one small write.
 
+## Opening links, files and folders in the system
+
+A link in the page does nothing by default (the navigation guard cancels it). The application decides what may leave the window (`src/links.clg`; the native layer only hands a target to the shell):
+
+```
+app.allowLinkSchemes(schemes);            // from "http", "https", "mailto" -- until this is called no address is opened
+app.allowOpenExtensions(types);           // "pdf", "txt" ...: the file types shell.openFile may open; program and script types are refused here
+app.openLinksInBrowser(true);             // a CLICK on a link (or target=_blank) opens it in the default browser; a script that sets location does not
+app.enableShellCommands();                // shell.openUrl, shell.openFile, shell.reveal
+```
+
+```js
+await cling.shell.openUrl({ url: 'https://example.com/docs' });   // default browser
+await cling.shell.openFile({ path: 'C:/Users/me/Docs/report.pdf' });   // default program; the file must be reachable by the file commands and of a listed type
+await cling.shell.reveal({ path: '...' });                          // shown in Explorer / the file manager; starts nothing
+```
+
+- **Addresses** must be http, https or mailto, allowed by the application, in printable ASCII (percent-encode the rest; no spaces, quotes, `<>` or backslashes), at most 2048 bytes, and for http / https a host with no `user@`.
+  `file:`, `javascript:` and `data:` are never opened.
+- **Files** go through the same file policy as `fs.*` (an allowed folder, a regular file, links resolved), and the extension must be on the application's list. Extensions that start a program or script
+  (`exe`, `bat`, `cmd`, `lnk`, `js`, `ps1`, `hta`, `sh`, `py`, ... about 70 of them) are refused even if the application lists one. Opening a program is `proc.run`'s job, with its own table.
+- **At most about three opens a second**, so a page cannot open a thousand tabs.
+- **Not verified automatically:** that a browser, the default program or Explorer really appear. The tests check what the system is asked to do (a test double records it) and that refused targets ask for nothing; the native call
+  itself was checked only for its refusals. Click it once by hand on a machine with a browser.
+- **What it cannot know:** what the browser or the default program will do with what it gets. Listing `html` or `svg` for `openFile` is the application's choice.
+
 ## Watching folders
 
 ```
@@ -436,7 +462,7 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher, no window (SLOW=1: build at -O1)
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # ~80 s, WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # ~65 s: removes one check at a time from src/ and shows the tests fail
@@ -464,6 +490,7 @@ a fresh project builds in all three ways and its window starts.
 | `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
+| `src/links.clg` | what a page may ask the system to open: addresses, files, show in the file manager |
 | `src/settings.clg` | the per-user folders of an application and `SettingsStore`, its declared, typed settings file |
 | `src/app.clg` | `Dispatcher`, `App`, the commands (files, programs, dialogs, watches, window), program lookup and slots, watch merging |
 | `src/bridge.js` | defines `window.cling.*`; embedded into the program at build time |
