@@ -35,7 +35,8 @@ runProgram() { # name expected
         if [ ! -f "$W/$name.exe" ]; then
             cat "$W/$name.build"; echo "BUILD FAILED: $name"; echo bad > "$W/$name.verdict"; return
         fi
-        out="$("$W/$name.exe")"; rc=$?
+        mkdir -p "$W/run_$name"       # (a scratch folder: a test that writes into its current folder must not leave files in the repository)
+        out="$(cd "$W/run_$name" && "$W/$name.exe")"; rc=$?
         pass=$(printf '%s\n' "$out" | grep -c '^PASS ')
         fail=$(printf '%s\n' "$out" | grep -c '^FAIL ')
         printf '%s\n' "$out" | grep -v '^PASS'

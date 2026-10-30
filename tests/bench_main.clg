@@ -1,0 +1,114 @@
+// What the run-time checks cost on app-cling's own code (docs/ceeling-in-app-cling.md, "What the checks cost").
+//   scripts/bench_checks.sh      builds this once with the checks on and once with both off and compares
+// Three operations, each repeated, through the real dispatcher and file policy with the window replaced by the test doubles:
+//   add     a command that does almost nothing: request parse, dispatch, reply print (the fixed cost of a call)
+//   read    fs.read of a 4 KiB file: the file policy (normalize, open, ask the OS, read)
+//   list    fs.list of a folder with 200 files: a loop that builds the reply
+// Prints "<name> <microseconds per call>"; the numbers mean something only next to the other build's.
+#include "text.clh"
+#include "files.clh"
+#include "app.clh"
+
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn double app_now_ms();
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_mkdir_raw(string path);
+ext_fn int app_test_remove_tree(string path);
+
+Item pathArgs(string p) {
+    Item o = createObject();
+    addStringToObject(o, "path", p);
+    return o;
+}
+
+string requestText(string command, Item args) {
+    Item arr = createArray();
+    addItemToArray(arr, createString(command));
+    addItemToArray(arr, args);
+    return printUnformatted(arr);
+}
+
+string reply(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    app_test_take_response(app.handle, gotId, status, json);
+    return intToString(status) + " " + json;
+}
+
+// microseconds per call, best of 5 runs of `times` calls
+double measure(App app, string request, int times) {
+    string first = reply(app, "b", request);
+    if (!startsWithText(first, "0 ")) {
+        std::cout << "the call is refused: " << first << std::endl;
+        return -1.0;
+    }
+    double best = 1.0e18;
+    int run = 0;
+    while (run < 5) {
+        double started = app_now_ms();
+        int i = 0;
+        int bad = 0;
+        while (i < times) {
+            string got = reply(app, "b", request);
+            if (got.length() < 2 || got[0] != '0') {
+                bad = bad + 1;
+            }
+            i = i + 1;
+        }
+        double spent = app_now_ms() - started;
+        if (bad != 0) {
+            std::cout << "a call failed" << std::endl;
+        }
+        if (spent < best) {
+            best = spent;
+        }
+        run = run + 1;
+    }
+    return best * 1000.0 / double(times);
+}
+
+int main() {
+    App app = new App();
+    app.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    app.enableFileCommands(1048576);
+    app.open("t", 100, 100, "<html></html>", "", false);
+    string base = "";
+    app_test_make_temp_dir(base);
+    string folder = base + "/data";
+    app_test_mkdir_raw(folder);
+    app.allowFolder(folder);
+    string block = "x";
+    int k = 0;
+    while (k < 12) {
+        block = block + block;
+        k = k + 1;
+    }
+    app_test_write_raw(folder + "/big.txt", block);
+    int n = 0;
+    while (n < 200) {
+        app_test_write_raw(folder + "/file" + intToString(n) + ".txt", "x");
+        n = n + 1;
+    }
+    string readRequest = requestText("fs.read", pathArgs(folder + "/big.txt"));
+    string listRequest = requestText("fs.list", pathArgs(folder));
+    double addUs = measure(app, "[\"add\",[2,3]]", 20000);
+    double readUs = measure(app, readRequest, 5000);
+    double listUs = measure(app, listRequest, 300);
+    std::cout << "add " << addUs << std::endl;
+    std::cout << "read " << readUs << std::endl;
+    std::cout << "list " << listUs << std::endl;
+    app_test_remove_tree(base);
+    return 0;
+}

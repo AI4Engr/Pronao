@@ -435,7 +435,9 @@ a fresh project builds in all three ways and its window starts.
 | `src/app.clg` | `Dispatcher`, `App`, the commands (files, programs, dialogs, watches, window), program lookup and slots, watch merging |
 | `src/bridge.js` | defines `window.cling.*`; embedded into the program at build time |
 | `shim/` | the native layer: `app_native.h` lists every primitive; `app_shim.cpp` window and queue; `win/` and `posix/` the OS parts |
-| `docs/ceeling-in-app-cling.md` | what the language and its compiler do in this program, with numbers (`scripts/ceeling_stats.sh`), what they found and where they got in the way |
+| `docs/ceeling-in-app-cling.md` | what the language and its compiler do in this program, with numbers (`scripts/ceeling_stats.sh`, `scripts/bench_checks.sh` for the cost of the run-time checks), what they found and where they got in the way |
+| `docs/command-journey.md` | one command (`fs.read`) from the page to the reply, with the generated C++ beside the CeeLing |
+| `docs/compile-errors.md` | the compile errors you will meet, what each meant, and the fix |
 | `examples/hello/` | window with three buttons |
 | `tests/` | headless suites, real-window self-test, queue stress test, sanitizer and negative-control scripts; `tests/doubles/` stands in for the window and the dialogs |
 

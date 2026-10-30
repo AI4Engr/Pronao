@@ -10,16 +10,21 @@ language and its compiler give a real program of about 3,900 lines, and where th
 
 Measured on 2026-10-29 with `scripts/ceeling_stats.sh` after `tests/run_headless.sh`:
 
-| | |
-|---|---|
-| CeeLing source in `src/` (comments and blank lines left out) | 3,898 lines |
-| Memory-management words in that source (`delete`, `.get()`, `reinterpret`, `std::move`, `unique_ptr`, `shared_ptr`, `weak_ptr`) | **0** |
-| Smart pointers the compiler chose and wrote in the generated C++ | 68 `unique_ptr`, 326 `shared_ptr`, 0 `weak_ptr` |
-| `std::move` the compiler inserted | 34 |
-| Bounds checks the compiler inserted (`cling::at`) | 289 |
-| Null checks the compiler inserted (`cling::nn`) | 384 |
-| Closures, of which thread jobs (`spawn`) | 32, of which 6 |
-| `ext_fn` declarations: the whole trusted native surface the checked code can call | 48 |
+| | app-cling `src/` | tauriport (`examples/tauriport/tauriport.clg`) |
+|---|---|---|
+| CeeLing source (comments and blank lines left out) | 3,898 lines | 771 lines |
+| Memory-management words in that source (`delete`, `.get()`, `reinterpret`, `std::move`, `unique_ptr`, `shared_ptr`, `weak_ptr`) | **0** | **0** |
+| Smart pointers the compiler chose and wrote in the generated C++ | 68 `unique_ptr`, 326 `shared_ptr`, 0 `weak_ptr` | 3 `unique_ptr`, 143 `shared_ptr`, 0 `weak_ptr` |
+| `std::move` the compiler inserted | 34 | 28 |
+| Bounds checks the compiler inserted (`cling::at`) | 289 | 62 |
+| Null checks the compiler inserted (`cling::nn`) | 384 | 79 |
+| Closures, of which thread jobs (`spawn`) | 32, of which 6 | 23, of which 9 |
+| `ext_fn` declarations: the native surface the checked code can call | 48 | 1 |
+
+tauriport is a port of a Tauri application's backend (a folder under version control with the `lore` tool, shown by a web UI) written on top of app-cling; its column
+counts its own file only, not the app-cling modules it uses. Its single `ext_fn` is an environment-variable lookup. The count of `shared_ptr` is high relative to its size;
+I have not looked at why for each one, and the compiler's reasons are not printed.
+The numbers come from `scripts/ceeling_stats.sh` (for the second column: `SRC=examples/tauriport/tauriport.clg GEN=tauriport.cpp scripts/ceeling_stats.sh <work dir>`).
 
 The first row is the point. The program creates, shares, moves and drops many kinds of objects (windows, watches, command tables, the file policy, program runs) and its source
 never says who owns what.
@@ -32,7 +37,7 @@ caller both hold it) and writes `std::shared_ptr`; a value only one place owns b
 
 **Every subscript and every object dereference is checked at run time.** `v[i]` is `cling::at(v, i, line)` and `n.field` is `cling::nn(n, line)`; a bad index or an
 empty handle prints the `.clg` line and aborts instead of reading memory. `scripts/build.sh` builds app-cling with both checks on (the opt-out flags exist and are
-not used here). The program has 289 and 384 of them.
+not used here). The program has 289 and 384 of them (previous section: what they cost).
 
 **Threads share nothing but plain values.** The 6 `spawn(closure Job [...])` in `src/app.clg` (the `proc.run` command, the four dialogs, the close
 confirmation) can capture strings, numbers and vectors of them, and structs made of those; the compiler refuses an object. That rule shapes the design:
@@ -63,6 +68,22 @@ value *means* is still checked by hand next to it (a title is plain text of at m
 `proc.run` stays hand-written: its arguments are slots that depend on the program registered at run time, which no struct can describe.
 
 Doing this found two gaps in CeeLing, both fixed there: structs had no optional fields, and a decoder was not visible to a closure of an included file.
+
+## What the checks cost
+
+`scripts/bench_checks.sh` builds `tests/bench_main.clg` twice, with the two checks on and with `--no-bounds-checks --no-null-checks`, and runs them alternately.
+Measured 2026-10-29 on one Windows machine (MinGW g++, `-O1`, best of 5 rounds), through the real dispatcher and file policy with the window replaced by the test doubles:
+
+| operation | checks on | checks off | difference |
+|---|---|---|---|
+| `add`: a command that does almost nothing (parse, dispatch, reply) | 1.16 us | 1.12 us | +3.8% |
+| `fs.read` of a 4 KiB file | 68.7 us | 68.3 us | +0.6% |
+| `fs.list` of a folder with 200 files | 237.3 us | 236.3 us | +0.4% |
+
+How far to trust that: repeated runs differ by about 2 to 3 percent (another series gave +2.7% for the read), so read these as "a few percent at most", not as three
+precise figures. The build with the checks has 988 of them in the generated code, the other has none (the script prints both counts). What the numbers leave out: a real
+call also crosses WebView2 and the browser's message loop, which costs milliseconds, so in use the share of the checks is smaller still; a different compiler or machine,
+and code that loops over large vectors with a subscript (zlib-cling, where CeeLing measured +5.5% and +11.3%) would show other figures. app-cling is built with the checks on.
 
 ## What the tools found in this code
 
@@ -101,5 +122,3 @@ See [compile-errors.md](compile-errors.md) for the messages themselves and the f
 ## To add
 
 - A second journey for an asynchronous command (`proc.run`: the `spawn`, the worker, `Pump`, the reply from another thread).
-- The same numbers for tauriport (`examples/tauriport/`), which is the larger program.
-- A measured cost of the checks on this program (the CeeLing side measured +5.5% / +11.3% on zlib-cling; nothing here has been timed).
