@@ -86,6 +86,7 @@ Each of these cost real code or time; they are listed in CeeLing's `TODO.md`.
 - `std::map` holds only primitives, so tables of objects are parallel vectors (`WindowBook`, `LaterBook`, `PumpBook`).
 - Generics are fixed: `std::vector`, `std::map`, `Channel<T>`; no user templates.
 
+One command from the page to the reply, with the generated C++ beside the CeeLing: [command-journey.md](command-journey.md).
 See [compile-errors.md](compile-errors.md) for the messages themselves and the fix for each.
 
 ## What this does not claim
@@ -99,6 +100,6 @@ See [compile-errors.md](compile-errors.md) for the messages themselves and the f
 
 ## To add
 
-- A short tour: one command from the page to the reply, with the generated C++ beside the CeeLing (`fs.read`, say).
+- A second journey for an asynchronous command (`proc.run`: the `spawn`, the worker, `Pump`, the reply from another thread).
 - The same numbers for tauriport (`examples/tauriport/`), which is the larger program.
 - A measured cost of the checks on this program (the CeeLing side measured +5.5% / +11.3% on zlib-cling; nothing here has been timed).
