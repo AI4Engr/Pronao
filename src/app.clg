@@ -550,8 +550,58 @@ bool plainFileName(string name) {
     return true;
 }
 
-string dialogTitle(Item args) {
-    string title = optionalString(args, "title", "");
+// ---- what a page sends: the shapes are structs, CeeLing writes the decoders (decodeDialogArgs, ...: see CeeLing's CLAUDE.md "generated JSON decoders") ----
+// A struct with a constructor that takes no parameters has OPTIONAL fields: a missing (or null) field keeps the value the constructor gave it, a field that is
+// present must have the right type or the call is refused with the field's name. What a value MEANS (lengths, characters, ranges) is checked below.
+struct FilterArgs {
+public:
+    string name;
+    std::vector<string> extensions;
+    FilterArgs() {
+        name = "";
+    }
+};
+
+struct DialogArgs {
+public:
+    string title;
+    string defaultName;
+    std::vector<FilterArgs> filters;
+    DialogArgs() {
+        title = "";
+        defaultName = "";
+    }
+};
+
+struct MessageArgs {
+public:
+    string title;
+    string message;
+    string kind;
+    string buttons;
+    MessageArgs() {
+        title = "";
+        message = "";
+        kind = "info";
+        buttons = "ok";
+    }
+};
+
+struct OpenWindowArgs {
+public:
+    string start;
+    string title;
+    int width;
+    int height;
+    OpenWindowArgs() {
+        start = "";
+        title = "";
+        width = 800;
+        height = 600;
+    }
+};
+
+string checkedTitle(string title) {
     if (!plainText(title, 200)) {
         throw "invalid_argument: `title` must be plain text of at most 200 bytes";
     }
@@ -559,54 +609,33 @@ string dialogTitle(Item args) {
 }
 
 // [{name: "Text", extensions: ["txt", "md"]}, {name: "Everything"}] -> label, pattern, label, pattern ... ("*.txt;*.md", "*.*")
-std::vector<string> filterList(Item args) {
+std::vector<string> filterList(DialogArgs a) {
     std::vector<string> out;
-    Item list = getObjectItem(objectArg(args), "filters");
-    if (list == nullptr) {
-        return out;
-    }
-    if (!isArray(list)) {
-        throw "invalid_argument: `filters` must be an array";
-    }
-    if (getArraySize(list) > 20) {
+    if (a.filters.size() > 20) {
         throw "invalid_argument: at most 20 filters";
     }
     int i = 0;
-    while (i < getArraySize(list)) {
-        Item f = getArrayItem(list, i);
-        Item name = nullptr;
-        if (isObject(f)) {
-            name = getObjectItem(f, "name");
-        }
-        if (name == nullptr || !isString(name)) {
-            throw "invalid_argument: every filter needs a string `name`";
-        }
-        if (name.valuestring.length() == 0 || !plainText(name.valuestring, 80)) {
+    while (i < a.filters.size()) {
+        FilterArgs f = a.filters[i];
+        if (f.name.length() == 0 || !plainText(f.name, 80)) {
             throw "invalid_argument: a filter `name` must be plain text of 1 to 80 bytes";
         }
         string pattern = "*.*";
-        Item exts = getObjectItem(f, "extensions");
-        if (exts != nullptr) {
-            if (!isArray(exts)) {
-                throw "invalid_argument: `extensions` must be an array of strings";
-            }
-            if (getArraySize(exts) > 0) {
-                pattern = "";
-                int j = 0;
-                while (j < getArraySize(exts)) {
-                    Item e = getArrayItem(exts, j);
-                    if (!isString(e) || !extensionOk(e.valuestring)) {
-                        throw "invalid_argument: an extension is 1 to 16 letters, digits, _ or -";
-                    }
-                    if (j > 0) {
-                        pattern = pattern + ";";
-                    }
-                    pattern = pattern + "*." + e.valuestring;
-                    j = j + 1;
+        if (f.extensions.size() > 0) {
+            pattern = "";
+            int j = 0;
+            while (j < f.extensions.size()) {
+                if (!extensionOk(f.extensions[j])) {
+                    throw "invalid_argument: an extension is 1 to 16 letters, digits, _ or -";
                 }
+                if (j > 0) {
+                    pattern = pattern + ";";
+                }
+                pattern = pattern + "*." + f.extensions[j];
+                j = j + 1;
             }
         }
-        out.push_back(name.valuestring);
+        out.push_back(f.name);
         out.push_back(pattern);
         i = i + 1;
     }
@@ -614,20 +643,15 @@ std::vector<string> filterList(Item args) {
 }
 
 // the first extension of the first filter, which a "save as" dialog appends to a name typed without one
-string defaultExtension(Item args) {
-    Item list = getObjectItem(objectArg(args), "filters");
-    if (list == nullptr || !isArray(list) || getArraySize(list) == 0) {
+string defaultExtension(DialogArgs a) {
+    if (a.filters.size() == 0) {
         return "";
     }
-    Item exts = getObjectItem(getArrayItem(list, 0), "extensions");
-    if (exts == nullptr || !isArray(exts) || getArraySize(exts) == 0) {
+    FilterArgs first = a.filters[0];
+    if (first.extensions.size() == 0) {
         return "";
     }
-    Item first = getArrayItem(exts, 0);
-    if (first == nullptr || !isString(first)) {
-        return "";
-    }
-    return first.valuestring;
+    return first.extensions[0];
 }
 
 // What the worker that showed a dialog sends the main loop when the user chose something: the main loop applies the grant
@@ -2156,8 +2180,9 @@ public:
     // one file (or folder) to the file commands.
     void enableDialogCommands() {
         asyncCommand("dialog.open", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = dialogTitle(args);
-            std::vector<string> filters = filterList(args);
+            DialogArgs given = decodeDialogArgs(args);
+            string title = checkedTitle(given.title);
+            std::vector<string> filters = filterList(given);
             spawn(closure Job [title, filters, id, handle] () {
                 string chosen = "";
                 int status = app_dialog_pick(handle, 0, title, "", "", filters, chosen);
@@ -2165,13 +2190,14 @@ public:
             });
         });
         asyncCommand("dialog.save", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = dialogTitle(args);
-            string suggested = optionalString(args, "defaultName", "");
+            DialogArgs given = decodeDialogArgs(args);
+            string title = checkedTitle(given.title);
+            string suggested = given.defaultName;
             if (suggested.length() > 0 && !plainFileName(suggested)) {
                 throw "invalid_argument: `defaultName` must be a file name without a folder";
             }
-            std::vector<string> filters = filterList(args);
-            string extension = defaultExtension(args);
+            std::vector<string> filters = filterList(given);
+            string extension = defaultExtension(given);
             spawn(closure Job [title, suggested, extension, filters, id, handle] () {
                 string chosen = "";
                 int status = app_dialog_pick(handle, 1, title, suggested, extension, filters, chosen);
@@ -2179,7 +2205,8 @@ public:
             });
         });
         asyncCommand("dialog.folder", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = dialogTitle(args);
+            DialogArgs given = decodeDialogArgs(args);
+            string title = checkedTitle(given.title);
             std::vector<string> none;
             spawn(closure Job [title, none, id, handle] () {
                 string chosen = "";
@@ -2188,13 +2215,14 @@ public:
             });
         });
         asyncCommand("dialog.message", closure AsyncCommand [] (Item args, string id, int handle) {
-            string title = dialogTitle(args);
-            string message = requiredString(args, "message");
-            if (!plainText(message, 4000)) {
-                throw "invalid_argument: `message` must be plain text of at most 4000 bytes";
+            MessageArgs given = decodeMessageArgs(args);
+            string title = checkedTitle(given.title);
+            string message = given.message;
+            if (message.length() == 0 || !plainText(message, 4000)) {
+                throw "invalid_argument: `message` must be plain text of 1 to 4000 bytes";
             }
-            int kind = dialogKind(optionalString(args, "kind", "info"));
-            int buttons = dialogButtons(optionalString(args, "buttons", "ok"));
+            int kind = dialogKind(given.kind);
+            int buttons = dialogButtons(given.buttons);
             if (kind < 0 || buttons < 0) {
                 throw "invalid_argument: unknown `kind` or `buttons`";
             }
@@ -2302,29 +2330,20 @@ public:
         CallContext who = dispatcher.caller;
         WindowBook book = windows;
         command("window.open", closure Command [who, book, max] (Item args) {
-            string start = requiredString(args, "start");
+            OpenWindowArgs given = decodeOpenWindowArgs(args);
+            string start = given.start;
             if (!pagePathOk(start)) {
                 throw "invalid_argument: `start` must be a path inside the site, such as /settings.html";
             }
-            string title = optionalString(args, "title", "");
+            string title = given.title;
             if (title.length() > 0 && !plainText(title, 200)) {
                 throw "invalid_argument: `title` must be plain text of at most 200 bytes";
             }
-            double width = 800.0;
-            double height = 600.0;
-            Item w = getObjectItem(objectArg(args), "width");
-            Item h = getObjectItem(objectArg(args), "height");
-            if (w != nullptr) {
-                if (!isNumber(w) || w.valuedouble < 200.0 || w.valuedouble > 10000.0) {
-                    throw "invalid_argument: `width` must be 200 to 10000";
-                }
-                width = w.valuedouble;
+            if (given.width < 200 || given.width > 10000) {
+                throw "invalid_argument: `width` must be 200 to 10000";
             }
-            if (h != nullptr) {
-                if (!isNumber(h) || h.valuedouble < 150.0 || h.valuedouble > 10000.0) {
-                    throw "invalid_argument: `height` must be 150 to 10000";
-                }
-                height = h.valuedouble;
+            if (given.height < 150 || given.height > 10000) {
+                throw "invalid_argument: `height` must be 150 to 10000";
             }
             if (book.count() >= max) {
                 string message = "too_many: at most " + intToString(max) + " windows can be open";
@@ -2336,9 +2355,9 @@ public:
             record.push_back(char(0));
             record = record + title;
             record.push_back(char(0));
-            record = record + intToString(int(width));
+            record = record + intToString(given.width);
             record.push_back(char(0));
-            record = record + intToString(int(height));
+            record = record + intToString(given.height);
             record.push_back(char(0));
             if (app_push(who.handle, "", record, 100) != 1) {
                 throw "busy: the application is not keeping up";

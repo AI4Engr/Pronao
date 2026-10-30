@@ -12,11 +12,11 @@ Measured on 2026-10-29 with `scripts/ceeling_stats.sh` after `tests/run_headless
 
 | | |
 |---|---|
-| CeeLing source in `src/` (comments and blank lines left out) | 3,886 lines |
+| CeeLing source in `src/` (comments and blank lines left out) | 3,898 lines |
 | Memory-management words in that source (`delete`, `.get()`, `reinterpret`, `std::move`, `unique_ptr`, `shared_ptr`, `weak_ptr`) | **0** |
-| Smart pointers the compiler chose and wrote in the generated C++ | 68 `unique_ptr`, 317 `shared_ptr`, 0 `weak_ptr` |
-| `std::move` the compiler inserted | 35 |
-| Bounds checks the compiler inserted (`cling::at`) | 284 |
+| Smart pointers the compiler chose and wrote in the generated C++ | 68 `unique_ptr`, 326 `shared_ptr`, 0 `weak_ptr` |
+| `std::move` the compiler inserted | 34 |
+| Bounds checks the compiler inserted (`cling::at`) | 289 |
 | Null checks the compiler inserted (`cling::nn`) | 384 |
 | Closures, of which thread jobs (`spawn`) | 32, of which 6 |
 | `ext_fn` declarations: the whole trusted native surface the checked code can call | 48 |
@@ -32,7 +32,7 @@ caller both hold it) and writes `std::shared_ptr`; a value only one place owns b
 
 **Every subscript and every object dereference is checked at run time.** `v[i]` is `cling::at(v, i, line)` and `n.field` is `cling::nn(n, line)`; a bad index or an
 empty handle prints the `.clg` line and aborts instead of reading memory. `scripts/build.sh` builds app-cling with both checks on (the opt-out flags exist and are
-not used here). The program has 284 and 384 of them.
+not used here). The program has 289 and 384 of them.
 
 **Threads share nothing but plain values.** The 6 `spawn(closure Job [...])` in `src/app.clg` (the `proc.run` command, the four dialogs, the close
 confirmation) can capture strings, numbers and vectors of them, and structs made of those; the compiler refuses an object. That rule shapes the design:
@@ -52,6 +52,17 @@ other side. Policy lives on this side: `FileGate` decides what a path may reach 
 
 **Errors are values with a code.** `throw "not_found: no such watch";` is turned by the dispatcher into the page's `{code, message}`; a thrown string is the only
 kind of exception, so an error cannot carry a hidden object.
+
+## Generated decoders for command arguments
+
+`window.open` and the four dialogs do not pick fields out of the JSON by hand. `src/app.clg` declares the shapes as structs (`OpenWindowArgs`, `DialogArgs`, `FilterArgs`,
+`MessageArgs`) and writes `OpenWindowArgs given = decodeOpenWindowArgs(args);`; the compiler writes `decodeOpenWindowArgs` (see CeeLing's `struct_json.cpp`). Each struct has a
+constructor without parameters, which makes every field optional with the constructor's value as the default (`width = 800`). What the decoder checks is the *type*: a field
+of the wrong type is refused with its path, ``invalid_argument: `filters[0].name` must be a string``, and an `int` must be a whole number inside the range of an `int`. What a
+value *means* is still checked by hand next to it (a title is plain text of at most 200 bytes, a width is 200 to 10000, a message is 1 to 4000 bytes).
+`proc.run` stays hand-written: its arguments are slots that depend on the program registered at run time, which no struct can describe.
+
+Doing this found two gaps in CeeLing, both fixed there: structs had no optional fields, and a decoder was not visible to a closure of an included file.
 
 ## What the tools found in this code
 
@@ -87,8 +98,6 @@ Each of these cost real code or time; they are listed in CeeLing's `TODO.md`.
 ## To add
 
 - A short tour: one command from the page to the reply, with the generated C++ beside the CeeLing (`fs.read`, say).
-- `decodeX` for command arguments: `src/` still reads fields by hand (`requiredString`, ...); using the generated struct decoders on `window.open`, the dialogs and `proc.run`
-  would shorten it and be a second example of generated code.
 - A table of the compile errors the code ran into and what each meant (use after move, capture of an object by `spawn`, unknown call), with the fix.
 - The same numbers for tauriport (`examples/tauriport/`), which is the larger program.
 - A measured cost of the checks on this program (the CeeLing side measured +5.5% / +11.3% on zlib-cling; nothing here has been timed).

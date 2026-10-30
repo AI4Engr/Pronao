@@ -67,7 +67,7 @@ control "pending calls are told apart by window" app.clg '            if (ids[i]
 control "cancel tags are told apart by window" app.clg '            if (tags[i] == tag && tagHandles[i] == handle) {' '            if (tags[i] == tag) {' headless_main "and leaves a's call with the same tag and id running"
 control "a window own command list" app.clg '        if (own) {' '        if (false) {' headless_main "it then calls what its own list allows"
 control "a run is vetted before the native runner" app.clg '    if (!toolRunOk(run)) {' '    if (false) {' headless_main "runTool refuses what is not fit, without starting anything"
-control "a relative program is not fit to run" app.clg '    if (!exeAbsolute || !cwdAbsolute || !plainText(run.exe, 32000) || !plainText(run.cwd, 32000)) {' '    if (!plainText(run.exe, 32000) || !plainText(run.cwd, 32000)) {' headless_main "a relative program is not"
+control "a relative program is not fit to run" app.clg '    if (!exeAbsolute || !cwdAbsolute || !plainText(exe, 32000) || !plainText(cwd, 32000)) {' '    if (!plainText(exe, 32000) || !plainText(cwd, 32000)) {' headless_main "a relative program is not"
 control "a site origin is vetted" assets.clg ' || endsWithText(origin, "/")) {' ') {' site_main "an origin with a trailing slash is refused"
 control "request size limit" shim/queue.h '        if (static_cast<int>(request.size()) > max_request) return 1;' '' headless_main "a call over the size limit is refused"
 control "queue length limit" shim/queue.h '        if (static_cast<int>(q_.size()) >= max_queued) return 2;' '        if (false) return 2;' headless_main "with 3 waiting"

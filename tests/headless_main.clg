@@ -783,6 +783,10 @@ int main() {
     Item badFilters = createObject();
     addStringToObject(badFilters, "filters", "txt");
     check("filters must be an array", startsWith(roundTrip(app, "d19", requestText("dialog.open", badFilters)), "1 {\"code\":\"invalid_argument\""));
+    check("a field of the wrong type is named (generated decoder)", roundTrip(app, "d19b", "[\"dialog.open\",{\"filters\":[{\"name\":5}]}]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`filters[0].name` must be a string\"}");
+    app_test_dialog_push("button:1");
+    check("a null field counts as absent", startsWith(roundTrip(app, "d19c", "[\"dialog.message\",{\"message\":\"hi\",\"title\":null}]"), "0 {\"button\":") &&
+          latestRequest() == "message||hi|0|0");
     Item badExtension = createObject();
     Item badList = addArrayToObject(badExtension, "filters");
     Item oddFilter = createObject();
@@ -1721,6 +1725,7 @@ int main() {
     check("a start outside the site is refused", startsWith(roundTripOn(mw, wa, "o2", "[\"window.open\",{\"start\":\"http://example.com/\"}]"), "1 {\"code\":\"invalid_argument\"") && startsWith(roundTripOn(mw, wa, "o3", "[\"window.open\",{\"start\":\"/../secret.html\"}]"), "1 {\"code\":\"invalid_argument\""));
     check("a start must be given", startsWith(roundTripOn(mw, wa, "o4", "[\"window.open\",{}]"), "1 {\"code\":\"invalid_argument\""));
     check("a size out of range is refused", startsWith(roundTripOn(mw, wa, "o5", "[\"window.open\",{\"start\":\"/x.html\",\"width\":50}]"), "1 {\"code\":\"invalid_argument\""));
+    check("a fractional size is not a whole number", startsWith(roundTripOn(mw, wa, "o5b", "[\"window.open\",{\"start\":\"/x.html\",\"width\":800.5}]"), "1 {\"code\":\"invalid_argument\",\"message\":\"`width` must be a whole number"));
     check("three windows are open and the cap is three: no more", startsWith(roundTripOn(mw, wa, "o6", "[\"window.open\",{\"start\":\"/x.html\"}]"), "1 {\"code\":\"too_many\""));
 
     // closing windows one by one

@@ -7,7 +7,7 @@
 set -uo pipefail
 T0=$(date +%s)
 cd "$1"
-EXPECTED=292
+EXPECTED=295
 EXPECTED_FILES=123
 EXPECTED_PROGRAMS=15
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
