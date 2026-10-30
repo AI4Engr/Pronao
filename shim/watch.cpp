@@ -2,6 +2,7 @@
 // decided in src/app.clg; the loops that talk to the OS are in win/watch.cpp and posix/watch.cpp.
 #include "watch.h"
 
+#include <chrono>
 #include <mutex>
 #include <vector>
 
@@ -59,6 +60,16 @@ int app_watch_start(int handle, std::string root, int recursive, int& watch_id) 
         reg.all.push_back(w);
     }
     w->thread = std::thread(watchMain, w);
+    {
+        // wait (a few seconds at most) until the loop has armed the watch: a change made right after fs.watch answers must not be lost
+        std::unique_lock<std::mutex> lock(w->armMutex);
+#if defined(__SANITIZE_THREAD__)
+        // (GCC 11's ThreadSanitizer does not intercept pthread_cond_clockwait, which a steady_clock wait uses: it would report a double lock that is not there; see queue.h)
+        w->armCv.wait_until(lock, std::chrono::system_clock::now() + std::chrono::seconds(5), [&] { return w->armed; });
+#else
+        w->armCv.wait_for(lock, std::chrono::seconds(5), [&] { return w->armed; });
+#endif
+    }
     watch_id = w->id;
     return 0;
 }

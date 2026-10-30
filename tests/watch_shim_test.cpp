@@ -95,6 +95,23 @@ int main() {
     (void)junk;
     gather(h, 300);
 
+    // ---- a change made right after app_watch_start returns is not lost (the OS is watching before it returns) ----
+    {
+        int missed = 0;
+        for (int round = 0; round < 20; ++round) {
+            const std::string fresh = join(base, "fresh" + std::to_string(round));
+            mkd(fresh);
+            int wf = 0;
+            if (app_watch_start(h, fresh, 0, wf) != 0) { ++missed; continue; }
+            put(join(fresh, "first.txt"), "x");               // at once: no pause between starting and changing
+            auto got = gather(h, 250, 3000);
+            if (!has(got, "created", "first.txt")) ++missed;
+            app_watch_stop(h, wf);
+            gather(h, 20);
+        }
+        check("a file made the moment a watch starts is reported (20 times)", missed == 0);
+    }
+
     // ---- the basic changes ----
     put(join(dir, "a.txt"), "one");
     auto r = gather(h, 400);

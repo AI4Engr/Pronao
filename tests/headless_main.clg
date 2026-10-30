@@ -1580,11 +1580,17 @@ int main() {
     app_test_inject(wb, "spinB", "[\"aspin\",null,\"t\"]");
     mw.serveOne(200);
     mw.serveOne(200);
-    roundTripOn(mw, wb, "stop", "[\"$cancel\",\"t\"]");
-    check("cancelling tag t from window b ends b's call", answerOn(mw, wb) == "0 \"cancelled\"");
+    // (the cancel call is answered "null" and the cancelled call "cancelled", in either order: the worker may notice the cancel before the main loop has
+    // sent the answer to the $cancel call itself)
+    app_test_inject(wb, "stop", "[\"$cancel\",\"t\"]");
+    string firstB = answerOn(mw, wb);
+    string secondB = answerOn(mw, wb);
+    check("cancelling tag t from window b ends b's call", (firstB == "0 \"cancelled\"" && secondB == "0 null") || (firstB == "0 null" && secondB == "0 \"cancelled\""));
     check("and leaves a's call with the same tag and id running", app_test_response_ready(wa) == 0);
-    roundTripOn(mw, wa, "stop", "[\"$cancel\",\"t\"]");
-    check("a's own cancel ends it", answerOn(mw, wa) == "0 \"cancelled\"");
+    app_test_inject(wa, "stop", "[\"$cancel\",\"t\"]");
+    string firstA = answerOn(mw, wa);
+    string secondA = answerOn(mw, wa);
+    check("a's own cancel ends it", (firstA == "0 \"cancelled\"" && secondA == "0 null") || (firstA == "0 null" && secondA == "0 \"cancelled\""));
 
     // a Later is registered for one window's call id
     Counted tally = new Counted();

@@ -404,10 +404,10 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # 282 end-to-end + 139 file policy and text + 18 program lookup + 38 site + 50 tauriport (needs lore) + 33 process + 26 watcher, no window
+bash tests/run_headless.sh            # ~20 s: 282 end-to-end + 139 file policy and text + 18 program lookup + 38 site + 50 tauriport (needs lore) + 33 process + 27 watcher, no window (SLOW=1: build at -O1)
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
-bash tests/run_sanitizers.sh          # WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
-bash tests/negative_controls.sh       # removes one check at a time from src/ and shows the tests fail
+bash tests/run_sanitizers.sh          # ~80 s, WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
+bash tests/negative_controls.sh       # ~65 s: removes one check at a time from src/ and shows the tests fail
 bash tests/run_tauriport_window.sh     # the tauriport port in a real window, against the real lore tool
 bash tests/run_tauriport_frontend.sh   # tauriport's own compiled front end, served from memory, in a real window
 ```

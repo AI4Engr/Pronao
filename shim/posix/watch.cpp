@@ -35,6 +35,7 @@ void watchMain(std::shared_ptr<Watch> w) {
     const int ifd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
     std::map<int, std::string> wds;                        // watch descriptor -> folder relative to the root
     if (ifd >= 0) addTree(ifd, w->root, std::string(), w->recursive, wds, 0);
+    markArmed(*w);                                         // (the watches are added: from here on the kernel queues every change)
     if (ifd < 0 || wds.empty()) { if (ifd >= 0) close(ifd); pushEvent(*w, "stopped", "failed", ""); w->finished = true; return; }
     std::map<uint32_t, std::string> movedFrom;             // cookie -> old relative path
     std::vector<char> buf(65536);
