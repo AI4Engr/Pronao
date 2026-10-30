@@ -86,6 +86,8 @@ Each of these cost real code or time; they are listed in CeeLing's `TODO.md`.
 - `std::map` holds only primitives, so tables of objects are parallel vectors (`WindowBook`, `LaterBook`, `PumpBook`).
 - Generics are fixed: `std::vector`, `std::map`, `Channel<T>`; no user templates.
 
+See [compile-errors.md](compile-errors.md) for the messages themselves and the fix for each.
+
 ## What this does not claim
 
 - It is not "memory safe" or "thread safe" as a whole. The claim is about the checked code: no dangling references, no use after move, no out-of-bounds
@@ -98,6 +100,5 @@ Each of these cost real code or time; they are listed in CeeLing's `TODO.md`.
 ## To add
 
 - A short tour: one command from the page to the reply, with the generated C++ beside the CeeLing (`fs.read`, say).
-- A table of the compile errors the code ran into and what each meant (use after move, capture of an object by `spawn`, unknown call), with the fix.
 - The same numbers for tauriport (`examples/tauriport/`), which is the larger program.
 - A measured cost of the checks on this program (the CeeLing side measured +5.5% / +11.3% on zlib-cling; nothing here has been timed).
