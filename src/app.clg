@@ -1169,36 +1169,40 @@ public:
 
 // What the native runner is given must already be fit for the operating system: absolute paths, text that is valid UTF-8 without a NUL, environment
 // entries of the form NAME=value, limits in range. The native layer checks none of it (it only runs what it is handed), so this is the one place.
-bool toolRunOk(ToolRun run) {
+bool runFitsOs(string exe, std::vector<string> args, string cwd, std::vector<string> env, int timeoutMs, int maxBytes) {
     bool windows = app_os_windows() == 1;
-    bool exeAbsolute = run.exe.length() > 0 && run.exe[0] == '/';
-    bool cwdAbsolute = run.cwd.length() > 0 && run.cwd[0] == '/';
+    bool exeAbsolute = exe.length() > 0 && exe[0] == '/';
+    bool cwdAbsolute = cwd.length() > 0 && cwd[0] == '/';
     if (windows) {
-        exeAbsolute = windowsAbsolute(run.exe);
-        cwdAbsolute = windowsAbsolute(run.cwd);
+        exeAbsolute = windowsAbsolute(exe);
+        cwdAbsolute = windowsAbsolute(cwd);
     }
-    if (!exeAbsolute || !cwdAbsolute || !plainText(run.exe, 32000) || !plainText(run.cwd, 32000)) {
+    if (!exeAbsolute || !cwdAbsolute || !plainText(exe, 32000) || !plainText(cwd, 32000)) {
         return false;
     }
-    if (run.timeoutMs < 1 || run.timeoutMs > 600000 || run.maxBytes < 0 || run.maxBytes > 67108864) {
+    if (timeoutMs < 1 || timeoutMs > 600000 || maxBytes < 0 || maxBytes > 67108864) {
         return false;
     }
     int i = 0;
-    while (i < run.args.size()) {
-        if (!plainText(run.args[i], 32000)) {
+    while (i < args.size()) {
+        if (!plainText(args[i], 32000)) {
             return false;
         }
         i = i + 1;
     }
     int e = 0;
-    while (e < run.env.size()) {
-        string entry = run.env[e];
+    while (e < env.size()) {
+        string entry = env[e];
         if (!plainText(entry, 32000) || indexOfChar(entry, '=') < 1) {
             return false;
         }
         e = e + 1;
     }
     return true;
+}
+
+bool toolRunOk(ToolRun run) {
+    return runFitsOs(run.exe, run.args, run.cwd, run.env, run.timeoutMs, run.maxBytes);
 }
 
 ToolResult runTool(ToolRun run) {
@@ -2081,6 +2085,9 @@ public:
             string exe = spec.exe;
             int timeoutMs = spec.timeoutMs;
             int maxBytes = spec.maxBytes;
+            if (!runFitsOs(exe, argv, cwd, env, timeoutMs, maxBytes)) {
+                throw "invalid_argument: the program cannot be started with these arguments";
+            }
             spawn(closure Job [exe, argv, cwd, env, timeoutMs, maxBytes, id, handle] () {
                 string out = "";
                 string err = "";
