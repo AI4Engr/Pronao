@@ -22,7 +22,6 @@ int app_eval(int handle, std::string js);                                   // r
 int app_push(int handle, std::string id, std::string request, int max_queued);  // queues a record for app_next_call (id empty = the
                                                                                  // shim's own, never a page's); 1, 0 if max_queued wait, -1 no window
 int app_terminate(int handle);
-int app_window_closed(int handle);                                         // 1 once the window has closed (or never existed): long jobs poll this to stop early                                              // ends the message loop; the window closes
 int app_close(int handle);                                                  // terminates if needed, joins the UI thread, frees the handle
 // Window control (Windows; -1 elsewhere). state: 0 restore, 1 minimize, 2 maximize, 3 bring to front. guard 1: closing the window
 // (X, Alt+F4) no longer closes it but queues the record "window" "close_requested" for the main loop.
@@ -94,4 +93,3 @@ int app_dialog_message(int handle, std::string title, std::string message, int k
 // Paths are relative to `root`, with / separators. `root` must be vetted by the caller. The thread has ended when stop returns.
 int app_watch_start(int handle, std::string root, int recursive, int& watch_id);
 int app_watch_stop(int handle, int watch_id);
-int app_watch_stop_all(int handle);

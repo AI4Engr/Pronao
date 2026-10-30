@@ -36,11 +36,6 @@ DWORD WINAPI readerMain(LPVOID p) {
     return 0;
 }
 
-bool absolute(const std::wstring& w) {   // C:\... or \\server\...; never relative, never a device path
-    return w.size() >= 3 && (((w[0] | 32) >= L'a' && (w[0] | 32) <= L'z' && w[1] == L':' && (w[2] == L'\\' || w[2] == L'/')) ||
-                             (w[0] == L'\\' && w[1] == L'\\' && w[2] != L'?' && w[2] != L'.'));
-}
-
 struct AttrList {   // the list that says which handles the child inherits
     std::vector<char> mem;
     LPPROC_THREAD_ATTRIBUTE_LIST list = nullptr;
@@ -71,28 +66,17 @@ int app_os_path_kind(std::string path) {
     return a == INVALID_FILE_ATTRIBUTES ? 0 : (a & FILE_ATTRIBUTE_DIRECTORY) ? 2 : 5;
 }
 
-// Runs `exe` in `cwd` (both absolute) with exactly the environment `env`: no stdin, no console window, only three handles inherited,
+// Runs `exe` in `cwd` with exactly the environment `env` (all of it already vetted by CeeLing: toolRunOk): no stdin, no console window, only three handles inherited,
 // inside a job object so that everything it starts dies with it. flags: 1 timed out, 2 stdout cut at max_bytes, 4 stderr cut.
 int app_proc_run(int handle, std::string call, std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env,
                  int timeout_ms, int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
     out.clear(); err.clear(); exit_code = -1; flags = 0;
     const std::wstring wexe = widen(exe), wcwd = widen(cwd);
-    if (!absolute(wexe) || !absolute(wcwd)) return 5;
-    timeout_ms = std::max(1, std::min(timeout_ms, 600000));
-    const size_t cap = static_cast<size_t>(std::max(0, std::min(max_bytes, 64 * 1024 * 1024)));
+    const size_t cap = static_cast<size_t>(max_bytes);
     std::wstring cmd = quoteArg(wexe), block;
-    for (const auto& a : args) {
-        const std::wstring w = widen(a);
-        if ((w.empty() && !a.empty()) || w.find(wchar_t(0)) != std::wstring::npos) return 5;
-        cmd += L" " + quoteArg(w);
-    }
-    for (const auto& e : env) {
-        const std::wstring w = widen(e);
-        if (w.empty() || e.find('=') == std::string::npos || w.find(wchar_t(0)) != std::wstring::npos) return 5;
-        block += w + L'\0';
-    }
+    for (const auto& a : args) cmd += L" " + quoteArg(widen(a));
+    for (const auto& e : env) block += widen(e) + L'\0';
     block += env.empty() ? std::wstring(2, wchar_t(0)) : std::wstring(1, wchar_t(0));
-    if (cmd.size() > 32000 || exe.find('\0') != std::string::npos || cwd.find('\0') != std::string::npos) return 5;
     std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
     cmdBuf.push_back(L'\0');
 

@@ -14,8 +14,6 @@ const char* embeddedName(int index);
 const char* embeddedData(int index, unsigned long& size);
 
 int app_asset_site(std::string origin, std::string csp) {
-    if (origin.compare(0, 7, "http://") != 0 && origin.compare(0, 8, "https://") != 0) return 0;
-    if (origin.empty() || origin.back() == '/') return 0;
     assetStore()->configure(origin, csp);
     return 1;
 }

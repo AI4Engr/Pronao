@@ -21,9 +21,8 @@ int main() {
     AssetStore s;
     check("nothing is answered before an origin is set", !ask(s, "GET", "http://a.localhost/x").mine);
     s.configure("http://a.localhost", "default-src 'self'");
-    check("a path must start with /", !s.add("x", "text/plain", "x"));
     check("add", s.add("/x.txt", "text/plain", std::string("a\0b\xff", 4)) && s.add("/p/q.html", "text/html", "<p>"));
-    check("an alias needs an existing target", !s.alias("/y", "/nope") && s.alias("/y", "/x.txt") && !s.alias("y", "/x.txt"));
+    check("an alias needs an existing target", !s.alias("/y", "/nope") && s.alias("/y", "/x.txt"));
     Got x = ask(s, "GET", "http://a.localhost/x.txt");
     check("binary bytes come back whole", x.mine && x.status == 200 && x.body == std::string("a\0b\xff", 4));
     check("through an alias too", ask(s, "GET", "http://a.localhost/y").body == x.body);

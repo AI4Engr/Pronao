@@ -9,7 +9,7 @@
 # The output of every part is printed in a fixed order at the end.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_HEADLESS=282
+EXPECTED_HEADLESS=292
 EXPECTED_FILES=139
 EXPECTED_PROGRAMS=18
 EXPECTED_TAURIPORT=50

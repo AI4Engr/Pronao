@@ -92,10 +92,6 @@ int app_pending(int handle, std::string call) {
     auto app = lookup(handle);
     return app && app->calls.waiting(call) ? 1 : 0;
 }
-int app_window_closed(int handle) {
-    auto app = lookup(handle);
-    return !app || app->calls.closed() ? 1 : 0;
-}
 int app_close(int handle) {
     auto app = lookup(handle);
     if (!app) return 0;

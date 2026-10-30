@@ -173,6 +173,12 @@ string awaitEvals(App app, string needle, int maxMs) {
     return all;
 }
 
+// a fresh empty argument list (a vector passed to a method is moved, so every call needs its own)
+std::vector<string> emptyArgs() {
+    std::vector<string> none;
+    return none;
+}
+
 class Counted {
 public:
     int count;
@@ -1452,6 +1458,32 @@ int main() {
     check("the program that was running is already dead (the job ended long before 20 s)", app_now_ms() - cancelStarted < 8000.0);
     app.gate.clear();
     app_test_remove_tree(cbase);
+
+    // ---- the native runner checks nothing: toolRunOk is the one place that vets what it is given ----
+    string vetDir = "";
+    app_test_make_temp_dir(vetDir);
+    ToolRun vetGood = app.toolRun(helper, emptyArgs(), vetDir, 5000, 1000);
+    check("a run with absolute paths and sane limits is fit to pass", toolRunOk(vetGood));
+    check("a relative program is not", !toolRunOk(app.toolRun("relative-program", emptyArgs(), vetDir, 5000, 1000)));
+    check("a relative working folder is not", !toolRunOk(app.toolRun(helper, emptyArgs(), "relative/dir", 5000, 1000)));
+    string withNul = "a";
+    withNul.push_back(char(0));
+    std::vector<string> nulArgs;
+    nulArgs.push_back(withNul);
+    check("an argument with a NUL byte is not", !toolRunOk(app.toolRun(helper, nulArgs, vetDir, 5000, 1000)));
+    std::vector<string> badUtf8Args;
+    string broken = "a";
+    broken.push_back(char(255));
+    badUtf8Args.push_back(broken);
+    check("an argument that is not UTF-8 is not", !toolRunOk(app.toolRun(helper, badUtf8Args, vetDir, 5000, 1000)));
+    ToolRun vetEnv = app.toolRun(helper, emptyArgs(), vetDir, 5000, 1000);
+    vetEnv.env.push_back("NO_EQUALS_SIGN");
+    check("an environment entry without = is not", !toolRunOk(vetEnv));
+    check("a timeout of zero is not", !toolRunOk(app.toolRun(helper, emptyArgs(), vetDir, 0, 1000)));
+    check("a timeout beyond ten minutes is not", !toolRunOk(app.toolRun(helper, emptyArgs(), vetDir, 700000, 1000)));
+    check("an output cap beyond 64 MiB is not", !toolRunOk(app.toolRun(helper, emptyArgs(), vetDir, 5000, 67108865)));
+    check("runTool refuses what is not fit, without starting anything", runTool(app.toolRun("relative-program", emptyArgs(), vetDir, 5000, 1000)).status == 5);
+    app_test_remove_tree(vetDir);
 
     // ---- arguments decoded into a struct by the compiler ------------------------------------------------
     string okTags = "[\"a\",\"b\"]";

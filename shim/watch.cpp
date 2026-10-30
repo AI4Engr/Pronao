@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "app_native.h"
+#include "app_shim_internal.h"
 
 namespace {
 const int kMaxQueued = 2000;                // records waiting for the main loop, per window; beyond this they are dropped

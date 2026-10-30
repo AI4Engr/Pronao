@@ -141,6 +141,10 @@ public:
 // origin + "/" if there is an index.html, else the first page.
 SiteInfo publishSite(string origin, string csp) {
     SiteInfo info = new SiteInfo();
+    // the native table takes the origin as given: http:// or https://, a host, no path
+    if (!(startsWithText(origin, "http://") || startsWithText(origin, "https://")) || !plainText(origin, 300) || endsWithText(origin, "/")) {
+        return info;
+    }
     if (app_asset_site(origin, csp) != 1) {
         return info;
     }

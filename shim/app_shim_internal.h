@@ -26,3 +26,6 @@ void app_nav_install(void* controller, std::shared_ptr<NavRules> rules, int debu
 class AssetStore;
 std::shared_ptr<AssetStore> assetStore();
 void app_assets_install(void* controller, std::shared_ptr<AssetStore> store);
+
+// Stops every watch of a window (its window is closing): used by app_close, never by CeeLing.
+int app_watch_stop_all(int handle);

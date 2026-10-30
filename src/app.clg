@@ -1167,8 +1167,46 @@ public:
     }
 };
 
+// What the native runner is given must already be fit for the operating system: absolute paths, text that is valid UTF-8 without a NUL, environment
+// entries of the form NAME=value, limits in range. The native layer checks none of it (it only runs what it is handed), so this is the one place.
+bool toolRunOk(ToolRun run) {
+    bool windows = app_os_windows() == 1;
+    bool exeAbsolute = run.exe.length() > 0 && run.exe[0] == '/';
+    bool cwdAbsolute = run.cwd.length() > 0 && run.cwd[0] == '/';
+    if (windows) {
+        exeAbsolute = windowsAbsolute(run.exe);
+        cwdAbsolute = windowsAbsolute(run.cwd);
+    }
+    if (!exeAbsolute || !cwdAbsolute || !plainText(run.exe, 32000) || !plainText(run.cwd, 32000)) {
+        return false;
+    }
+    if (run.timeoutMs < 1 || run.timeoutMs > 600000 || run.maxBytes < 0 || run.maxBytes > 67108864) {
+        return false;
+    }
+    int i = 0;
+    while (i < run.args.size()) {
+        if (!plainText(run.args[i], 32000)) {
+            return false;
+        }
+        i = i + 1;
+    }
+    int e = 0;
+    while (e < run.env.size()) {
+        string entry = run.env[e];
+        if (!plainText(entry, 32000) || indexOfChar(entry, '=') < 1) {
+            return false;
+        }
+        e = e + 1;
+    }
+    return true;
+}
+
 ToolResult runTool(ToolRun run) {
     ToolResult r = new ToolResult();
+    if (!toolRunOk(run)) {
+        r.status = 5;
+        return r;
+    }
     r.status = app_proc_run(run.handle, run.call, run.exe, run.args, run.cwd, run.env, run.timeoutMs, run.maxBytes, r.out, r.err, r.exitCode, r.flags);
     return r;
 }

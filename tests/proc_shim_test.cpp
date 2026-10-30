@@ -157,20 +157,12 @@ int main() {
 
     // ---- refused input ----
     {
+        // (what is fit to pass -- absolute paths, no NUL, NAME=value, limits -- is decided and tested in CeeLing: toolRunOk, headless_main.clg)
         Result r;
-        std::vector<std::string> withNul = {std::string("a\0b", 3)};
-        r.status = app_proc_run(0, "", exe, withNul, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
-        check("an argument with a NUL", r.status == 5);
-        r.status = app_proc_run(0, "", exe, {}, cwd, {"NO_EQUALS_SIGN"}, 1000, 1000, r.out, r.err, r.code, r.flags);
-        check("an environment entry without =", r.status == 5);
-        r.status = app_proc_run(0, "", exe, {}, "relative/dir", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
-        check("a relative working folder", r.status == 5);
         r.status = app_proc_run(0, "", exe, {}, cwd + "/no-such-folder", baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a missing working folder", r.status == 2);
         r.status = app_proc_run(0, "", cwd + "/missing-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
         check("a missing program", r.status == 2);
-        r.status = app_proc_run(0, "", "relative-program.exe", {}, cwd, baseEnv(), 1000, 1000, r.out, r.err, r.code, r.flags);
-        check("a relative program", r.status == 5);
     }
 
     // ---- the PATH lookup helpers CeeLing uses ----

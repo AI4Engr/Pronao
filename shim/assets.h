@@ -27,7 +27,6 @@ public:
     // origin without a trailing slash ("http://app.local"); csp "" for none
     void configure(const std::string& origin, const std::string& csp) { std::lock_guard<std::mutex> l(m_); origin_ = origin; csp_ = csp; }
     bool add(const std::string& path, const std::string& mime, std::string bytes) {
-        if (path.empty() || path[0] != '/') return false;
         std::lock_guard<std::mutex> l(m_);
         items_[path] = Asset{mime, std::make_shared<const std::string>(std::move(bytes))};
         return true;
@@ -36,7 +35,7 @@ public:
     bool alias(const std::string& from, const std::string& to) {
         std::lock_guard<std::mutex> l(m_);
         auto it = items_.find(to);
-        if (from.empty() || from[0] != '/' || it == items_.end()) return false;
+        if (it == items_.end()) return false;
         items_[from] = it->second;
         return true;
     }

@@ -203,11 +203,6 @@ int app_pending(int handle, std::string call) {
     return app && app->calls.waiting(call) ? 1 : 0;
 }
 
-int app_window_closed(int handle) {
-    auto app = lookup(handle);
-    return !app || app->calls.closed() ? 1 : 0;
-}
-
 int app_limits(int handle, int max_request, int max_queued) {
     auto app = lookup(handle);
     if (app) { app->maxRequest = max_request; app->maxQueued = max_queued; }

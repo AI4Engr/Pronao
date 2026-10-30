@@ -47,7 +47,7 @@ PYEOF
     # run the program only until the check that must fail has failed (or it ends): the rest of its output proves nothing more
     APP_SITE_DIR="$(cd "$HERE/tests/site" && (cygpath -m "$PWD" 2>/dev/null || pwd))" "$dir/t.exe" > "$dir/out.txt" 2>&1 &
     local pid=$! waited=0
-    while kill -0 "$pid" 2> /dev/null && ! grep -q "^FAIL .*$6" "$dir/out.txt" && [ "$waited" -lt 600 ]; do sleep 0.2; waited=$((waited + 1)); done
+    while kill -0 "$pid" 2> /dev/null && ! grep -q "^FAIL .*$6" "$dir/out.txt" 2> /dev/null && [ "$waited" -lt 600 ]; do sleep 0.2; waited=$((waited + 1)); done
     kill "$pid" 2> /dev/null; wait "$pid" 2> /dev/null
     local failed; failed=$(grep -c '^FAIL ' "$dir/out.txt")
     if [ "$failed" -gt 0 ] && grep -q "^FAIL .*$6" "$dir/out.txt"; then echo "ok: without '$1' $failed checks fail (including \"$6\")"; else echo "NEGATIVE CONTROL DID NOT FAIL: $1 ($failed failures)"; bad=1; fi
@@ -66,6 +66,9 @@ control "dev server must be loopback" app.clg '    if (host != "localhost" && ho
 control "pending calls are told apart by window" app.clg '            if (ids[i] == id && handles[i] == handle) {' '            if (ids[i] == id) {' headless_main "a record for window b settles b's pending call only"
 control "cancel tags are told apart by window" app.clg '            if (tags[i] == tag && tagHandles[i] == handle) {' '            if (tags[i] == tag) {' headless_main "and leaves a's call with the same tag and id running"
 control "a window own command list" app.clg '        if (own) {' '        if (false) {' headless_main "it then calls what its own list allows"
+control "a run is vetted before the native runner" app.clg '    if (!toolRunOk(run)) {' '    if (false) {' headless_main "runTool refuses what is not fit, without starting anything"
+control "a relative program is not fit to run" app.clg '    if (!exeAbsolute || !cwdAbsolute || !plainText(run.exe, 32000) || !plainText(run.cwd, 32000)) {' '    if (!plainText(run.exe, 32000) || !plainText(run.cwd, 32000)) {' headless_main "a relative program is not"
+control "a site origin is vetted" assets.clg ' || endsWithText(origin, "/")) {' ') {' site_main "an origin with a trailing slash is refused"
 control "request size limit" shim/queue.h '        if (static_cast<int>(request.size()) > max_request) return 1;' '' headless_main "a call over the size limit is refused"
 control "queue length limit" shim/queue.h '        if (static_cast<int>(q_.size()) >= max_queued) return 2;' '        if (false) return 2;' headless_main "with 3 waiting"
 control "ids a page cannot have" shim/queue.h '        if (id.empty() || id.size() > 64) return 3;' '' headless_main "an id the page could not have been given"

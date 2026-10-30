@@ -31,9 +31,7 @@ int app_os_windows() { return 1; }
 
 int app_fs_open(std::string path, int mode, int& h, std::string& fin, int& created) {
     created = 0;
-    if (path.empty() || path.find('\0') != std::string::npos) return 5;
     const std::wstring w = widen(path);
-    if (w.empty()) return 5;
     DWORD access = FILE_READ_ATTRIBUTES, disposition = OPEN_EXISTING, flags = FILE_FLAG_BACKUP_SEMANTICS;
     switch (mode) {
         case 0: access = GENERIC_READ; flags = FILE_ATTRIBUTE_NORMAL; break;
@@ -143,7 +141,7 @@ int app_fs_list(int h, std::string& out) {
 
 int app_fs_mkdir(std::string path) {
     const std::wstring w = widen(path);
-    return (w.empty() || path.find('\0') != std::string::npos) ? 5 : CreateDirectoryW(w.c_str(), nullptr) ? 0 : mapError(GetLastError());
+    return CreateDirectoryW(w.c_str(), nullptr) ? 0 : mapError(GetLastError());
 }
 
 int app_fs_delete(int h) {

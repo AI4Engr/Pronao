@@ -33,7 +33,6 @@ int app_os_windows() { return 0; }
 
 int app_fs_open(std::string path, int mode, int& h, std::string& fin, int& created) {
     created = 0;
-    if (path.empty() || path[0] != '/' || path.find('\0') != std::string::npos) return 5;
     Entry e;
     e.path = path;
     const int base = O_CLOEXEC | O_NOCTTY;
@@ -143,7 +142,7 @@ int app_fs_list(int h, std::string& out) {
 }
 
 int app_fs_mkdir(std::string path) {
-    return (path.empty() || path[0] != '/' || path.find('\0') != std::string::npos) ? 5 : mkdir(path.c_str(), 0755) == 0 ? 0 : mapErrno(errno);
+    return mkdir(path.c_str(), 0755) == 0 ? 0 : mapErrno(errno);
 }
 
 int app_fs_delete(int h) {
