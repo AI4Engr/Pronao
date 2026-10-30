@@ -33,6 +33,10 @@ int app_test_instance(int first, int status, std::string commandLine);
 int app_test_monitors(std::string fields);
 // a click on a menu item: queues the record "menu" id on the window, as the native layer does (the window log shows menu|set| and menu|item| calls)
 int app_test_menu_click(int handle, std::string id);
+// the item the next pop-up menu "chooses" ("" = it is dismissed); the pop-up itself shows up in the window log as menu|popup|SPEC
+int app_test_popup_answer(std::string id);
+// a click on the tray icon (kind "click" or "double") as the native layer queues it; the tray's own calls show up in its window log (tray|open|, tray|update|, tray|item|)
+int app_test_tray_event(int handle, std::string kind);
 
 // a program for the process tests to run (the environment variable APP_PROC_ECHO); 0 if unset
 int app_test_helper(std::string& path);

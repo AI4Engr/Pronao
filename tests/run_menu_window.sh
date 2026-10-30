@@ -11,7 +11,7 @@ TITLE="menu test"
 story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     local S="$1" SHIMDIR="$2"
     rm -rf "$S" 2>/dev/null || true; mkdir -p "$S/work" "$S/run"
-    g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$S/poke.exe" -luser32 -lgdi32 > "$S/poke.log" 2>&1 || { cat "$S/poke.log"; echo "POKE BUILD FAILED"; return 2; }
+    g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$S/poke.exe" -luser32 -lgdi32 -lshell32 > "$S/poke.log" 2>&1 || { cat "$S/poke.log"; echo "POKE BUILD FAILED"; return 2; }
     SHIM="${SHIMDIR:-$HERE/shim}" ASSETS="$HERE/tests/site_menu" WORK="$S/work" bash "$HERE/scripts/build.sh" "$HERE/tests/menu_window.clg" "$S/t.exe" > "$S/build.log" 2>&1 || { cat "$S/build.log"; echo "BUILD FAILED"; return 2; }
     export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$S/profile-$$")"
     local P="$S/poke.exe" OUT="$S/out.txt"
@@ -65,13 +65,18 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     "$P" key "$TITLE" ctrl+s; sleep 1
     [ "$(count file.save)" = "$before" ] || fail "Ctrl+S chose Save although it is greyed" || return 1
 
+    # 5b: a right click in the page asks for the menu the application registered; the first item is chosen with the keyboard
+    "$P" rightclick "$TITLE"; sleep 1.2
+    "$P" popupexists || fail "a right click in the page did not open the registered menu" || return 1
+    "$P" menukeys; waitfor '^popup chosen ctx.copy$' && waitfor '^click ctx.copy$' || fail "the item chosen in the page's menu did not reach the page and the program" || return 1
+
     # 6: a key that is not a shortcut is left alone, and Quit ends the program
     "$P" key "$TITLE" a; sleep 0.5
     "$P" click "$TITLE" "Quit" && waitfor '^closed$' 15 || fail "Quit did not end the program" || return 1
     wait "$pid"
     [ "$(cat "$S/rc")" = 0 ] || { echo "the program ended with $(cat "$S/rc")"; return 1; }
     local clicks; clicks="$(grep '^click ' "$OUT" | tr '\n' ' ')"; echo "clicks: $clicks"
-    [ "$clicks" = "click file.save click file.open click view.grid click view.grid click file.nosave click file.quit " ] || { echo "the clicks are not the ones expected"; return 1; }
+    [ "$clicks" = "click file.save click file.open click view.grid click view.grid click file.nosave click ctx.copy click file.quit " ] || { echo "the clicks are not the ones expected"; return 1; }
     return 0
 }
 

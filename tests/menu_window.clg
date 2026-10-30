@@ -26,6 +26,15 @@ int main() {
         std::cout << "sized " << int(fieldOf(args, "width").valuedouble) << " " << int(fieldOf(args, "height").valuedouble) << std::endl;
         return createNull();
     });
+    app.command("popupResult", closure Command [] (Item args) {
+        Item v = getObjectItem(args, "id");
+        if (v != nullptr && isString(v)) {
+            std::cout << "popup chosen " << v.valuestring << std::endl;
+        } else {
+            std::cout << "popup dismissed" << std::endl;
+        }
+        return createNull();
+    });
     app.command("pageSaw", closure Command [] (Item args) {
         std::cout << "page saw " << requiredString(args, "id") << std::endl;
         return createNull();
@@ -49,6 +58,11 @@ int main() {
         std::cout << "selftest FAILED: the menu was refused: " << bar.problem << std::endl;
         return 2;
     }
+    Menu ctx = new Menu();
+    ctx.item("ctx.copy", "&Copy", "");
+    ctx.item("ctx.paste", "&Paste", "");
+    app.allowPopup("ctx", ctx);
+    app.enablePopupCommand();
     app.menuEventsToPage(true);
     app.onMenu(closure MenuAction [app, saw] (string id) {
         std::cout << "click " << id << std::endl;

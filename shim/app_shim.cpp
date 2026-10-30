@@ -216,6 +216,8 @@ int app_window_state(int handle, int state) {
         HWND hwnd = static_cast<HWND>(w.window().value());
         if (state == 3) { if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); }     // (a minimized window comes back first)
         else if (state == 4) PostMessageW(hwnd, WM_CLOSE, 0, 0);       // as if the user pressed the X: the close guard, if any, is asked
+        else if (state == 5) ShowWindow(hwnd, SW_HIDE);                // hidden: not on screen and not on the taskbar; the window and its page keep running
+        else if (state == 6) { ShowWindow(hwnd, IsIconic(hwnd) ? SW_RESTORE : SW_SHOW); SetForegroundWindow(hwnd); }
         else ShowWindow(hwnd, state == 1 ? SW_MINIMIZE : state == 2 ? SW_MAXIMIZE : SW_RESTORE);
     });
 #else
@@ -319,13 +321,31 @@ int app_ui_call(int handle, const std::function<void(void*)>& fn) {
     return 1;
 }
 
+int app_queue_entry_new() {
+    auto app = std::make_shared<App>();
+    app->calls.setNotify(&waitSet());
+    std::lock_guard<std::mutex> lock(g_tableMutex);
+    g_table.push_back(app);
+    return static_cast<int>(g_table.size());
+}
+
+void app_queue_entry_end(int handle) {
+    auto app = lookup(handle);
+    if (!app) return;
+    app->calls.close();
+    std::lock_guard<std::mutex> lock(g_tableMutex);
+    g_table[static_cast<size_t>(handle) - 1].reset();
+}
+
 int app_close(int handle) {
     auto app = lookup(handle);
     if (!app) return 0;
     app_watch_stop_all(handle);
     app_menu_forget(handle);
+    app_tray_forget(handle);                       // (a tray: the icon is removed and its thread ends; anything else: nothing)
     app_terminate(handle);
     if (app->ui.joinable()) app->ui.join();
+    app->calls.close();
     std::lock_guard<std::mutex> lock(g_tableMutex);
     g_table[static_cast<size_t>(handle) - 1].reset();
     return 1;

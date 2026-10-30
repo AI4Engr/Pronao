@@ -62,6 +62,8 @@
   };
   // a later launch of the program (single instance, App.claimInstance) hands over {cwd, args}; the window has already come to the front
   window.cling.onSecondInstance = function (fn) { return window.cling.on('app.secondInstance', fn); };
+  // menu.popup({name}) shows a menu the application registered under that name at the mouse and resolves with the id of the item chosen, or null
+  window.cling.menu = { popup: function (name) { return window.cling.invoke('menu.popup', { name: name }); } };
   window.cling.proc = { run: call('proc.run') };
   // shell: openUrl({url}) opens an address in the default browser, openFile({path}) a file in its default program, reveal({path}) shows a file in the file
   // manager. Only what the application allowed (schemes, file types, the folders of the file commands).

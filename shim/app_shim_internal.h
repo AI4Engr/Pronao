@@ -36,3 +36,9 @@ int app_watch_stop_all(int handle);
 bool app_menu_command(int handle, unsigned command);
 bool app_menu_shortcut(int handle, unsigned vk, unsigned mods, bool repeat);
 void app_menu_forget(int handle);
+
+// A handle in the table with only a queue (no window): the tray uses one (shim/win/tray.cpp). app_queue_entry_new returns 0 if it cannot; app_queue_entry_end frees it.
+// app_tray_forget stops the tray behind a handle (the icon goes first) and does nothing for a handle that is not a tray.
+int app_queue_entry_new();
+void app_queue_entry_end(int handle);
+void app_tray_forget(int handle);

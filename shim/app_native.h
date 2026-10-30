@@ -23,7 +23,7 @@ int app_push(int handle, std::string id, std::string request, int max_queued);  
                                                                                  // shim's own, never a page's); 1, 0 if max_queued wait, -1 no window
 int app_terminate(int handle);
 int app_close(int handle);                                                  // terminates if needed, joins the UI thread, frees the handle
-// Window control (Windows; -1 elsewhere). state: 0 restore, 1 minimize, 2 maximize, 3 bring to front. guard 1: closing the window
+// Window control (Windows; -1 elsewhere). state: 0 restore, 1 minimize, 2 maximize, 3 bring to front, 5 hide (no taskbar button either), 6 show again and bring to front. guard 1: closing the window
 // (X, Alt+F4) no longer closes it but queues the record "window" "close_requested" for the main loop.
 int app_window_title(int handle, std::string title);
 int app_window_size(int handle, int width, int height);
@@ -37,6 +37,18 @@ int app_monitors(std::string& out);
 // Menus (Windows; -1 elsewhere). app_menu_set: the window's menu bar from the flat spec src/menu.clg writes ("" removes it); 0 ok, 5 the spec is malformed, 4 no such window.
 // Clicking an item, or pressing its shortcut while the page has the keyboard, queues the record "menu" id on the window; the id is always one the spec contained.
 // app_menu_item: ticks / unticks (checked 1 / 0) and enables / greys (enabled 1 / 0) an item of the menu bar, -1 leaves a state alone; 5 if the id is not in it.
+// The tray (notification area) icon, Windows only (-1 elsewhere). app_tray_open: an icon (the program's own, ICON= in build.sh, else the system's) with a tooltip (at
+// most 127 bytes: the caller checked) and a right-click menu from the flat spec of src/menu.clg; `handle` is the tray's own handle in the same table as the windows,
+// with only a queue: app_wait_any and app_next_call serve it like a window. Its records: "tray" click | double (a left click, a double click) and "menu" id (an item of
+// the tray menu was chosen). app_close(handle) removes the icon. 0 ok, 4 could not, 5 the menu spec is malformed.
+// app_tray_update: a new tooltip ("" = leave it) and / or a new menu spec ("" = leave it). app_tray_item: as app_menu_item, for the tray menu.
+int app_tray_open(std::string tooltip, std::string menu, int& handle);
+int app_tray_update(int handle, std::string tooltip, std::string menu);
+int app_tray_item(int handle, std::string id, int enabled, int checked);
+// app_menu_popup: a pop-up menu from a flat spec at the mouse, on the window's UI thread; the calling thread waits until it is closed (call it from a worker, like a
+// dialog). `chosen` is the id of the item chosen, "" if the menu was dismissed; a chosen item is also queued as the record "menu" id on the window. 0 ok, 5 the spec is
+// malformed, 4 no such window. -1 elsewhere.
+int app_menu_popup(int handle, std::string spec, std::string& chosen);
 int app_menu_set(int handle, std::string spec);
 int app_menu_item(int handle, std::string id, int enabled, int checked);
 int app_window_placement(int handle, int x, int y, int width, int height, int maximized);

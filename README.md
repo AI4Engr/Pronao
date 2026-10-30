@@ -177,6 +177,50 @@ w.setChecked("view.grid", true);
   the bar has the declared items, a chosen item and a shortcut reach the program, F5 ticks and unticks, a greyed item and its shortcut do nothing, the page fits under the bar, two controls that must fail).
 - **Not verified automatically:** opening the menu with the mouse and looking at it (drawing, high-DPI, keyboard navigation inside the menu), the Alt mnemonics, and that a screen reader can use the menu.
 
+## The tray icon, and a window that hides instead of closing
+
+```
+Window w = app.windows.get(app.handle);
+w.hideOnClose(true);                                  // the X (and Alt+F4) hides the window; the program and its page keep running
+Menu popup = new Menu();                              // the tray menu: items at the top level are fine
+popup.item("tray.show", "&Show window", "");
+popup.check("tray.mute", "&Mute", "", false);
+popup.separator();
+popup.item("tray.quit", "&Quit", "");
+int tray = app.openTray("My app", popup);             // the program's icon (ICON= in build.sh), a tooltip of at most 127 bytes; 0 if it could not be made
+app.onTray(closure TrayAction [app, shown] (string kind) { /* "click" or "double" */ app.showWindow(shown); });
+app.onMenu(closure MenuAction [app] (string id) { if (id == "tray.quit") { app.quit(); } });     // the same handler as the window's menu bar
+app.trayChecked(tray, "tray.mute", true);             // also trayEnabled, trayTooltip; closeTray(tray) removes the icon
+```
+
+- **Quit and the end of the program:** the last window closing ends the program, as always; a *hidden* window is still open, so hiding does not. A program that lives only in its tray (no window at all) says `app.keepRunning(true)` and
+  ends with `app.quit()`. `App.close()` removes the icons: **call it at the end of `main`**, or the icon stays in the notification area until the mouse passes over it.
+- **The right click** opens the tray menu; **the left click and the double click** are for `onTray`. A greyed item and an id the tray menu does not have do nothing.
+- **Windows 11 note:** icons the user has not pinned sit in the overflow flyout; the program cannot change that.
+- **Test:** `tests/run_tray_window.sh` with a real program: the shell holds the icon, the close button hides the window and the program goes on, a click brings it back, the right click opens the menu (Esc closes it), tray items are chosen,
+  Quit ends the program and the tray window is gone; two controls (hiding does nothing; tray items reach nobody). The test posts the messages the shell sends and does not move the mouse onto the real icon.
+- **Not verified:** the icon's picture and tooltip as the user sees them, a real click on the icon, the shell being restarted (the icon is added again on `TaskbarCreated`: written, not exercised), the icon removal when the process is killed (the shell then keeps a ghost until the mouse passes over it).
+
+## Menus a page may ask for
+
+```
+Menu ctx = new Menu();
+ctx.item("ctx.copy", "&Copy", "");
+ctx.item("ctx.paste", "&Paste", "");
+app.allowPopup("ctx", ctx);            // registers the menu under a name (at most 16)
+app.enablePopupCommand();              // off until this is called
+```
+
+```js
+document.addEventListener('contextmenu', function (e) {
+  e.preventDefault();
+  cling.menu.popup('ctx').then(function (id) { /* "ctx.copy", or null if the menu was dismissed */ });
+});
+```
+
+The page can ask for a menu **by name** and gets the id of the item chosen; it cannot send items, labels or shortcuts (anything but the name is ignored), and a name the application did not register is `unknown_menu`.
+The chosen item also runs the handler of `onMenu`. The menu opens at the mouse. Test: `menu_main` (13 checks) and the real window in `tests/run_menu_window.sh` (a right click in the page, Down and Enter).
+
 ## The program's icon
 
 ```
@@ -552,7 +596,8 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 53 menus + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 100 menus, tray and pop-ups + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_tray_window.sh         # a real program: the tray icon, hiding on close, the tray menu; two controls that must fail
 bash tests/run_menu_window.sh         # a real window: the menu bar, choosing items, shortcuts, greyed items, ticks; two controls that must fail
 bash tests/run_icon.sh                # the icon is in the exe and on the running window; the build without one is the control
 bash tests/run_placement_window.sh    # a real window is moved, maximized and closed from outside; the next start must open it there; with a control that must fail

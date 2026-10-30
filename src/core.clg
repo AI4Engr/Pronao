@@ -173,6 +173,13 @@ public:
     virtual void clicked(string id) { }
 };
 
+// What runs when the tray icon is clicked (App.onTray): `happened` gets "click" (a left click) or "double" (a double click).
+class TrayAction {
+public:
+    TrayAction() { }
+    virtual void happened(string kind) { }
+};
+
 // Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
 void replyOk(int handle, string id, string json) {
     app_return(handle, id, 0, json);

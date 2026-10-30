@@ -7,8 +7,59 @@
 #include "app.clh"
 
 ext_fn int app_test_menu_click(int handle, string id);
+ext_fn int app_test_tray_event(int handle, string kind);
+ext_fn int app_test_push_internal(int handle, string request);
+ext_fn int app_test_popup_answer(string id);
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    return intToString(status) + " " + json;
+}
+
+Menu contextMenu() {
+    Menu m = new Menu();
+    m.item("ctx.copy", "&Copy", "");
+    m.item("ctx.paste", "&Paste", "");
+    m.separator();
+    m.begin("&More");
+    m.item("ctx.more.one", "One", "");
+    m.end();
+    return m;
+}
 ext_fn int app_test_take_eval(int handle, ref string js);
 ext_fn int app_test_take_window_log(int handle, ref string line);
+
+class Taps {
+public:
+    string kinds;
+    Taps() {
+        kinds = "";
+    }
+};
+
+Menu trayMenu() {
+    Menu m = new Menu();
+    m.item("tray.show", "&Show window", "");
+    m.separator();
+    m.check("tray.mute", "&Mute", "", false);
+    m.item("tray.quit", "&Quit", "");
+    return m;
+}
 
 class Clicks {
 public:
@@ -185,5 +236,152 @@ int main() {
     app_test_menu_click(second, "view.grid");
     app.serveOne(100);
     check("a click on the second window is a click", seen.count == 4 && seen.last == "view.grid");
+
+    // ---- a menu a page may ask for ----
+    App p = new App();
+    p.open("t", 100, 100, "<html></html>", "", false);
+    int ph = p.handle;
+    windowLog(ph);
+    Clicks pclicks = new Clicks();
+    p.onMenu(closure MenuAction [pclicks] (string id) {
+        pclicks.last = id;
+        pclicks.count = pclicks.count + 1;
+    });
+    check("a pop-up menu needs a good name", !p.allowPopup("a b", contextMenu()) && !p.allowPopup("", contextMenu()));
+    Menu half = new Menu();
+    half.begin("x");
+    check("and a complete menu", !p.allowPopup("ctx", half));
+    check("a pop-up menu is registered", p.allowPopup("ctx", contextMenu()));
+    check("under a name that is not taken", !p.allowPopup("ctx", contextMenu()));
+    Item nameArgs = createObject();
+    addStringToObject(nameArgs, "name", "ctx");
+    string asking = "[\"menu.popup\"," + printUnformatted(nameArgs) + "]";
+    check("the page cannot ask before the command is enabled", startsWithText(roundTrip(p, "m0", asking), "1 {\"code\":\"unknown_command\""));
+    p.enablePopupCommand();
+    app_test_popup_answer("ctx.copy");
+    check("the page asks by name and gets the id of the item chosen", roundTrip(p, "m1", asking) == "0 \"ctx.copy\"");
+    string popped = windowLog(ph);
+    check("the native layer showed the registered menu", containsText(popped, "menu|popup|i|ctx.copy|&Copy|") && containsText(popped, "b|sub2|&More|"));
+    p.serveOne(100);
+    check("and the chosen item ran the menu handler", pclicks.count == 1 && pclicks.last == "ctx.copy");
+    check("a menu that is dismissed answers null", roundTrip(p, "m2", asking) == "0 null" && pclicks.count == 1);
+    windowLog(ph);
+    check("a name that was not registered is refused and nothing is shown", startsWithText(roundTrip(p, "m3", "[\"menu.popup\",{\"name\":\"secret\"}]"), "1 {\"code\":\"unknown_menu\"") && windowLog(ph) == "");
+    check("a call without a name is refused", startsWithText(roundTrip(p, "m4", "[\"menu.popup\",{}]"), "1 {\"code\":\"invalid_argument\"") && windowLog(ph) == "");
+    check("a page that sends a menu of its own gets only the registered one", roundTrip(p, "m5", "[\"menu.popup\",{\"name\":\"ctx\",\"items\":[{\"id\":\"evil\",\"label\":\"Evil\"}]}]") == "0 null" && !containsText(windowLog(ph), "evil"));
+    app_test_menu_click(ph, "nothing.registered");
+    p.serveOne(100);
+    check("an id that no menu has still does nothing", pclicks.count == 1);
+
+    // ---- hiding instead of closing ----
+    windowLog(h);
+    check("hideOnClose turns the close guard on", w.hideOnClose(true) && windowLog(h) == "guard|1;");
+    string closeRequest = "window";
+    closeRequest.push_back(char(0));
+    closeRequest = closeRequest + "close_requested";
+    closeRequest.push_back(char(0));
+    app_test_push_internal(h, closeRequest);
+    app.serveOne(100);
+    check("the close button hides the window and nothing is closed", windowLog(h) == "state|5;" && app.windows.count() == 2);
+    check("show brings it back", w.show() && windowLog(h) == "state|6;");
+    check("hide hides it", w.hide() && windowLog(h) == "state|5;");
+    check("hideOnClose off lets the close button close again", w.hideOnClose(false) && windowLog(h) == "guard|0;");
+    app_test_push_internal(h, closeRequest);
+    app.serveOne(100);
+    check("then the close request closes the window", windowLog(h) == "");
+
+    // ---- the tray ----
+    App b = new App();
+    b.open("t", 100, 100, "<html></html>", "", false);
+    int bh = b.handle;
+    windowLog(bh);
+    Taps taps = new Taps();
+    Clicks bclicks = new Clicks();
+    b.onTray(closure TrayAction [taps] (string kind) {
+        taps.kinds = taps.kinds + kind + ";";
+    });
+    b.onMenu(closure MenuAction [bclicks] (string id) {
+        bclicks.last = id;
+        bclicks.count = bclicks.count + 1;
+    });
+    check("a tray needs a tooltip", b.openTray("", trayMenu()) == 0);
+    check("a tooltip is at most 127 bytes", b.openTray(repeated("x", 128), trayMenu()) == 0);
+    Menu unfinished = new Menu();
+    unfinished.begin("a");
+    check("a menu that is not complete is refused", b.openTray("tip", unfinished) == 0);
+    int tray = b.openTray("My app", trayMenu());
+    check("a tray gets a handle of its own", tray != 0 && tray != bh);
+    string opened = windowLog(tray);
+    check("the native layer got the tooltip and the menu", containsText(opened, "tray|open|My app|") && containsText(opened, "i|tray.show|&Show window|"));
+    app_test_tray_event(tray, "click");
+    b.serveOne(100);
+    check("a left click runs the tray handler", taps.kinds == "click;");
+    app_test_tray_event(tray, "double");
+    b.serveOne(100);
+    check("and a double click", taps.kinds == "click;double;");
+    app_test_tray_event(tray, "right");
+    b.serveOne(100);
+    check("another kind is ignored", taps.kinds == "click;double;");
+    app_test_tray_event(bh, "click");
+    b.serveOne(100);
+    check("a tray record on a window is ignored", taps.kinds == "click;double;");
+    app_test_menu_click(tray, "tray.show");
+    b.serveOne(100);
+    check("an item of the tray menu runs the menu handler", bclicks.count == 1 && bclicks.last == "tray.show");
+    app_test_menu_click(tray, "view.grid");
+    b.serveOne(100);
+    check("an id the tray menu does not have is ignored", bclicks.count == 1);
+    check("an item is greyed out", b.trayEnabled(tray, "tray.show", false) && windowLog(tray) == "tray|item|tray.show|0|-1;");
+    app_test_menu_click(tray, "tray.show");
+    b.serveOne(100);
+    check("a greyed item of the tray menu does nothing", bclicks.count == 1);
+    check("a tick", b.trayChecked(tray, "tray.mute", true) && windowLog(tray) == "tray|item|tray.mute|-1|1;");
+    check("only a check item takes a tick", !b.trayChecked(tray, "tray.quit", true));
+    check("a new tooltip", b.trayTooltip(tray, "Working") && windowLog(tray) == "tray|update|Working|;");
+    check("a tooltip that is too long or empty", !b.trayTooltip(tray, "") && !b.trayTooltip(tray, repeated("x", 128)));
+    check("not for a handle that is no tray", !b.trayTooltip(bh, "x") && !b.trayEnabled(bh, "tray.show", true) && !b.closeTray(bh));
+    check("the window's menu clicks are not the tray's", b.windows.count() == 1);
+    check("showWindow shows a window", b.showWindow(bh) && windowLog(bh) == "state|6;" && !b.showWindow(9999));
+    check("the tray is closed", b.closeTray(tray) && b.trays.size() == 0);
+    app_test_menu_click(tray, "tray.quit");
+    check("after that its handle is gone", windowLog(tray) == "");
+    int again = b.openTray("Again", trayMenu());
+    check("a tray can be opened again", again != 0);
+    b.close();
+    check("closing the application closes the trays", b.trays.size() == 0);
+
+    // ---- a program that lives in its tray ----
+    App c = new App();
+    c.open("t", 100, 100, "<html></html>", "", false);
+    int ch = c.handle;
+    c.keepRunning(true);
+    int ctray = c.openTray("Lives here", trayMenu());
+    check("a program that keeps running has a tray", ctray != 0);
+    c.windows.get(ch).close();
+    int served = 0;
+    int spins = 0;
+    int last = 1;
+    while (spins < 20 && last != 0) {
+        last = c.serveOne(50);
+        spins = spins + 1;
+        if (last == 1) {
+            served = served + 1;
+        }
+    }
+    check("with no window the loop goes on (a timeout, not the end)", last == 2 && c.windows.count() == 0);
+    c.quit();
+    check("quit ends it", c.serveOne(50) == 0);
+    c.close();
+
+    App d = new App();
+    d.open("t", 100, 100, "<html></html>", "", false);
+    d.windows.get(d.handle).close();
+    int dlast = 1;
+    int dspins = 0;
+    while (dspins < 20 && dlast == 1) {
+        dlast = d.serveOne(50);
+        dspins = dspins + 1;
+    }
+    check("without keepRunning the loop ends with the last window", dlast == 0);
     return 0;
 }

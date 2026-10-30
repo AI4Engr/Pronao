@@ -1,0 +1,66 @@
+// A tray icon and a window that hides instead of closing, in a real program (run by tests/run_tray_window.sh, which closes the window, clicks the icon and chooses
+// tray menu items from outside). What happens is printed: "tray click", "menu ID", and "ready" / "closed".
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "settings.clh"
+#include "menu.clh"
+#include "app.clh"
+
+class Muted {
+public:
+    bool on;
+    Muted() {
+        on = false;
+    }
+};
+
+int main() {
+    App app = new App();
+    Muted muted = new Muted();
+    app.command("ready", closure Command [] (Item args) {
+        std::cout << "ready" << std::endl;
+        return createNull();
+    });
+    if (!app.openSite("tray test", 500, 300, false, "http://app.localhost", "")) {
+        std::cout << "selftest FAILED: no window" << std::endl;
+        return 2;
+    }
+    Window w = app.windows.get(app.handle);
+    w.hideOnClose(true);
+    Menu popup = new Menu();
+    popup.item("tray.show", "&Show window", "");
+    popup.check("tray.mute", "&Mute", "", false);
+    popup.separator();
+    popup.item("tray.quit", "&Quit", "");
+    int tray = app.openTray("tray test", popup);
+    if (tray == 0) {
+        std::cout << "selftest FAILED: no tray icon" << std::endl;
+        return 2;
+    }
+    int shown = app.handle;
+    app.onTray(closure TrayAction [app, shown] (string kind) {
+        std::cout << "tray " << kind << std::endl;
+        if (kind == "click") {
+            app.showWindow(shown);
+        }
+    });
+    app.onMenu(closure MenuAction [app, shown, muted, tray] (string id) {
+        std::cout << "menu " << id << std::endl;
+        if (id == "tray.show") {
+            app.showWindow(shown);
+        }
+        if (id == "tray.mute") {
+            muted.on = !muted.on;
+            app.trayChecked(tray, "tray.mute", muted.on);
+        }
+        if (id == "tray.quit") {
+            app.quit();
+        }
+    });
+    app.run();
+    app.close();
+    std::cout << "closed" << std::endl;
+    return 0;
+}

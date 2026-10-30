@@ -10,8 +10,16 @@
 //   window_poke.exe click TITLE LABEL        chooses the menu item with that label (as if clicked: WM_COMMAND), exit 1 if there is none
 //   window_poke.exe key TITLE ctrl+s         presses the keys with the window in front and the page holding the keyboard (SendInput); keys: ctrl, alt, shift, a letter, a digit, f1..f12
 //   window_poke.exe client TITLE            prints "width height" of the window's client area in pixels (the part below the menu bar)
+//   window_poke.exe state TITLE             prints visible, hidden or none (a window of that title, shown or not)
+//   window_poke.exe trayexists              exit 0 if the shell holds the tray icon of the program's hidden tray window (it can say where the icon is), else 1
+//   window_poke.exe popupexists             exit 0 if a popup menu is open on the screen (class #32768); escape: presses Esc
+//   window_poke.exe traycall left|double|right   what the shell sends the tray window when the icon is clicked (the real click on the icon is not simulated)
+//   window_poke.exe traycommand N           chooses item number N (counting from 0, separators excluded) of the tray menu, as the menu would
+//   window_poke.exe rightclick TITLE        brings the window to the front and right-clicks in the middle of its page
+//   window_poke.exe menukeys                 presses Down and Enter (chooses the first item of the menu that is open)
 //   window_poke.exe wait TITLE               waits up to 20 s for the window to be visible; exit 1 if it never is
 #include <windows.h>
+#include <shellapi.h>
 
 #include <cstdio>
 #include <cctype>
@@ -130,7 +138,89 @@ bool describe(HWND h, RECT& r, bool& maximized) {
 }
 }  // namespace
 
+// the program's hidden tray window (class app-cling-tray), shown or not
+HWND findTray() {
+    return FindWindowW(L"app-cling-tray", nullptr);
+}
+
+struct Any {
+    std::wstring prefix;
+    HWND found = nullptr;
+};
+
+BOOL CALLBACK lookAny(HWND h, LPARAM p) {
+    auto* s = reinterpret_cast<Any*>(p);
+    wchar_t title[256];
+    if (GetParent(h) != nullptr || GetWindowTextW(h, title, 256) <= 0) return TRUE;
+    if (std::wstring(title).compare(0, s->prefix.size(), s->prefix) == 0) { s->found = h; return FALSE; }
+    return TRUE;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "trayexists") {
+        HWND t = findTray();
+        if (!t) return 1;
+        NOTIFYICONIDENTIFIER id = {};
+        id.cbSize = sizeof id;
+        id.hWnd = t;
+        id.uID = 1;
+        RECT where;
+        return SUCCEEDED(Shell_NotifyIconGetRect(&id, &where)) ? 0 : 1;           // the shell knows where the icon is only if it holds it
+    }
+    if (argc >= 2 && std::string(argv[1]) == "menukeys") {
+        for (WORD vk : {VK_DOWN, VK_RETURN}) {
+            keybd_event(static_cast<BYTE>(vk), 0, 0, 0);
+            keybd_event(static_cast<BYTE>(vk), 0, KEYEVENTF_KEYUP, 0);
+            Sleep(150);
+        }
+        return 0;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "rightclick") {
+        Any a;
+        const std::string s(argv[2]);
+        a.prefix = std::wstring(s.begin(), s.end());
+        EnumWindows(lookAny, reinterpret_cast<LPARAM>(&a));
+        if (!a.found) return 1;
+        keybd_event(VK_SHIFT, 0, 0, 0);
+        keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0);
+        SetForegroundWindow(a.found);
+        Sleep(300);
+        if (GetForegroundWindow() != a.found) { std::fprintf(stderr, "the window could not be brought to the front: no click is sent\n"); return 3; }
+        RECT client;
+        GetClientRect(a.found, &client);
+        POINT middle{(client.right - client.left) / 2, (client.bottom - client.top) / 2};
+        ClientToScreen(a.found, &middle);
+        SetCursorPos(middle.x, middle.y);
+        mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
+        mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
+        return 0;
+    }
+    if (argc >= 2 && std::string(argv[1]) == "popupexists") return FindWindowW(L"#32768", nullptr) ? 0 : 1;
+    if (argc >= 2 && std::string(argv[1]) == "escape") {
+        keybd_event(VK_ESCAPE, 0, 0, 0);
+        keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+        return 0;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "traycall") {
+        HWND t = findTray();
+        if (!t) return 1;
+        const std::string kind = argv[2];
+        const LPARAM what = kind == "left" ? WM_LBUTTONUP : kind == "double" ? WM_LBUTTONDBLCLK : WM_RBUTTONUP;
+        return PostMessageW(t, WM_APP + 1, 1, what) ? 0 : 1;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "traycommand") {
+        HWND t = findTray();
+        if (!t) return 1;
+        return PostMessageW(t, WM_COMMAND, MAKEWPARAM(1000 + std::atoi(argv[2]), 0), 0) ? 0 : 1;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "state") {
+        Any a;
+        const std::string s(argv[2]);
+        a.prefix = std::wstring(s.begin(), s.end());
+        EnumWindows(lookAny, reinterpret_cast<LPARAM>(&a));
+        std::printf("%s\n", !a.found ? "none" : IsWindowVisible(a.found) ? "visible" : "hidden");
+        return a.found ? 0 : 1;
+    }
     if (argc < 3) return 2;
     const std::string action = argv[1];
     const std::wstring title = wide(argv[2]);

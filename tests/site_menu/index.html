@@ -6,5 +6,10 @@
   cling.invoke('ready', { height: Math.round(window.innerHeight * window.devicePixelRatio), width: Math.round(window.innerWidth * window.devicePixelRatio) });
   // after the menu bar has been put on the window, and again after the user could have resized it: how big is the page now?
   setTimeout(function () { cling.invoke('sized', { width: Math.round(window.innerWidth * window.devicePixelRatio), height: Math.round(window.innerHeight * window.devicePixelRatio) }); }, 1500);
+  // a right click in the page asks the application for the menu it registered as "ctx"
+  document.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    cling.menu.popup('ctx').then(function (id) { cling.invoke('popupResult', { id: id }); }, function (err) { cling.invoke('popupResult', { id: 'ERROR ' + (err && err.code) }); });
+  });
   cling.on('menu.click', function (e) { cling.invoke('pageSaw', { id: e.id }); });
 </script></body></html>

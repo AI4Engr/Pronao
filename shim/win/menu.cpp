@@ -193,6 +193,25 @@ int app_menu_set(int handle, std::string spec) {
     return ran ? 0 : 4;
 }
 
+int app_menu_popup(int handle, std::string spec, std::string& chosen) {
+    chosen.clear();
+    std::string error;
+    std::shared_ptr<NativeMenu> menu(NativeMenu::build(spec, false, error).release());
+    if (!menu) return 5;
+    const int ran = app_ui_call(handle, [&](void* window) {
+        HWND hwnd = static_cast<HWND>(window);
+        POINT at;
+        GetCursorPos(&at);
+        SetForegroundWindow(hwnd);                                  // (without this the menu does not close when the user clicks elsewhere)
+        const UINT command = static_cast<UINT>(TrackPopupMenu(menu->handle(), TPM_RETURNCMD | TPM_RIGHTBUTTON, at.x, at.y, 0, hwnd, nullptr));
+        PostMessageW(hwnd, WM_NULL, 0, 0);
+        if (const std::string* id = command ? menu->idOf(command) : nullptr) chosen = *id;
+    });
+    if (!ran) return 4;
+    if (!chosen.empty()) tell(handle, chosen);
+    return 0;
+}
+
 int app_menu_item(int handle, std::string id, int enabled, int checked) {
     std::shared_ptr<NativeMenu> bar = barOf(handle);
     if (!bar) return 5;

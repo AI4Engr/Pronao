@@ -126,12 +126,71 @@ int app_menu_set(int handle, std::string spec) {
     app->windowLog.push_back("menu|set|" + shown);
     return 0;
 }
+static std::string g_popupAnswer;
+int app_test_popup_answer(std::string id) {
+    g_popupAnswer = std::move(id);
+    return 1;
+}
+int app_menu_popup(int handle, std::string spec, std::string& chosen) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::string shown = spec;
+    for (char& c : shown) if (c == '\0') c = '|';
+    { std::lock_guard<std::mutex> lock(app->m); app->windowLog.push_back("menu|popup|" + shown); }
+    chosen = g_popupAnswer;
+    g_popupAnswer.clear();
+    if (!chosen.empty()) {
+        std::string record("menu\0", 5);
+        record += chosen;
+        record += '\0';
+        app_push(handle, std::string(), record, 100);
+    }
+    return 0;
+}
 int app_menu_item(int handle, std::string id, int enabled, int checked) {
     auto app = lookup(handle);
     if (!app) return 5;
     std::lock_guard<std::mutex> lock(app->m);
     app->windowLog.push_back("menu|item|" + id + "|" + std::to_string(enabled) + "|" + std::to_string(checked));
     return 0;
+}
+int app_tray_open(std::string tooltip, std::string menu, int& handle) {
+    handle = 0;
+    std::string shown = menu;
+    for (char& c : shown) if (c == '\0') c = '|';
+    int h;
+    {
+        std::lock_guard<std::mutex> lock(g_tableMutex);
+        auto fresh = std::make_shared<App>();
+        fresh->calls.setNotify(&waitSet());
+        g_table.push_back(fresh);
+        h = static_cast<int>(g_table.size());
+    }
+    logWindow(h, "tray|open|" + tooltip + "|" + shown);
+    handle = h;
+    return 0;
+}
+int app_tray_update(int handle, std::string tooltip, std::string menu) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::string shown = menu;
+    for (char& c : shown) if (c == '\0') c = '|';
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("tray|update|" + tooltip + "|" + shown);
+    return 0;
+}
+int app_tray_item(int handle, std::string id, int enabled, int checked) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("tray|item|" + id + "|" + std::to_string(enabled) + "|" + std::to_string(checked));
+    return 0;
+}
+int app_test_tray_event(int handle, std::string kind) {
+    std::string record("tray\0", 5);
+    record += kind;
+    record += '\0';
+    return app_push(handle, std::string(), record, 100);
 }
 int app_test_menu_click(int handle, std::string id) {
     std::string record("menu\0", 5);

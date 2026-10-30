@@ -18,7 +18,7 @@ EXPECTED_STORE=54
 EXPECTED_LINKS=49
 EXPECTED_INSTANCE=19
 EXPECTED_PLACEMENT=41
-EXPECTED_MENU=53
+EXPECTED_MENU=100
 W="${TMPDIR:-/tmp}/app-cling-headless"
 rm -rf "$W"; mkdir -p "$W"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac

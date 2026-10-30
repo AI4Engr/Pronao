@@ -46,6 +46,10 @@ ext_fn int app_window_placement(int handle, int x, int y, int width, int height,
 ext_fn int app_window_track(int handle, int on);
 ext_fn int app_menu_set(int handle, string spec);
 ext_fn int app_menu_item(int handle, string id, int enabled, int checked);
+ext_fn int app_menu_popup(int handle, string spec, ref string chosen);
+ext_fn int app_tray_open(string tooltip, string menu, ref int handle);
+ext_fn int app_tray_update(int handle, string tooltip, string menu);
+ext_fn int app_tray_item(int handle, string id, int enabled, int checked);
 ext_fn int app_instance_claim(string name, ref int first);
 ext_fn int app_instance_listen(int handle);
 ext_fn int app_command_line(ref string out);
@@ -1579,6 +1583,7 @@ public:
     bool dirty;                // the page says it has unsaved work (window.setDirty)
     bool confirming;           // a "close anyway?" box is open
     bool confirm;              // confirmClose was called: the close button asks (applied when the window exists)
+    bool hides;                // hideOnClose: the close button hides the window instead
     string closeTitle;
     string closeMessage;
     WindowState() {
@@ -1586,6 +1591,7 @@ public:
         dirty = false;
         confirming = false;
         confirm = false;
+        hides = false;
         closeTitle = "";
         closeMessage = "";
     }
@@ -1593,6 +1599,39 @@ public:
 
 // One open window: what belongs to it and not to the application. The application (App) owns the commands, the file policy, the programs;
 // a Window owns its handle, its close-button state, its watches, the addresses it may load and (through the Dispatcher) its command list.
+// The pop-up menus a page may ask for, by name. Only the application adds to it (App.allowPopup).
+class PopupBook {
+public:
+    std::vector<string> names;
+    std::vector<Menu> menus;
+    PopupBook() { }
+
+    int indexOf(string name) {
+        int i = 0;
+        while (i < names.size()) {
+            if (names[i] == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // true if some pop-up menu has an enabled item with this id
+    bool hasItem(string id) {
+        int i = 0;
+        while (i < menus.size()) {
+            Menu m = menus[i];
+            int k = m.indexOfId(id);
+            if (k >= 0 && (m.kinds[k] == "i" || m.kinds[k] == "c") && (m.flags[k] / 2) % 2 == 0) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+};
+
 class Window {
 public:
     int handle;
@@ -1615,6 +1654,27 @@ public:
     // Pushes an event to this window's page (see emitEvent).
     bool emit(string name, string payloadJson) {
         return emitEvent(handle, name, payloadJson);
+    }
+
+    // The close button (X, Alt+F4) hides the window instead of closing it; the program, and the page in the hidden window, keep running. Bring the window back
+    // with show() (a tray icon's menu is the usual way), end the program with App.quit(). Hiding loses nothing, so it does not ask about unsaved work. Windows only.
+    bool hideOnClose(bool on) {
+        state.hides = on;
+        int guard = 0;
+        if (on || state.confirm) {
+            guard = 1;
+        }
+        return app_window_guard(handle, guard) >= 0;
+    }
+
+    // Hides the window now (it has no taskbar button either) and shows it again with show().
+    bool hide() {
+        return app_window_state(handle, 5) >= 0;
+    }
+
+    // Shows the window again if it was hidden, restores it if it was minimized, and brings it to the front.
+    bool show() {
+        return app_window_state(handle, 6) >= 0;
     }
 
     // Puts a menu bar on this window (src/menu.clg): every id, label and shortcut was checked when the menu was built, and the top level must be only submenus.
@@ -1879,6 +1939,12 @@ public:
     SettingsStore settings;            // the application's own settings file (empty until open() is called on it)
     bool instanceClaimed;              // claimInstance made this process the one instance: the first window listens for later launches
     WindowMemory memory;               // where windows were last (rememberWindows)
+    bool stayWithoutWindows;           // keepRunning: the program goes on with no window open (only a tray icon) until quit() is called
+    bool quitCalled;
+    PopupBook popups;                  // the pop-up menus a page may ask for (allowPopup)
+    std::vector<int> trays;            // the handles of the tray icons that are open
+    std::vector<Menu> trayMenus;
+    TrayAction trayHandler;            // what runs when the tray icon is clicked (onTray)
     MenuAction menuHandler;            // what runs when a menu item is clicked (onMenu)
     bool menuToPage;                   // a click is also an event for the page of the window (menuEventsToPage)
     LinkRules links;                   // what a page may ask the system to open (allowLinkSchemes, allowOpenExtensions, enableShellCommands)
@@ -1907,6 +1973,10 @@ public:
         links = new LinkRules();
         memory = new WindowMemory();
         menuHandler = new MenuAction();
+        trayHandler = new TrayAction();
+        popups = new PopupBook();
+        stayWithoutWindows = false;
+        quitCalled = false;
         menuToPage = false;
         instanceClaimed = false;
         cling::setExitGraceMs(5000);
@@ -2670,6 +2740,10 @@ public:
         if (f[1] != "close_requested") {
             return;
         }
+        if (st.hides) {
+            app_window_state(from, 5);
+            return;
+        }
         if (!st.dirty) {
             app_terminate(from);
             return;
@@ -2831,10 +2905,36 @@ public:
         return w.setMenu(bar);
     }
 
+    int trayIndex(int h) {
+        int i = 0;
+        while (i < trays.size()) {
+            if (trays[i] == h) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
     void onMenuClick(int from, string id) {
+        int ti = trayIndex(from);
+        if (ti >= 0) {
+            Menu tm = trayMenus[ti];
+            int mi = tm.indexOfId(id);
+            if (mi < 0 || (tm.flags[mi] / 2) % 2 == 1) {
+                return;                   // not an item of the tray menu, or a greyed one
+            }
+            try {
+                MenuAction trayItem = menuHandler;
+                trayItem.clicked(id);
+            } catch (string message) {
+                // nobody is waiting for an answer
+            }
+            return;
+        }
         Window w = windows.get(from);
-        if (w == nullptr || !w.menuItemEnabled(id)) {
-            return;                       // an id this window's menu does not have, or an item that is greyed out: nothing happens
+        if (w == nullptr || !(w.menuItemEnabled(id) || popups.hasItem(id))) {
+            return;                       // an id this window's menu (or a pop-up menu) does not have, or an item that is greyed out: nothing happens
         }
         try {
             MenuAction handler = menuHandler;
@@ -2847,6 +2947,149 @@ public:
             addStringToObject(e, "id", id);
             emitEvent(from, "menu.click", printUnformatted(e));
         }
+    }
+
+    // ---- pop-up menus a page may ask for ----
+
+    // Registers a menu under a name (1 to 64 letters, digits, `.`, `_`, `-`; at most 16 menus): the page may ask for it by that name and for nothing else.
+    // The menu may have items at its top level. false if the name is taken or not a name, the menu is not complete, or there are 16 already.
+    bool allowPopup(string name, Menu popup) {
+        if (!menuId(name) || popups.indexOf(name) >= 0 || !popup.complete() || popups.names.size() >= 16) {
+            return false;
+        }
+        popups.names.push_back(name);
+        popups.menus.push_back(popup);
+        return true;
+    }
+
+    // Registers menu.popup {name}: shows the menu with that name at the mouse and answers the id of the item chosen, or null if it was dismissed. A name that was not
+    // registered with allowPopup is "unknown_menu". The chosen item also runs the handler of onMenu. Off until this is called.
+    void enablePopupCommand() {
+        PopupBook book = popups;
+        asyncCommand("menu.popup", closure AsyncCommand [book] (Item args, string id, int handle) {
+            string name = requiredString(args, "name");
+            int index = book.indexOf(name);
+            if (index < 0) {
+                throw "unknown_menu: no menu is registered under that name";
+            }
+            Menu chosenFrom = book.menus[index];
+            string spec = chosenFrom.spec();
+            spawn(closure Job [spec, id, handle] () {
+                string chosen = "";
+                int st = app_menu_popup(handle, spec, chosen);
+                if (st == -1) {
+                    replyError(handle, id, "unsupported", "menus cannot be shown on this system");
+                } else if (st != 0) {
+                    replyError(handle, id, "command_failed", "the menu could not be shown");
+                } else if (chosen.length() == 0) {
+                    replyOk(handle, id, "null");
+                } else {
+                    Item answer = createString(chosen);
+                    replyOk(handle, id, printUnformatted(answer));
+                }
+            });
+        });
+    }
+
+    // ---- the tray icon (Windows) ----
+
+    // Puts an icon in the notification area: the program's own icon (ICON= in build.sh, else the system's), a tooltip of at most 127 bytes of plain text, and a
+    // right-click menu `popup` (src/menu.clg; its items may be at the top level). Returns the tray's handle, 0 if it could not be made (not Windows, no
+    // shell, a menu that is not complete, a bad tooltip). Choosing an item runs the handler of onMenu with the item's id; clicking the icon runs onTray.
+    // Close it with closeTray; App.close() closes all of them. Not closed, the icon stays in the notification area until the mouse passes over it.
+    int openTray(string tooltip, Menu popup) {
+        if (!plainText(tooltip, 127) || tooltip.length() == 0 || !popup.complete() || trays.size() >= 4) {
+            return 0;
+        }
+        int th = 0;
+        if (app_tray_open(tooltip, popup.spec(), th) != 0 || th == 0) {
+            return 0;
+        }
+        trays.push_back(th);
+        trayMenus.push_back(popup);
+        return th;
+    }
+
+    // What runs when the tray icon is clicked: `happened("click")` for a left click, `happened("double")` for a double click. The right click shows the menu.
+    void onTray(TrayAction handler) {
+        trayHandler = handler;
+    }
+
+    bool trayTooltip(int th, string tooltip) {
+        if (trayIndex(th) < 0 || !plainText(tooltip, 127) || tooltip.length() == 0) {
+            return false;
+        }
+        return app_tray_update(th, tooltip, "") == 0;
+    }
+
+    bool trayEnabled(int th, string id, bool enabled) {
+        int ti = trayIndex(th);
+        if (ti < 0) {
+            return false;
+        }
+        Menu tm = trayMenus[ti];
+        int mi = tm.indexOfId(id);
+        if (mi < 0) {
+            return false;
+        }
+        int on = 0;
+        if (enabled) {
+            on = 1;
+        }
+        tm.flags[mi] = tm.flags[mi] % 2 + 2 - 2 * on;
+        return app_tray_item(th, id, on, -1) == 0;
+    }
+
+    bool trayChecked(int th, string id, bool checked) {
+        int ti = trayIndex(th);
+        if (ti < 0) {
+            return false;
+        }
+        Menu tm = trayMenus[ti];
+        int mi = tm.indexOfId(id);
+        if (mi < 0 || tm.kinds[mi] != "c") {
+            return false;
+        }
+        int on = 0;
+        if (checked) {
+            on = 1;
+        }
+        tm.flags[mi] = (tm.flags[mi] / 2) * 2 + on;
+        return app_tray_item(th, id, -1, on) == 0;
+    }
+
+    // Removes the icon.
+    bool closeTray(int th) {
+        int ti = trayIndex(th);
+        if (ti < 0) {
+            return false;
+        }
+        app_close(th);
+        trayGone(th);
+        return true;
+    }
+
+    void trayGone(int th) {
+        int ti = trayIndex(th);
+        if (ti < 0) {
+            return;
+        }
+        int last = trays.size() - 1;
+        if (ti != last) {
+            trays[ti] = trays[last];
+            trayMenus[ti] = trayMenus[last];
+        }
+        trays.pop_back();
+        trayMenus.pop_back();
+    }
+
+    // The window with this handle comes back (see Window.hide, hideOnClose): shown, restored if minimized, in front.
+    bool showWindow(int h) {
+        Window w = windows.get(h);
+        if (w == nullptr) {
+            return false;
+        }
+        return w.show();
     }
 
     // ---- remembering where windows were (src/placement.clg) ----
@@ -3093,6 +3336,15 @@ public:
             onSecondInstance(from, f);
         } else if (f[0] == "menu" && f.size() >= 2) {
             onMenuClick(from, f[1]);
+        } else if (f[0] == "tray" && f.size() >= 2) {
+            if (trayIndex(from) >= 0 && (f[1] == "click" || f[1] == "double")) {
+                try {
+                    TrayAction clicked = trayHandler;
+                    clicked.happened(f[1]);
+                } catch (string message) {
+                    // nobody is waiting for an answer
+                }
+            }
         } else if (f[0] == "pump" && f.size() >= 2) {
             int index = pumps.indexOf(f[1]);
             if (index >= 0) {
@@ -3142,6 +3394,9 @@ public:
     // Returns 1 if something was served, 2 if the wait timed out, 0 when no window is open any more (the last one has closed).
     int serveOne(int timeoutMs) {
         double started = app_now_ms();
+        if (quitCalled && windows.count() == 0) {
+            return 0;
+        }
         while (true) {
             int wait = timeoutMs;
             if (timeoutMs >= 0) {
@@ -3160,7 +3415,13 @@ public:
                 wait = due + 1;
             }
             int from = 0;
-            int ready = app_wait_any(windows.handles, wait, from);
+            std::vector<int> waitOn = windows.handles;
+            int t = 0;
+            while (t < trays.size()) {
+                waitOn.push_back(trays[t]);
+                t = t + 1;
+            }
+            int ready = app_wait_any(waitOn, wait, from);
             if (ready == 0) {
                 return 0;
             }
@@ -3180,9 +3441,11 @@ public:
                     windows.flushQuiet(gate);
                     return 1;
                 }
-                if (r == 0) {
+                if (r == 0 && trayIndex(from) >= 0) {
+                    trayGone(from);
+                } else if (r == 0) {
                     windowGone(from);
-                    if (windows.count() == 0) {
+                    if (windows.count() == 0 && (!stayWithoutWindows || quitCalled)) {
                         return 0;
                     }
                 }
@@ -3211,8 +3474,15 @@ public:
         return served;
     }
 
-    // Closes every window the way the close button does when nothing asks first.
+    // By default the program ends when its last window has closed. With keepRunning(true) it goes on with no window open (a program that lives in the tray) until
+    // quit() is called; the loop (run / serveOne) then returns 0.
+    void keepRunning(bool on) {
+        stayWithoutWindows = on;
+    }
+
+    // Closes every window the way the close button does when nothing asks first, and ends the loop even for a program that keeps running without windows.
     void quit() {
+        quitCalled = true;
         int i = 0;
         while (i < windows.items.size()) {
             Window w = windows.items[i];
@@ -3224,6 +3494,9 @@ public:
     // Ends the application in order: every call still running is told to stop (callCancelled, programs killed), the watchers are stopped,
     // the window closes. Jobs that are still running afterwards get setShutdownGrace milliseconds when main returns, then the process ends.
     void close() {
+        while (trays.size() > 0) {
+            closeTray(trays[0]);
+        }
         int i = 0;
         while (i < opened.size()) {
             app_cancel_all(opened[i]);

@@ -7,3 +7,10 @@ int app_menu_item(int, std::string, int, int) { return -1; }
 bool app_menu_command(int, unsigned) { return false; }
 bool app_menu_shortcut(int, unsigned, unsigned, bool) { return false; }
 void app_menu_forget(int) {}
+
+int app_tray_open(std::string, std::string, int& handle) { handle = 0; return -1; }
+int app_tray_update(int, std::string, std::string) { return -1; }
+int app_tray_item(int, std::string, int, int) { return -1; }
+void app_tray_forget(int) {}
+
+int app_menu_popup(int, std::string, std::string& chosen) { chosen.clear(); return -1; }

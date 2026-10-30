@@ -14,7 +14,7 @@ EXPECTED_STORE=54
 EXPECTED_LINKS=49
 EXPECTED_INSTANCE=19
 EXPECTED_PLACEMENT=41
-EXPECTED_MENU=53
+EXPECTED_MENU=100
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print text core files assets settings links placement menu app embedded"
