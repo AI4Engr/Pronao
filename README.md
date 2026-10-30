@@ -144,6 +144,22 @@ await cling.shell.reveal({ path: '...' });                          // shown in 
   itself was checked only for its refusals. Click it once by hand on a machine with a browser.
 - **What it cannot know:** what the browser or the default program will do with what it gets. Listing `html` or `svg` for `openFile` is the application's choice.
 
+## Remembering where windows were
+
+```
+app.rememberWindows("my-app");        // before the first window is opened; windows then open where they were and the place is saved as the user moves them
+```
+
+- **What is kept:** per window, the restored rectangle (so a maximized window keeps the size it goes back to) and whether it was maximized, in `windows.json` in the application's config folder, next to `settings.json`.
+  The first window is `main`, another window is named by the page it starts on; at most 16 names. The page never sees or changes these numbers (the file is outside the page's file gate).
+- **When it is saved:** after the user finishes moving or resizing the window, and when it is maximized or restored. Not while a drag is going on, so one drag is one write.
+- **Fitted to the screens that exist now** (`fitToMonitors` in `src/placement.clg`): never smaller than 200 x 150, never larger than the biggest monitor, wholly inside the work area (the screen without the taskbar) of the monitor
+  it overlaps most, and centred on the first monitor if it overlaps none (the monitor it was on is unplugged). A window that spanned two monitors is pulled onto one.
+- **Limits:** the window is created where the program asked and moved at once, so it can be seen to jump; a minimized window is not remembered as minimized. The numbers are in pixels of the screen
+  they were saved on: a change of scaling between runs is not corrected for. A maximized window on a second monitor is remembered by its normal size and position, the maximized flag then maximizes it on whichever monitor that place is on.
+- **Test:** `tests/run_placement_window.sh` moves, resizes, maximizes, restores and closes a real window from outside (`tests/window_poke.cpp`), starts the program again and checks that the window comes back; a place on
+  no monitor and one far too big must come back fitted. A physical mouse drag is not simulated (the message that ends a drag is sent). With a control that must fail.
+
 ## One running copy of the program
 
 Two copies writing the same files corrupt them. A program can say it wants one (Windows; elsewhere nothing is enforced and the call says so):
@@ -490,7 +506,8 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_placement_window.sh    # a real window is moved, maximized and closed from outside; the next start must open it there; with a control that must fail
 bash tests/run_instance_window.sh     # two real processes, one window: the second hands over its arguments and ends; with a control that must fail
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # ~80 s, WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
@@ -519,6 +536,7 @@ a fresh project builds in all three ways and its window starts.
 | `src/core.clg` | replies and structured errors, events to the page, argument helpers, `Command` / `AsyncCommand` / `Job` |
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
+| `src/placement.clg` | where windows were: `WindowMemory` and `fitToMonitors` |
 | `shim/win/instance.cpp` | one running copy per user: the mutex, the pipe and the hand-over of a later launch's arguments |
 | `src/links.clg` | what a page may ask the system to open: addresses, files, show in the file manager |
 | `src/settings.clg` | the per-user folders of an application and `SettingsStore`, its declared, typed settings file |

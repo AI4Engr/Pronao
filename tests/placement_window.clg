@@ -1,0 +1,29 @@
+// Window places, for real (run by tests/run_placement_window.sh, which moves, maximizes and closes the window from outside and starts this program again):
+// it remembers the place of its window, opens it there next time, and says "ready" once its page has loaded.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "settings.clh"
+#include "placement.clh"
+#include "app.clh"
+
+int main() {
+    App app = new App();
+    if (!app.rememberWindows("app-cling-placement-test")) {
+        std::cout << "selftest FAILED: no config folder" << std::endl;
+        return 2;
+    }
+    app.command("ready", closure Command [] (Item args) {
+        std::cout << "ready" << std::endl;
+        return createNull();
+    });
+    if (!app.openSite("placement test", 500, 400, false, "http://app.localhost", "")) {
+        std::cout << "selftest FAILED: no window" << std::endl;
+        return 2;
+    }
+    app.run();
+    app.close();
+    std::cout << "closed" << std::endl;
+    return 0;
+}

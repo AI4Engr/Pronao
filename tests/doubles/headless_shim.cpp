@@ -117,6 +117,20 @@ int app_navigation_allow(int handle, std::vector<std::string> prefixes) {
     logWindow(handle, line);
     return lookup(handle) ? 1 : 0;
 }
+int app_window_placement(int handle, int x, int y, int width, int height, int maximized) {
+    auto app = lookup(handle);
+    if (!app) return 0;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("placement|" + std::to_string(x) + "|" + std::to_string(y) + "|" + std::to_string(width) + "|" + std::to_string(height) + "|" + std::to_string(maximized));
+    return 1;
+}
+int app_window_track(int handle, int on) {
+    auto app = lookup(handle);
+    if (!app) return 0;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("track|" + std::to_string(on));
+    return 1;
+}
 int app_window_guard(int handle, int on) {
     auto app = lookup(handle);
     if (!app) return 0;

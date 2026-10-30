@@ -29,6 +29,13 @@ int app_window_title(int handle, std::string title);
 int app_window_size(int handle, int width, int height);
 int app_window_state(int handle, int state);     // 3 also brings a minimized window back
 int app_window_guard(int handle, int on);
+// Where windows may be. app_monitors: the work area (the screen without the taskbar) of every monitor as left, top, right, bottom, each number followed by a NUL,
+// the primary monitor first; 4 if none can be found, -1 not supported. app_window_placement: puts the window's RESTORED rectangle at x y width height and
+// maximizes it if asked (Windows; -1 elsewhere). The caller has fitted it to the monitors. app_window_track(on): from now on, after the user moves or resizes
+// the window (or maximizes / restores it) the record "window" "placement" x y width height maximized is queued for the main loop (the restored rectangle).
+int app_monitors(std::string& out);
+int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
+int app_window_track(int handle, int on);
 int app_release_build();                                                          // 1 if built with RELEASE=1 (no development server, no developer tools)
 // Limits on what a page may send: a call over `max_request` bytes or arriving while `max_queued` wait is answered at once with
 // {code: too_large} / {code: busy} and never reaches CeeLing. Defaults 16 MiB and 1000.

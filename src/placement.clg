@@ -1,0 +1,287 @@
+// app-cling -- where a program's windows were the last time, and fitting that to the screens that exist now.
+//
+// A WindowMemory keeps, per window name, the restored rectangle and whether the window was maximized, in `windows.json` in the "config" folder next to
+// settings.json (its own file gate, so a page cannot reach it either; the page never sees these numbers). Windows are named
+// automatically: a program's first window is "main", another window is named by the page it starts on.
+//
+// The rectangle that comes back is FITTED (fitToMonitors): never smaller than 200 x 150, never larger than the biggest monitor, and wholly inside the work
+// area of the monitor it overlaps most (or centred on the first monitor when it overlaps none: the monitor it was on is gone). A window that spanned two
+// monitors is pulled onto one. What a monitor is, and where, comes from the system (app_monitors); if it says nothing only the size is limited.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "files.clh"
+#include "settings.clh"
+
+ext_fn int app_monitors(ref string out);
+
+// an optional minus sign and up to 9 digits; 0 for anything else
+int signedInt(string s) {
+    if (s.length() == 0 || s.length() > 10) {
+        return 0;
+    }
+    bool negative = s[0] == '-';
+    string digits = s;
+    if (negative) {
+        digits = s.substr(1, s.length() - 1);
+    }
+    if (!isDigits(digits)) {
+        return 0;
+    }
+    int v = int(decimalValue(digits));
+    if (negative) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// an optional minus sign and 1 to 9 digits
+bool isSignedNumber(string s) {
+    if (s.length() > 1 && s[0] == '-') {
+        return isDigits(s.substr(1, s.length() - 1));
+    }
+    return isDigits(s);
+}
+
+// the work area of every monitor as left, top, right, bottom ...; empty if the system does not say
+std::vector<int> monitorList() {
+    std::vector<int> out;
+    string raw = "";
+    if (app_monitors(raw) != 0) {
+        return out;
+    }
+    std::vector<string> f = splitFields(raw);
+    int i = 0;
+    while (i + 3 < f.size()) {
+        out.push_back(signedInt(f[i]));
+        out.push_back(signedInt(f[i + 1]));
+        out.push_back(signedInt(f[i + 2]));
+        out.push_back(signedInt(f[i + 3]));
+        i = i + 4;
+    }
+    return out;
+}
+
+// the larger of two numbers
+int larger(int a, int b) {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}
+
+int smaller(int a, int b) {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+// How much of the rectangle x, y, w, h lies inside the monitor number m of the list (0 if none).
+double overlapWith(std::vector<int> monitors, int m, int x, int y, int w, int h) {
+    int overlapW = smaller(monitors[m * 4 + 2], x + w) - larger(monitors[m * 4], x);
+    int overlapH = smaller(monitors[m * 4 + 3], y + h) - larger(monitors[m * 4 + 1], y);
+    if (overlapW <= 0 || overlapH <= 0) {
+        return 0.0;
+    }
+    return double(overlapW) * double(overlapH);
+}
+
+// A rectangle that fits the screens, as x, y, width, height. With no monitor list only the size is limited (200..10000 by 150..10000).
+std::vector<int> fitToMonitors(int x, int y, int width, int height, std::vector<int> monitors) {
+    std::vector<int> out;
+    int count = monitors.size() / 4;
+    int maxW = 10000;
+    int maxH = 10000;
+    if (count > 0) {
+        maxW = 0;
+        maxH = 0;
+        int m = 0;
+        while (m < count) {
+            maxW = larger(maxW, monitors[m * 4 + 2] - monitors[m * 4]);
+            maxH = larger(maxH, monitors[m * 4 + 3] - monitors[m * 4 + 1]);
+            m = m + 1;
+        }
+    }
+    int w = larger(200, smaller(width, maxW));
+    int h = larger(150, smaller(height, maxH));
+    if (count == 0) {
+        out.push_back(x);
+        out.push_back(y);
+        out.push_back(w);
+        out.push_back(h);
+        return out;
+    }
+    int best = -1;
+    double bestArea = 0.0;
+    int m = 0;
+    while (m < count) {
+        double area = overlapWith(monitors, m, x, y, w, h);
+        if (area > bestArea) {
+            bestArea = area;
+            best = m;
+        }
+        m = m + 1;
+    }
+    int nx = 0;
+    int ny = 0;
+    if (best < 0) {
+        nx = monitors[0] + (monitors[2] - monitors[0] - w) / 2;
+        ny = monitors[1] + (monitors[3] - monitors[1] - h) / 2;
+    } else {
+        nx = larger(monitors[best * 4], smaller(x, monitors[best * 4 + 2] - w));
+        ny = larger(monitors[best * 4 + 1], smaller(y, monitors[best * 4 + 3] - h));
+    }
+    out.push_back(nx);
+    out.push_back(ny);
+    out.push_back(w);
+    out.push_back(h);
+    return out;
+}
+
+class WindowMemory {
+public:
+    FileGate gate;
+    string folder;
+    std::vector<string> keys;
+    std::vector<int> xs;
+    std::vector<int> ys;
+    std::vector<int> ws;
+    std::vector<int> hs;
+    std::vector<int> maxed;
+
+    WindowMemory() {
+        gate = new FileGate();
+        folder = "";
+    }
+
+    bool isOpen() {
+        return folder.length() > 0;
+    }
+
+    string filePath() {
+        return gate.join(folder, "windows.json");
+    }
+
+    // The application's "config" folder, like SettingsStore.open, and reads windows.json. "" on success, else why not.
+    string open(string appName) {
+        if (isOpen()) {
+            return "already open";
+        }
+        if (!plainName(appName)) {
+            return "the application name must be 1 to 64 letters, digits, `.`, `_` or `-`";
+        }
+        string path = appFolderPath("config", appName);
+        if (path.length() == 0) {
+            return "the environment does not say where the configuration folder is";
+        }
+        makeAppFolder("config", appName);
+        if (gate.allow(path) != 0) {
+            return "the configuration folder cannot be used";
+        }
+        folder = path;
+        load();
+        return "";
+    }
+
+    int indexOf(string key) {
+        int i = 0;
+        while (i < keys.size()) {
+            if (keys[i] == key) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    bool rectOk(int x, int y, int w, int h) {
+        return x >= -32000 && x <= 32000 && y >= -32000 && y <= 32000 && w >= 1 && w <= 32000 && h >= 1 && h <= 32000;
+    }
+
+    bool numberIn(Item o, string name, double low, double high) {
+        Item v = getObjectItem(o, name);
+        return v != nullptr && isNumber(v) && v.valuedouble >= low && v.valuedouble <= high && v.valuedouble == double(int(v.valuedouble));
+    }
+
+    // Reads windows.json: an entry that is not {x, y, w, h, max} with sane numbers is skipped, so is everything after the 16th; a missing or bad file is
+    // an empty memory.
+    void load() {
+        FsResult r = gate.read(filePath(), 65536);
+        if (r.status != 0) {
+            return;
+        }
+        Item root = parse(r.text);
+        if (root == nullptr || !isObject(root)) {
+            return;
+        }
+        Item child = root.child;
+        while (child != nullptr && keys.size() < 16) {
+            if (isObject(child) && numberIn(child, "x", -32000.0, 32000.0) && numberIn(child, "y", -32000.0, 32000.0) && numberIn(child, "w", 1.0, 32000.0) && numberIn(child, "h", 1.0, 32000.0)) {
+                Item mx = getObjectItem(child, "max");
+                keys.push_back(child.key);
+                xs.push_back(int(getObjectItem(child, "x").valuedouble));
+                ys.push_back(int(getObjectItem(child, "y").valuedouble));
+                ws.push_back(int(getObjectItem(child, "w").valuedouble));
+                hs.push_back(int(getObjectItem(child, "h").valuedouble));
+                if (mx != nullptr && isTrue(mx)) {
+                    maxed.push_back(1);
+                } else {
+                    maxed.push_back(0);
+                }
+            }
+            child = child.next;
+        }
+    }
+
+    // Takes where a window is now and writes the file (through a temporary file). false if the numbers are not sane, there are 16 names already, or the
+    // file could not be written.
+    bool remember(string key, int x, int y, int w, int h, int maximized) {
+        if (!isOpen() || key.length() == 0 || key.length() > 100 || !rectOk(x, y, w, h)) {
+            return false;
+        }
+        int i = indexOf(key);
+        if (i < 0) {
+            if (keys.size() >= 16) {
+                return false;
+            }
+            keys.push_back(key);
+            xs.push_back(x);
+            ys.push_back(y);
+            ws.push_back(w);
+            hs.push_back(h);
+            maxed.push_back(maximized);
+        } else {
+            xs[i] = x;
+            ys[i] = y;
+            ws[i] = w;
+            hs[i] = h;
+            maxed[i] = maximized;
+        }
+        return save() == 0;
+    }
+
+    int save() {
+        Item root = createObject();
+        int i = 0;
+        while (i < keys.size()) {
+            Item one = createObject();
+            addNumberToObject(one, "x", double(xs[i]));
+            addNumberToObject(one, "y", double(ys[i]));
+            addNumberToObject(one, "w", double(ws[i]));
+            addNumberToObject(one, "h", double(hs[i]));
+            addBoolToObject(one, "max", maxed[i] == 1);
+            addItemToObject(root, keys[i], one);
+            i = i + 1;
+        }
+        string text = print(root);
+        string tmp = gate.join(folder, "windows.json.tmp");
+        int st = gate.write(tmp, text, 0);
+        if (st != 0) {
+            return st;
+        }
+        return gate.replace(tmp, filePath());
+    }
+};

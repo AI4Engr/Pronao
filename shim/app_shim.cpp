@@ -27,6 +27,8 @@ struct App {
     webview::webview* w = nullptr;     // valid only while the loop runs, and only touched under `m`
     std::thread ui;
     std::atomic<bool> guard{false};    // closing the window asks CeeLing instead of closing
+    std::atomic<bool> track{false};    // report where the window is after the user moves or resizes it (app_window_track)
+    bool moving = false;               // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE (UI thread only)
     std::atomic<int> maxRequest{16 << 20}, maxQueued{1000};
     std::shared_ptr<NavRules> nav = std::make_shared<NavRules>();   // (nav->handle is set by app_open)
     void* oldProc = nullptr;
@@ -47,8 +49,34 @@ void ended(App* a, bool created) {
 }
 
 #ifdef _WIN32
+// where the window is, as the record "window" "placement" x y width height maximized, in SCREEN coordinates (the same ones app_monitors uses), and the
+// RESTORED rectangle: a maximized window keeps its normal size. (WINDOWPLACEMENT's own rectangle is in workspace coordinates, relative to the work area of
+// the primary monitor, which is why that is converted here and not handed on.)
+void reportPlacement(App* a, HWND h) {
+    WINDOWPLACEMENT wp = {};
+    wp.length = sizeof wp;
+    if (!a->track.load() || !GetWindowPlacement(h, &wp) || wp.showCmd == SW_SHOWMINIMIZED) return;
+    RECT r = wp.rcNormalPosition;
+    if (wp.showCmd == SW_SHOWMAXIMIZED) {
+        MONITORINFO info = {};
+        info.cbSize = sizeof info;
+        if (GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &info)) OffsetRect(&r, info.rcWork.left, info.rcWork.top);
+    } else if (!GetWindowRect(h, &r)) {
+        return;
+    }
+    std::string record("window\0placement\0", 17);
+    for (long v : {r.left, r.top, r.right - r.left, r.bottom - r.top, wp.showCmd == SW_SHOWMAXIMIZED ? 1L : 0L}) {
+        record += std::to_string(v);
+        record += '\0';
+    }
+    a->calls.push(std::string(), record, 100);
+}
+
 LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     App* a = static_cast<App*>(GetPropW(h, L"app_cling"));
+    if (msg == WM_ENTERSIZEMOVE) a->moving = true;
+    if (msg == WM_EXITSIZEMOVE) { a->moving = false; reportPlacement(a, h); }
+    if (msg == WM_SIZE && !a->moving && (wp == SIZE_MAXIMIZED || wp == SIZE_RESTORED)) reportPlacement(a, h);     // (the maximize button, a double click on the title)
     if (msg == WM_CLOSE && a->guard.load()) {
         a->calls.push(std::string(), std::string("window\0close_requested\0", 23), 100);
         return 0;
@@ -186,6 +214,45 @@ int app_window_state(int handle, int state) {
 #else
     return (void)handle, (void)state, -1;
 #endif
+}
+
+int app_monitors(std::string& out) {
+#ifdef _WIN32
+    struct Collected { std::string primary, others; } c;
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT, LPARAM p) -> BOOL {
+        MONITORINFO info = {};
+        info.cbSize = sizeof info;
+        if (!GetMonitorInfoW(m, &info)) return TRUE;
+        auto* c = reinterpret_cast<Collected*>(p);
+        std::string one;
+        for (long v : {info.rcWork.left, info.rcWork.top, info.rcWork.right, info.rcWork.bottom}) { one += std::to_string(v); one += '\0'; }
+        ((info.dwFlags & MONITORINFOF_PRIMARY) ? c->primary : c->others) += one;
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&c));
+    out = c.primary + c.others;                                      // (the primary monitor first)
+    return out.empty() ? 4 : 0;
+#else
+    return (void)out, -1;
+#endif
+}
+
+int app_window_placement(int handle, int x, int y, int width, int height, int maximized) {
+#ifdef _WIN32
+    return onUi(handle, [=](webview::webview& w) {
+        HWND hwnd = static_cast<HWND>(w.window().value());
+        SetWindowPos(hwnd, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);      // the restored rectangle, in screen coordinates ...
+        if (maximized) ShowWindow(hwnd, SW_MAXIMIZE);                                         // ... which a maximized window goes back to when restored
+    });
+#else
+    return (void)handle, (void)x, (void)y, (void)width, (void)height, (void)maximized, -1;
+#endif
+}
+
+int app_window_track(int handle, int on) {
+    auto app = lookup(handle);
+    if (!app) return 0;
+    app->track = on != 0;
+    return 1;
 }
 
 int app_window_guard(int handle, int on) {

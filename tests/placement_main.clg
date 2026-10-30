@@ -1,0 +1,247 @@
+// Where windows were (src/placement.clg and the parts of src/app.clg that use it). The monitors are a test double (app_test_monitors) so every layout can be tried;
+// the real monitors, the real window moving and the real file are tests/run_placement_window.sh. The environment variables that name the per-user folders point
+// at a temporary folder first.
+#include "text.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "placement.clh"
+#include "app.clh"
+
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_push_internal(int handle, string request);
+ext_fn int app_test_setenv(string name, string value);
+ext_fn int app_test_monitors(string fields);
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_exists(string path);
+ext_fn int app_test_mkdir_raw(string path);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+string under(string dir, string leaf) {
+    if (app_os_windows() == 1) {
+        return dir + "\\" + leaf;
+    }
+    return dir + "/" + leaf;
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+string slurpFile(string path) {
+    string out = "";
+    app_test_read_raw(path, out);
+    return out;
+}
+
+// numbers each followed by a NUL
+string nums(int a, int b, int c, int d) {
+    string r = intToString(a);
+    r.push_back(char(0));
+    r = r + intToString(b);
+    r.push_back(char(0));
+    r = r + intToString(c);
+    r.push_back(char(0));
+    r = r + intToString(d);
+    r.push_back(char(0));
+    return r;
+}
+
+string placementRecord(string x, string y, string w, string h, string maximized) {
+    string r = "window";
+    r.push_back(char(0));
+    r = r + "placement";
+    r.push_back(char(0));
+    std::vector<string> parts;
+    parts.push_back(x);
+    parts.push_back(y);
+    parts.push_back(w);
+    parts.push_back(h);
+    parts.push_back(maximized);
+    int i = 0;
+    while (i < parts.size()) {
+        r = r + parts[i];
+        r.push_back(char(0));
+        i = i + 1;
+    }
+    return r;
+}
+
+// everything the double logged for a window, joined with ;
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        all = all + one + ";";
+    }
+    return all;
+}
+
+string rect(std::vector<int> r) {
+    if (r.size() != 4) {
+        return "?";
+    }
+    return intToString(r[0]) + " " + intToString(r[1]) + " " + intToString(r[2]) + " " + intToString(r[3]);
+}
+
+std::vector<int> oneMonitor() {
+    std::vector<int> m;
+    m.push_back(0);
+    m.push_back(0);
+    m.push_back(1920);
+    m.push_back(1040);
+    return m;
+}
+
+// the primary monitor, one to the right of it, and one to the left that starts lower
+std::vector<int> threeMonitors() {
+    std::vector<int> m = oneMonitor();
+    m.push_back(1920);
+    m.push_back(0);
+    m.push_back(3840);
+    m.push_back(1040);
+    m.push_back(-1280);
+    m.push_back(100);
+    m.push_back(0);
+    m.push_back(1024);
+    return m;
+}
+
+int main() {
+    // ---- fitting a rectangle to the screens ----
+    std::vector<int> none;
+    check("a rectangle that fits stays where it is", rect(fitToMonitors(100, 100, 800, 600, oneMonitor())) == "100 100 800 600");
+    check("one that hangs over the right edge is moved in", rect(fitToMonitors(1700, 100, 800, 600, oneMonitor())) == "1120 100 800 600");
+    check("over the bottom edge", rect(fitToMonitors(100, 900, 800, 600, oneMonitor())) == "100 440 800 600");
+    check("over the top left corner", rect(fitToMonitors(-500, -300, 800, 600, oneMonitor())) == "0 0 800 600");
+    check("one that is nowhere near a monitor is centred on the first", rect(fitToMonitors(50000, 50000, 800, 600, oneMonitor())) == "560 220 800 600");
+    check("one that is too big is made the size of the monitor", rect(fitToMonitors(300, 300, 5000, 4000, oneMonitor())) == "0 0 1920 1040");
+    check("one that is too small is made 200 x 150", rect(fitToMonitors(10, 10, 50, 50, oneMonitor())) == "10 10 200 150");
+    check("a window on the second monitor stays there", rect(fitToMonitors(2000, 100, 800, 600, threeMonitors())) == "2000 100 800 600");
+    check("one across two monitors goes to the one it overlaps more", rect(fitToMonitors(1700, 100, 800, 600, threeMonitors())) == "1920 100 800 600");
+    check("a window on a monitor with negative coordinates stays there", rect(fitToMonitors(-1000, 200, 800, 600, threeMonitors())) == "-1000 200 800 600");
+    check("and is moved down into it when it starts above its work area", rect(fitToMonitors(-1000, 0, 800, 600, threeMonitors())) == "-1000 100 800 600");
+    check("a monitor that is gone: the window comes back on the first", rect(fitToMonitors(2500, 100, 800, 600, oneMonitor())) == "560 220 800 600");
+    check("without a monitor list only the size is limited", rect(fitToMonitors(5, 5, 50, 50, none)) == "5 5 200 150" && rect(fitToMonitors(0, 0, 20000, 20000, none)) == "0 0 10000 10000");
+
+    check("signedInt", signedInt("-12") == -12 && signedInt("12") == 12 && signedInt("x") == 0 && signedInt("--1") == 0 && signedInt("") == 0 && signedInt("1234567890") == 0 && signedInt("-") == 0);
+    app_test_monitors(nums(0, 0, 1920, 1040) + nums(-1280, 100, 0, 1024));
+    std::vector<int> listed = monitorList();
+    check("the monitor list is read from the system", listed.size() == 8 && listed[0] == 0 && listed[2] == 1920 && listed[4] == -1280 && listed[7] == 1024);
+    app_test_monitors("");
+    std::vector<int> noneListed = monitorList();
+    check("no monitors: an empty list", noneListed.size() == 0);
+
+    // ---- the memory file ----
+    string sbase = "";
+    app_test_make_temp_dir(sbase);
+    string roaming = under(sbase, "roaming");
+    app_test_mkdir_raw(roaming);
+    string home = under(sbase, "home");
+    app_test_mkdir_raw(home);
+    app_test_setenv("APPDATA", roaming);
+    app_test_setenv("HOME", home);
+    app_test_setenv("XDG_CONFIG_HOME", under(sbase, "xdg"));
+    string cfg = appFolderPath("config", "t-place");
+
+    WindowMemory m1 = new WindowMemory();
+    check("a name that is not plain is refused", m1.open("a/b") != "" && !m1.isOpen());
+    check("the memory opens", m1.open("t-place") == "" && m1.isOpen() && app_test_exists(cfg) == 1);
+    check("it starts empty", m1.keys.size() == 0 && m1.indexOf("main") == -1);
+    check("a place is remembered", m1.remember("main", 100, 120, 700, 500, 0) && m1.indexOf("main") == 0);
+    check("and written to windows.json", containsText(slurpFile(under(cfg, "windows.json")), "\"main\"") && app_test_exists(under(cfg, "windows.json.tmp")) == 0);
+    check("a place is replaced, not added", m1.remember("main", 10, 20, 640, 480, 1) && m1.keys.size() == 1 && m1.xs[0] == 10 && m1.maxed[0] == 1);
+    check("numbers that make no sense are refused", !m1.remember("main", 99999, 0, 700, 500, 0) && !m1.remember("main", 0, 0, 0, 500, 0) && !m1.remember("main", 0, 0, 700, -5, 0) && m1.xs[0] == 10);
+    check("a name that is empty or too long is refused", !m1.remember("", 0, 0, 700, 500, 0) && !m1.remember(repeated("x", 101), 0, 0, 700, 500, 0));
+    int n = 1;
+    while (n < 16) {
+        m1.remember("w" + intToString(n), 0, 0, 300, 300, 0);
+        n = n + 1;
+    }
+    check("at most 16 names", m1.keys.size() == 16 && !m1.remember("one-too-many", 0, 0, 300, 300, 0));
+
+    WindowMemory m2 = new WindowMemory();
+    m2.open("t-place");
+    check("another run reads them back", m2.keys.size() == 16 && m2.indexOf("main") >= 0 && m2.xs[m2.indexOf("main")] == 10 && m2.maxed[m2.indexOf("main")] == 1);
+    app_test_write_raw(under(cfg, "windows.json"), "{\"a\": {\"x\": 1, \"y\": 2, \"w\": 300, \"h\": 200, \"max\": false}, \"b\": {\"x\": \"1\", \"y\": 2, \"w\": 300, \"h\": 200}, \"c\": {\"x\": 1, \"y\": 2, \"w\": 0, \"h\": 200}, \"d\": 5, \"e\": {\"x\": 1.5, \"y\": 2, \"w\": 300, \"h\": 200}}");
+    WindowMemory m3 = new WindowMemory();
+    m3.open("t-place");
+    check("an entry that is not a rectangle is skipped, the good one is kept", m3.keys.size() == 1 && m3.keys[0] == "a");
+    app_test_write_raw(under(cfg, "windows.json"), "{not json");
+    WindowMemory m4 = new WindowMemory();
+    check("a file that is not JSON is an empty memory", m4.open("t-place") == "" && m4.keys.size() == 0);
+    check("and is replaced by the next place", m4.remember("main", 1, 2, 300, 200, 0) && parse(slurpFile(under(cfg, "windows.json"))) != nullptr);
+
+    // ---- the program's windows ----
+    app_test_monitors(nums(0, 0, 1920, 1040));
+    app_test_write_raw(under(cfg, "windows.json"), "{}");
+    App a = new App();
+    check("a bad application name remembers nothing", !a.rememberWindows("bad/name"));
+    check("rememberWindows opens the memory", a.rememberWindows("t-place"));
+    a.open("t", 640, 480, "<html></html>", "", false);
+    int ha = a.handle;
+    check("the first run: nothing to restore, the window is tracked", windowLog(ha) == "navigation;track|1;");
+    app_test_push_internal(ha, placementRecord("100", "120", "700", "500", "0"));
+    a.serveOne(100);
+    string saved = slurpFile(under(cfg, "windows.json"));
+    check("the user moves the window: it is saved under main", containsText(saved, "\"main\"") && containsText(saved, "100") && containsText(saved, "700"));
+
+    App b = new App();
+    b.rememberWindows("t-place");
+    b.open("t", 640, 480, "<html></html>", "", false);
+    check("the next run opens it there", windowLog(b.handle) == "navigation;placement|100|120|700|500|0;track|1;");
+
+    app_test_push_internal(b.handle, placementRecord("-5", "-5", "5000", "300", "1"));
+    b.serveOne(100);
+    App c = new App();
+    c.rememberWindows("t-place");
+    c.open("t", 640, 480, "<html></html>", "", false);
+    check("maximized, partly off the screen and too wide: restored maximized and fitted", windowLog(c.handle) == "navigation;placement|0|0|1920|300|1;track|1;");
+
+    app_test_push_internal(c.handle, placementRecord("5", "5", "0", "300", "0"));
+    c.serveOne(100);
+    app_test_push_internal(c.handle, placementRecord("x", "5", "300", "300", "0"));
+    c.serveOne(100);
+    App d = new App();
+    d.rememberWindows("t-place");
+    d.open("t", 640, 480, "<html></html>", "", false);
+    check("a bad record changes nothing", windowLog(d.handle) == "navigation;placement|0|0|1920|300|1;track|1;");
+
+    app_test_write_raw(under(cfg, "windows.json"), "{\"main\": {\"x\": 30000, \"y\": 30000, \"w\": 800, \"h\": 600, \"max\": false}}");
+    App e = new App();
+    e.rememberWindows("t-place");
+    e.open("t", 640, 480, "<html></html>", "", false);
+    check("a place on a monitor that is gone is brought back to the first", windowLog(e.handle) == "navigation;placement|560|220|800|600|0;track|1;");
+
+    int second = e.openWindow("two", 300, 300, false, "");
+    check("another window is remembered under its own name", windowLog(second) == "navigation;track|1;");
+    app_test_push_internal(second, placementRecord("200", "200", "400", "300", "0"));
+    e.serveOne(100);
+    string both = slurpFile(under(cfg, "windows.json"));
+    check("both names are in the file", containsText(both, "\"main\"") && containsText(both, "\"other\""));
+
+    App plain = new App();
+    plain.open("t", 640, 480, "<html></html>", "", false);
+    check("a program that never called rememberWindows is not touched", windowLog(plain.handle) == "navigation;");
+    app_test_push_internal(plain.handle, placementRecord("1", "1", "400", "300", "0"));
+    plain.serveOne(100);
+    check("and ignores a placement record", containsText(slurpFile(under(cfg, "windows.json")), "\"other\""));
+
+    app_test_remove_tree(sbase);
+    return 0;
+}

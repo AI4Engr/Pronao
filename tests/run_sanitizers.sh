@@ -23,14 +23,14 @@ rm -rf "$BASE/repo/shim_nolock"
 bash "$HERE/scripts/pack_assets.sh" - "$BASE/repo"          # (no embedded web files in these builds)
 
 # transpile everything twice: plain (work) and with the pooled allocator (work_pool)
-MAINS="headless_main files_main programs_main store_main links_main instance_main site_main"
+MAINS="headless_main files_main programs_main store_main links_main instance_main placement_main site_main"
 for variant in work work_pool; do
     flags=""; [ "$variant" = "work_pool" ] && flags="--pool-shared"
     mkdir -p "$BASE/$variant"
     for f in cjson_item cjson_api cjson_parse cjson_print; do cp "$CJSON/src/$f.clg" "$BASE/$variant/"; done
-    for f in text core files assets settings links app; do cp "$HERE/src/$f.clg" "$BASE/$variant/"; done
+    for f in text core files assets settings links placement app; do cp "$HERE/src/$f.clg" "$BASE/$variant/"; done
     for m in $MAINS; do cp "$HERE/tests/$m.clg" "$BASE/$variant/"; done
-    for f in cjson_item cjson_api cjson_parse cjson_print text core files assets settings links app $MAINS; do
+    for f in cjson_item cjson_api cjson_parse cjson_print text core files assets settings links placement app $MAINS; do
         "$CLING" $flags --cpp "$BASE/$variant/$f.cpp" "$BASE/$variant/$f.clg" > "$BASE/$variant/$f.log" 2>&1 || { grep -v Detected "$BASE/$variant/$f.log"; echo "TRANSPILE FAILED: $variant/$f"; exit 1; }
         case " $MAINS " in *" $f "*) ;; *) "$CLING" $flags --cpp "$BASE/$variant/$f.h" "$BASE/$variant/$f.clg" >> "$BASE/$variant/$f.log" 2>&1 || { echo "TRANSPILE FAILED (header): $variant/$f"; exit 1; } ;; esac
     done

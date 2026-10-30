@@ -96,6 +96,18 @@ bool nextAnswer(const std::string& request, std::string& answer) {
 std::atomic<int> g_gaugeNow{0}, g_gaugePeak{0};
 }  // namespace
 
+namespace {
+std::string g_monitors;
+}  // namespace
+int app_test_monitors(std::string fields) {
+    g_monitors = std::move(fields);
+    return 1;
+}
+int app_monitors(std::string& out) {
+    out = g_monitors;
+    return out.empty() ? 4 : 0;
+}
+
 void logRequest(const std::string& line) {
     std::lock_guard<std::mutex> lock(g_scriptMutex);
     g_requests.push_back(line);

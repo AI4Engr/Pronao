@@ -17,7 +17,7 @@ MAIN="$1"; OUT="$2"; MODE="${3:-window}"
 WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
-MODULES="text core files assets settings links app"
+MODULES="text core files assets settings links placement app"
 # EXTRA: more modules (paths to .clg files, space separated) that sit between the library and the main program
 EXTRA_NAMES=""
 for x in ${EXTRA:-}; do EXTRA_NAMES="$EXTRA_NAMES $(basename "$x" .clg)"; done

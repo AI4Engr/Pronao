@@ -20,6 +20,7 @@
 #include "assets.clh"
 #include "settings.clh"
 #include "links.clh"
+#include "placement.clh"
 
 ext_fn int app_open(string title, int width, int height, string html, string url, string initJs, int debug);
 ext_fn int app_wait_any(std::vector<int> handles, int timeoutMs, ref int handle);
@@ -40,6 +41,8 @@ ext_fn int app_watch_start(int handle, string root, int recursive, ref int watch
 ext_fn int app_watch_stop(int handle, int watchId);
 ext_fn int app_os_windows();
 ext_fn int app_shell_open(string target, int mode);
+ext_fn int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
+ext_fn int app_window_track(int handle, int on);
 ext_fn int app_instance_claim(string name, ref int first);
 ext_fn int app_instance_listen(int handle);
 ext_fn int app_command_line(ref string out);
@@ -1594,7 +1597,9 @@ public:
     Watches watches;
     std::vector<string> navigation;
     CommandRules rules;
+    string memoryKey;                  // the name under which WindowMemory keeps this window's place ("" = not remembered)
     Window(int h, CommandRules r) {
+        memoryKey = "";
         handle = h;
         state = new WindowState();
         state.handle = h;
@@ -1805,6 +1810,7 @@ public:
     FileGate gate;
     SettingsStore settings;            // the application's own settings file (empty until open() is called on it)
     bool instanceClaimed;              // claimInstance made this process the one instance: the first window listens for later launches
+    WindowMemory memory;               // where windows were last (rememberWindows)
     LinkRules links;                   // what a page may ask the system to open (allowLinkSchemes, allowOpenExtensions, enableShellCommands)
     WindowBook windows;                // the open windows
     std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
@@ -1829,6 +1835,7 @@ public:
         gate = new FileGate();
         settings = new SettingsStore();
         links = new LinkRules();
+        memory = new WindowMemory();
         instanceClaimed = false;
         cling::setExitGraceMs(5000);
         windows = new WindowBook();
@@ -2557,6 +2564,15 @@ public:
         if (f.size() < 2) {
             return;
         }
+        if (f[1] == "placement" && f.size() >= 7) {
+            Window moved = windows.get(from);
+            bool numbers = isSignedNumber(f[2]) && isSignedNumber(f[3]) && isSignedNumber(f[4]) && isSignedNumber(f[5]) && isSignedNumber(f[6]);
+            if (numbers && moved != nullptr && moved.memoryKey.length() > 0) {
+                WindowMemory mem = memory;
+                mem.remember(moved.memoryKey, signedInt(f[2]), signedInt(f[3]), signedInt(f[4]), signedInt(f[5]), signedInt(f[6]));
+            }
+            return;
+        }
         if (f[1] == "navigation_blocked" && f.size() >= 3) {
             if (isUtf8(f[2])) {
                 Item e = createObject();
@@ -2711,7 +2727,45 @@ public:
         if (instanceClaimed && windows.count() == 1) {
             app_instance_listen(h);
         }
+        if (memory.isOpen()) {
+            string key = memoryKeyFor(start, windows.count() == 1);
+            w.memoryKey = key;
+            placeRemembered(h, key);
+            app_window_track(h, 1);
+        }
         return h;
+    }
+
+    // ---- remembering where windows were (src/placement.clg) ----
+
+    // From now on windows open where they were the last time (the restored rectangle and whether they were maximized, kept per window in windows.json in the
+    // application's config folder), fitted to the monitors that exist now, and the place is saved when the user moves, resizes, maximizes or restores one.
+    // The first window is "main", another window is named by the page it starts on; at most 16 names. Call before the first window is opened. false if the
+    // application name is not a plain name or the config folder cannot be used (windows then open as they always did). The window is created where the
+    // program asked and moved at once, so it can be seen to jump; a program that cares passes its own default size.
+    bool rememberWindows(string appName) {
+        return memory.open(appName) == "";
+    }
+
+    string memoryKeyFor(string start, bool first) {
+        if (first) {
+            return "main";
+        }
+        if (startsWithText(start, "/") && start.length() <= 80 && plainText(start, 80)) {
+            return "page" + start;
+        }
+        return "other";
+    }
+
+    void placeRemembered(int h, string key) {
+        WindowMemory mem = memory;
+        int i = mem.indexOf(key);
+        if (i < 0) {
+            return;
+        }
+        std::vector<int> monitors = monitorList();
+        std::vector<int> r = fitToMonitors(mem.xs[i], mem.ys[i], mem.ws[i], mem.hs[i], monitors);
+        app_window_placement(h, r[0], r[1], r[2], r[3], mem.maxed[i]);
     }
 
     // Opens a window on the page embedded at build time or on `siteStart`. false if it could not be created.

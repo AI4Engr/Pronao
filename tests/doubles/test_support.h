@@ -29,6 +29,8 @@ int app_test_dialog_take_request(std::string& request);
 // what app_instance_claim answers (first, status) and the command line app_command_line gives (arguments each followed by a NUL); the claim and the
 // listen calls are logged as "instance|claim|NAME" and "instance|listen|HANDLE" for app_test_dialog_take_request
 int app_test_instance(int first, int status, std::string commandLine);
+// what app_monitors answers: left, top, right, bottom of each monitor's work area, every number followed by a NUL ("" = no monitor can be found)
+int app_test_monitors(std::string fields);
 
 // a program for the process tests to run (the environment variable APP_PROC_ECHO); 0 if unset
 int app_test_helper(std::string& path);
