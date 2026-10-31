@@ -40,6 +40,8 @@ int app_test_runtime(int status, std::string version, int boxAnswer);
 int app_test_popup_answer(std::string id);
 // a click on the tray icon (kind "click" or "double") as the native layer queues it; the tray's own calls show up in its window log (tray|open|, tray|update|, tray|item|)
 int app_test_tray_event(int handle, std::string kind);
+// the user clicked the notification that was shown with this id: queues the record "notify" id on the tray (or notifier) handle
+int app_test_notification_click(int handle, std::string id);
 
 // a program for the process tests to run (the environment variable APP_PROC_ECHO); 0 if unset
 int app_test_helper(std::string& path);

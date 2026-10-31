@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>notify test</title></head>
+<body><h1>notify test</h1>
+<script>
+  var say = function (text) { return cling.invoke('say', { text: text }); };
+  cling.onNotificationClick(function (id) { say('page heard click ' + id); });
+  (async function () {
+    await cling.invoke('ready', {});
+    await cling.invoke('showit', {});                                   // 1: the application shows one
+    setTimeout(async function () {                                      // 2: the page asks for one (the 2 seconds between two have passed)
+      try { await cling.notify('from the page', 'hello', { id: 'from-page' }); say('page notify ok'); }
+      catch (e) { say('page notify FAILED ' + JSON.stringify(e)); }
+    }, 2600);
+    setTimeout(async function () {                                      // 3: one more, that nobody clicks: its icon must go away by itself
+      try { await cling.invoke('showit', {}); } catch (e) { say('last notify FAILED'); }
+    }, 9000);
+  })();
+</script></body></html>

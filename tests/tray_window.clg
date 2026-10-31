@@ -32,6 +32,7 @@ int main() {
     Menu popup = new Menu();
     popup.item("tray.show", "&Show window", "");
     popup.check("tray.mute", "&Mute", "", false);
+    popup.item("tray.notify", "&Notify", "");
     popup.separator();
     popup.item("tray.quit", "&Quit", "");
     int tray = app.openTray("tray test", popup);
@@ -55,9 +56,20 @@ int main() {
             muted.on = !muted.on;
             app.trayChecked(tray, "tray.mute", muted.on);
         }
+        if (id == "tray.notify") {
+            string why = app.notify("tray test", "this is a notification", "info", "note-1");
+            if (why.length() == 0) {
+                std::cout << "notified ok" << std::endl;
+            } else {
+                std::cout << "notified FAILED " << why << std::endl;
+            }
+        }
         if (id == "tray.quit") {
             app.quit();
         }
+    });
+    app.onNotificationClick(closure NotificationAction [] (string id) {
+        std::cout << "notification click " << id << std::endl;
     });
     app.run();
     app.close();

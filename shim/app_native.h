@@ -44,6 +44,12 @@ int app_monitors(std::string& out);
 // app_tray_update: a new tooltip ("" = leave it) and / or a new menu spec ("" = leave it). app_tray_item: as app_menu_item, for the tray menu.
 int app_tray_open(std::string tooltip, std::string menu, int& handle);
 int app_tray_update(int handle, std::string tooltip, std::string menu);
+// Notifications (Windows; -1 elsewhere): a balloon / toast from the tray icon, `kind` 0 info, 1 warning, 2 error; title at most 63 and text at most 255 characters (the caller
+// checked), shown unless the user's quiet time (Focus Assist) is on. 0 the shell took it (not that it was shown), 4 it did not, 5 too long. `id` comes back with the record "notify" id
+// when the user clicks THIS notification. app_notifier_open: a tray icon with no menu that is in the notification area only while a notification is up (and for a few seconds after);
+// it has a handle like a tray. The icon of a tray opened with app_tray_open stays.
+int app_tray_notify(int handle, std::string title, std::string text, int kind, std::string id);
+int app_notifier_open(std::string tooltip, int& handle);
 int app_tray_item(int handle, std::string id, int enabled, int checked);
 // app_menu_popup: a pop-up menu from a flat spec at the mouse, on the window's UI thread; the calling thread waits until it is closed (call it from a worker, like a
 // dialog). `chosen` is the id of the item chosen, "" if the menu was dismissed; a chosen item is also queued as the record "menu" id on the window. 0 ok, 5 the spec is

@@ -5,6 +5,7 @@
 # What it does not do: a physical mouse drag (the end of a drag is sent as the message it produces), more than the monitors this machine has.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$HERE/tests/lib_stop.sh"
 TITLE="placement test"
 
 story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
@@ -24,7 +25,7 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
         local waited=0
         until grep -q '^ready' "$S/$label.out" 2> /dev/null && "$P" wait "$TITLE"; do
             sleep 0.2; waited=$((waited + 1))
-            [ "$waited" -gt 150 ] && { echo "$label: the program never became ready"; cat "$S/$label.out"; kill "$pid" 2> /dev/null; return 1; }
+            [ "$waited" -gt 150 ] && { echo "$label: the program never became ready"; cat "$S/$label.out"; stop_program "$S/t.exe"; return 1; }
         done
         local steps=0
         "$@" || steps=1                                   # (the window is closed and waited for even when a step failed, then the failure is reported)
@@ -82,5 +83,5 @@ key = "SetWindowPos(hwnd, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACT
 assert s.count(key) == 1
 open(p, 'w', encoding='utf-8', newline='').write(s.replace(key, "/* the remembered place is not applied */"))
 PYEOF
-if story "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then echo "CONTROL DID NOT FAIL: the test does not need the place to be applied"; exit 1; fi
+if story "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then stop_program "$C/case/t.exe"; echo "CONTROL DID NOT FAIL: the test does not need the place to be applied"; exit 1; fi
 echo "control: without applying the remembered place the test fails, as it must"

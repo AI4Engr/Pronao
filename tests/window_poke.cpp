@@ -12,8 +12,12 @@
 //   window_poke.exe client TITLE            prints "width height" of the window's client area in pixels (the part below the menu bar)
 //   window_poke.exe state TITLE             prints visible, hidden or none (a window of that title, shown or not)
 //   window_poke.exe trayexists              exit 0 if the shell holds the tray icon of the program's hidden tray window (it can say where the icon is), else 1
+//   window_poke.exe traywait SECONDS        polls (every 15 ms) until the shell holds the tray icon; exit 0 if it did within the time, else 1
+//   window_poke.exe trayabsent SECONDS      polls until the shell does not hold the tray icon; exit 0 if it let go within the time, else 1
+//   window_poke.exe dismiss                 closes the tray menu if one is open, without the keyboard (WM_CANCELMODE to the tray window: the keyboard goes to whichever window is in front)
 //   window_poke.exe popupexists             exit 0 if a popup menu is open on the screen (class #32768); escape: presses Esc
 //   window_poke.exe traycall left|double|right   what the shell sends the tray window when the icon is clicked (the real click on the icon is not simulated)
+//   window_poke.exe traycall balloon       (also) what the shell sends when the user clicks a notification (balloon) of the icon
 //   window_poke.exe traycommand N           chooses item number N (counting from 0, separators excluded) of the tray menu, as the menu would
 //   window_poke.exe rightclick TITLE        brings the window to the front and right-clicks in the middle of its page
 //   window_poke.exe menukeys                 presses Down and Enter (chooses the first item of the menu that is open)
@@ -197,6 +201,24 @@ int main(int argc, char** argv) {
         if (!box) return 1;
         return PostMessageW(box, WM_COMMAND, a == "yes" ? IDYES : a == "no" ? IDNO : IDOK, 0) ? 0 : 1;
     }
+    if (argc >= 3 && (std::string(argv[1]) == "traywait" || std::string(argv[1]) == "trayabsent")) {
+        const bool wantPresent = std::string(argv[1]) == "traywait";
+        for (long ms = 0; ms <= std::atol(argv[2]) * 1000; ms += 15) {
+            HWND t = findTray();
+            bool present = false;
+            if (t) {
+                NOTIFYICONIDENTIFIER id = {};
+                id.cbSize = sizeof id;
+                id.hWnd = t;
+                id.uID = 1;
+                RECT where;
+                present = SUCCEEDED(Shell_NotifyIconGetRect(&id, &where));
+            }
+            if (present == wantPresent) return 0;
+            Sleep(15);
+        }
+        return 1;
+    }
     if (argc >= 2 && std::string(argv[1]) == "trayexists") {
         HWND t = findTray();
         if (!t) return 1;
@@ -235,6 +257,12 @@ int main(int argc, char** argv) {
         mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
         return 0;
     }
+    if (argc >= 2 && std::string(argv[1]) == "dismiss") {
+        HWND t = findTray();
+        if (!t) return 1;
+        SendMessageTimeoutW(t, WM_CANCELMODE, 0, 0, SMTO_ABORTIFHUNG, 2000, nullptr);
+        return 0;
+    }
     if (argc >= 2 && std::string(argv[1]) == "popupexists") return FindWindowW(L"#32768", nullptr) ? 0 : 1;
     if (argc >= 2 && std::string(argv[1]) == "escape") {
         keybd_event(VK_ESCAPE, 0, 0, 0);
@@ -245,7 +273,7 @@ int main(int argc, char** argv) {
         HWND t = findTray();
         if (!t) return 1;
         const std::string kind = argv[2];
-        const LPARAM what = kind == "left" ? WM_LBUTTONUP : kind == "double" ? WM_LBUTTONDBLCLK : WM_RBUTTONUP;
+        const LPARAM what = kind == "left" ? WM_LBUTTONUP : kind == "double" ? WM_LBUTTONDBLCLK : kind == "balloon" ? WM_USER + 5 : WM_RBUTTONUP;
         return PostMessageW(t, WM_APP + 1, 1, what) ? 0 : 1;
     }
     if (argc >= 3 && std::string(argv[1]) == "traycommand") {

@@ -217,6 +217,33 @@ app.trayChecked(tray, "tray.mute", true);             // also trayEnabled, trayT
   Quit ends the program and the tray window is gone; two controls (hiding does nothing; tray items reach nobody). The test posts the messages the shell sends and does not move the mouse onto the real icon.
 - **Not verified:** the icon's picture and tooltip as the user sees them, a real click on the icon, the shell being restarted (the icon is added again on `TaskbarCreated`: written, not exercised), the icon removal when the process is killed (the shell then keeps a ghost until the mouse passes over it).
 
+## System notifications
+
+```
+app.enableNotifications("My app");                     // a program with no tray icon: a notification-only icon, in the notification area only while a notification is up
+                                                       // (a program with a tray icon (openTray) needs nothing: its notifications come from that icon)
+string why = app.notify("Download finished", "report.pdf is ready", "info", "open-report");   // title, text, kind (info, warning, error), id; "" if the system took it
+app.onNotificationClick(closure NotificationAction [app] (string id) { /* id is "open-report" */ });
+app.enableNotificationCommand();                       // the page may ask too: notification.show {title, text, kind?, id?}
+app.setNotificationGap(5000);                          // the least time between two notifications (default 2 s; 200 ms to 10 minutes); the page cannot change it
+```
+
+```js
+await cling.notify('Saved', 'Your changes are safe', { kind: 'info', id: 'saved' });      // rejected with {code: "too_many"} if it comes too soon
+cling.onNotificationClick(function (id) { /* the user clicked a notification THIS page asked for */ });
+```
+
+- **What is checked:** the title is 1 to 63 bytes of text on one line, the text 1 to 255 bytes (line breaks allowed), no control characters, the kind is one of three, the id is a name (1 to 64 letters, digits, `.`, `_`, `-`).
+  The page chooses nothing else: no icon, no sound, no link, no buttons. At most one notification every 2 seconds, for the application and the page together.
+- **How it is shown:** Windows' balloon / toast from a notification-area icon (no registration, no installer, no Start-menu shortcut needed). Under Windows 10 and 11 it appears as a toast and goes to the notification
+  centre. The notification-only icon is added when there is something to say and removed when the notification is clicked or has timed out (and, whatever happens, after 15 seconds).
+- **A click** runs the handler of `onNotificationClick` with the id (`""` if none was given); for a notification the page asked for it also reaches that window's page as the event `notification.click {id}`.
+- **Whether it is shown at all is the system's decision:** Focus Assist / Do Not Disturb, the user's notification settings, and a full-screen program can all hide it, and then no click will ever come. A program must not rely on a
+  notification being seen.
+- **Not done:** action buttons, images, long-lived toasts that can be clicked after the program has ended (that needs a registered application identity, so an installer), a sound of your own, other systems (`notify` returns `unsupported: ...`).
+- **Test:** `tests/notify_main.clg` (33 checks with a double: the rules, the rate limit, the page command, clicks) and `tests/run_notify_window.sh` (a real program: the shell takes the notification and shows the icon while it is up, a click reaches the program and the page and the icon goes,
+  an unclicked notification's icon goes away; two controls). It cannot see the toast on the screen, and it posts the message the shell sends for a balloon click.
+
 ## Menus a page may ask for
 
 ```
@@ -612,9 +639,10 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 100 menus, tray and pop-ups + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 100 menus, tray and pop-ups + 33 notifications + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
 bash tests/run_distribution.sh       # release build: windowed program, version and icon in the exe, the runtime check with a box, bad version values refused
 bash tests/run_signing.sh            # signing with a throwaway certificate: signed, runs, a changed file is caught, refusals
+bash tests/run_notify_window.sh       # a real program: the shell takes a notification, a click reaches the program and the page, the icon goes away; two controls
 bash tests/run_tray_window.sh         # a real program: the tray icon, hiding on close, the tray menu; two controls that must fail
 bash tests/run_menu_window.sh         # a real window: the menu bar, choosing items, shortcuts, greyed items, ticks; two controls that must fail
 bash tests/run_icon.sh                # the icon is in the exe and on the running window; the build without one is the control

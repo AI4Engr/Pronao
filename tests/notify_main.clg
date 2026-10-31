@@ -1,0 +1,159 @@
+// Notifications (src/app.clg: Notifier, enableNotifications, notify, enableNotificationCommand). The system is a test double that logs what it was asked to show
+// (tray|notify|KIND|TITLE|TEXT|ID in the tray's window log) and lets the test click a notification; what the system then does with it is tests/run_notify_window.sh.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "menu.clh"
+#include "app.clh"
+
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_notification_click(int handle, string id);
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_test_sleep_ms(int ms);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        all = all + one + ";";
+    }
+    return all;
+}
+
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    return intToString(status) + " " + json;
+}
+
+class Clicked {
+public:
+    string ids;
+    Clicked() {
+        ids = "";
+    }
+};
+
+int main() {
+    // ---- the application's own notifications ----
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    int h = app.handle;
+    check("nothing can be shown before notifications are enabled", app.notify("Hi", "There", "info", "") == "not_ready: notifications were not enabled");
+    check("a notifier needs a name", !app.enableNotifications("") && !app.enableNotifications(repeated("x", 128)));
+    check("notifications are enabled", app.enableNotifications("My app") && app.trays.size() == 1);
+    int tray = app.trays[0];
+    check("enabling twice makes no second icon", app.enableNotifications("My app") && app.trays.size() == 1);
+    check("the notifier icon has a tooltip", containsText(windowLog(tray), "tray|notifier|My app"));
+
+    check("a notification is shown", app.notify("Download finished", "report.pdf is ready", "info", "open-report") == "");
+    check("the system was given the title, the text, the kind and the id", windowLog(tray) == "tray|notify|0|Download finished|report.pdf is ready|open-report;");
+    check("the gap can be set, within limits, only by the application", !app.setNotificationGap(100) && !app.setNotificationGap(700000) && app.setNotificationGap(300));
+    check("a second one at once is held back", app.notify("Again", "x", "info", "") == "too_many: notifications are shown too often" && windowLog(tray) == "");
+    app_test_sleep_ms(320);
+    check("a warning and an error", app.notify("Careful", "disk almost full", "warning", "") == "" && windowLog(tray) == "tray|notify|1|Careful|disk almost full|;");
+    app_test_sleep_ms(320);
+    check("an error", app.notify("Failed", "no network", "error", "") == "" && windowLog(tray) == "tray|notify|2|Failed|no network|;");
+    app_test_sleep_ms(320);
+    check("a title is 1 to 63 bytes on one line", startsWithText(app.notify("", "x", "info", ""), "invalid_argument") && startsWithText(app.notify(repeated("t", 64), "x", "info", ""), "invalid_argument") && startsWithText(app.notify("two\nlines", "x", "info", ""), "invalid_argument") && windowLog(tray) == "");
+    check("the text is 1 to 255 bytes and may have line breaks", startsWithText(app.notify("t", "", "info", ""), "invalid_argument") && startsWithText(app.notify("t", repeated("x", 256), "info", ""), "invalid_argument") && windowLog(tray) == "");
+    check("no control characters", startsWithText(app.notify("t", "bell\x07", "info", ""), "invalid_argument") && startsWithText(app.notify("t\x01", "x", "info", ""), "invalid_argument"));
+    check("the kind is one of three", startsWithText(app.notify("t", "x", "alarm", ""), "invalid_argument"));
+    check("the id is a name", startsWithText(app.notify("t", "x", "info", "has space"), "invalid_argument") && startsWithText(app.notify("t", "x", "info", repeated("a", 65)), "invalid_argument") && windowLog(tray) == "");
+    check("a line break in the text is fine", app.notify("t", "line one\nline two", "info", "") == "" && containsText(windowLog(tray), "line one\nline two"));
+
+    Clicked clicks = new Clicked();
+    app.onNotificationClick(closure NotificationAction [clicks] (string id) {
+        clicks.ids = clicks.ids + id + ";";
+    });
+    app_test_sleep_ms(320);
+    app.notify("Click me", "please", "info", "open-report");
+    windowLog(tray);
+    app_test_notification_click(tray, "open-report");
+    app.serveOne(100);
+    check("a click on the notification runs the handler with its id", clicks.ids == "open-report;");
+    app_test_notification_click(tray, "");
+    app.serveOne(100);
+    check("a notification with no id reports an empty one", clicks.ids == "open-report;;");
+    app_test_notification_click(tray, "bad id");
+    app.serveOne(100);
+    check("an id that is not a name is dropped", clicks.ids == "open-report;;");
+    app_test_notification_click(h, "open-report");
+    app.serveOne(100);
+    check("a notify record on a window is ignored", clicks.ids == "open-report;;");
+    string ev = "";
+    while (app_test_take_eval(h, ev) == 1) {
+    }
+    app_test_notification_click(tray, "open-report");
+    app.serveOne(100);
+    check("an application's own notification tells no page", app_test_take_eval(h, ev) == 0);
+
+    // ---- the page ----
+    app_test_sleep_ms(320);
+    string asking = "[\"notification.show\",{\"title\":\"From the page\",\"text\":\"hello\",\"id\":\"page-click\"}]";
+    check("the page cannot ask before the command is enabled", startsWithText(roundTrip(app, "n0", asking), "1 {\"code\":\"unknown_command\""));
+    app.enableNotificationCommand();
+    check("the page asks for a notification", roundTrip(app, "n1", asking) == "0 null" && windowLog(tray) == "tray|notify|0|From the page|hello|page-click;");
+    check("a second one at once is held back for the page too", startsWithText(roundTrip(app, "n2", asking), "1 {\"code\":\"too_many\"") && windowLog(tray) == "");
+    app_test_sleep_ms(320);
+    check("the page's limits are the same", startsWithText(roundTrip(app, "n3", "[\"notification.show\",{\"title\":\"\",\"text\":\"x\"}]"), "1 {\"code\":\"invalid_argument\"") && startsWithText(roundTrip(app, "n4", "[\"notification.show\",{\"title\":\"t\",\"text\":\"x\",\"kind\":\"loud\"}]"), "1 {\"code\":\"invalid_argument\""));
+    check("a field of the wrong type is named", roundTrip(app, "n5", "[\"notification.show\",{\"title\":5,\"text\":\"x\"}]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`title` must be a string\"}");
+    check("what the page cannot choose is not taken from it", roundTrip(app, "n6", "[\"notification.show\",{\"title\":\"t\",\"text\":\"x\",\"icon\":\"C:/x.ico\",\"sound\":\"loud\",\"tray\":99}]") == "0 null" && windowLog(tray) == "tray|notify|0|t|x|;");
+    while (app_test_take_eval(h, ev) == 1) {
+    }
+    app_test_sleep_ms(320);
+    roundTrip(app, "n7", asking);
+    windowLog(tray);
+    clicks.ids = "";
+    app_test_notification_click(tray, "page-click");
+    app.serveOne(100);
+    check("a click on a notification the page asked for reaches the application", clicks.ids == "page-click;");
+    check("and the page that asked", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"notification.click\",{\"id\":\"page-click\"}]);");
+
+    // ---- a program that has a tray icon ----
+    App b = new App();
+    b.open("t", 100, 100, "<html></html>", "", false);
+    Menu m = new Menu();
+    m.item("quit", "Quit", "");
+    int btray = b.openTray("Tray app", m);
+    windowLog(btray);
+    check("a program with a tray icon notifies from it", b.notify("Hi", "from the tray", "info", "") == "" && windowLog(btray) == "tray|notify|0|Hi|from the tray|;");
+    check("so no second icon is made", b.enableNotifications("Tray app") && b.trays.size() == 1);
+    b.closeTray(btray);
+    check("when the tray is closed there is nothing to notify from", b.notify("Hi", "x", "info", "") == "not_ready: notifications were not enabled");
+    b.close();
+    return 0;
+}

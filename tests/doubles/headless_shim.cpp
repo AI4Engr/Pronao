@@ -186,6 +186,33 @@ int app_tray_item(int handle, std::string id, int enabled, int checked) {
     app->windowLog.push_back("tray|item|" + id + "|" + std::to_string(enabled) + "|" + std::to_string(checked));
     return 0;
 }
+int app_tray_notify(int handle, std::string title, std::string text, int kind, std::string id) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("tray|notify|" + std::to_string(kind) + "|" + title + "|" + text + "|" + id);
+    return 0;
+}
+int app_notifier_open(std::string tooltip, int& handle) {
+    handle = 0;
+    int h;
+    {
+        std::lock_guard<std::mutex> lock(g_tableMutex);
+        auto fresh = std::make_shared<App>();
+        fresh->calls.setNotify(&waitSet());
+        g_table.push_back(fresh);
+        h = static_cast<int>(g_table.size());
+    }
+    logWindow(h, "tray|notifier|" + tooltip);
+    handle = h;
+    return 0;
+}
+int app_test_notification_click(int handle, std::string id) {
+    std::string record("notify\0", 7);
+    record += id;
+    record += '\0';
+    return app_push(handle, std::string(), record, 100);
+}
 int app_test_tray_event(int handle, std::string kind) {
     std::string record("tray\0", 5);
     record += kind;

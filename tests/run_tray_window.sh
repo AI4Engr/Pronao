@@ -7,6 +7,7 @@
 # What it does not do: look at the icon (its picture, its tooltip, where it sits), a click with a real mouse, the shell being restarted.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$HERE/tests/lib_stop.sh"
 TITLE="tray test"
 
 story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
@@ -28,7 +29,7 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
         until [ "$("$P" state "$TITLE" 2> /dev/null)" = "$1" ]; do sleep 0.2; n=$((n + 1)); [ "$n" -gt "$limit" ] && { echo "the window is $("$P" state "$TITLE" 2> /dev/null), not $1"; return 1; }; done
         return 0
     }
-    fail() { echo "FAILED: $1"; "$P" traycommand 2 2> /dev/null; sleep 1; kill "$pid" 2> /dev/null; wait "$pid" 2> /dev/null; return 1; }
+    fail() { echo "FAILED: $1"; "$P" traycommand 3 2> /dev/null; sleep 1; stop_program "$S/t.exe"; wait "$pid" 2> /dev/null; return 1; }
 
     waitfor '^ready' 30 && waitstate visible 20 || fail "the program never became ready" || return 1
 
@@ -49,8 +50,8 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     # 4: the right click opens the tray menu
     "$P" traycall right; sleep 1
     "$P" popupexists || fail "the right click did not open a menu" || return 1
-    "$P" escape; sleep 1
-    "$P" popupexists && fail "the menu stayed open after Esc" && return 1
+    "$P" dismiss; sleep 1
+    if "$P" popupexists; then fail "the menu stayed open after it was dismissed"; return 1; fi
     echo "the right click opened the menu"
 
     # 5: items of the tray menu
@@ -58,14 +59,20 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     "$P" traycommand 0 && waitfor '^menu tray.show$' && waitstate visible || fail "Show window did not bring the window back" || return 1
     "$P" traycommand 1 && waitfor '^menu tray.mute$' || fail "Mute was not chosen" || return 1
 
+    # 5b: a notification from the tray icon, and a click on it
+    "$P" traycommand 2 && waitfor '^notified ok$' || fail "the system did not take the notification" || return 1
+    "$P" traycall balloon && waitfor '^notification click note-1$' || fail "a click on the notification did not reach the program" || return 1
+    "$P" trayexists || fail "the tray icon went away with its notification" || return 1
+    echo "a notification was taken and its click reached the program"
+
     # 6: Quit ends the program, whatever the window is doing
     "$P" close "$TITLE"; waitstate hidden || fail "hide a third time" || return 1
-    "$P" traycommand 2 && waitfor '^closed$' 15 || fail "Quit did not end the program" || return 1
+    "$P" traycommand 3 && waitfor '^closed$' 15 || fail "Quit did not end the program" || return 1
     wait "$pid"
     [ "$(cat "$S/rc")" = 0 ] || { echo "the program ended with $(cat "$S/rc")"; return 1; }
     [ "$("$P" state "$TITLE" 2> /dev/null)" = "none" ] || { echo "a window is left"; return 1; }
     "$P" trayexists && { echo "a tray window is left"; return 1; }
-    echo "events: $(grep -E '^(tray|menu) ' "$OUT" | tr '\n' ' ')"
+    echo "events: $(grep -E '^(tray|menu|notif) ' "$OUT" | tr '\n' ' ')"
     return 0
 }
 
@@ -82,7 +89,8 @@ s = open(p, encoding='utf-8', newline='').read()
 assert s.count(old) == 1, (old, s.count(old))
 open(p, 'w', encoding='utf-8', newline='').write(s.replace(old, new))
 PYEOF
-    if story "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then echo "CONTROL DID NOT FAIL: $1"; exit 1; fi
+    if story "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then stop_program "$C/case/t.exe"; echo "CONTROL DID NOT FAIL: $1"; exit 1; fi
+    stop_program "$C/case/t.exe"
     echo "control: $1: the test fails, as it must"
 }
 control "hiding does nothing" app_shim.cpp 'else if (state == 5) ShowWindow(hwnd, SW_HIDE);' 'else if (state == 5) {}'

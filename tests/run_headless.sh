@@ -19,6 +19,7 @@ EXPECTED_LINKS=57
 EXPECTED_INSTANCE=19
 EXPECTED_PLACEMENT=41
 EXPECTED_MENU=100
+EXPECTED_NOTIFY=33
 W="${TMPDIR:-/tmp}/app-cling-headless"
 rm -rf "$W"; mkdir -p "$W"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
@@ -95,7 +96,9 @@ buildProgram placement_main &
 B6=$!
 buildProgram menu_main &
 B7=$!
-BS=("$B1" "$B2" "$B3" "$B4" "$B5" "$B6" "$B7")
+buildProgram notify_main &
+B8=$!
+BS=("$B1" "$B2" "$B3" "$B4" "$B5" "$B6" "$B7" "$B8")
 ( ASSETS="$HERE/tests/site" WORK="$W/work_site_main" bash "$HERE/scripts/build.sh" "$HERE/tests/site_main.clg" "$W/site_main.exe" --headless > "$W/site_main.build" 2>&1 ) &
 BS+=($!)
 HAVE_LORE=0
@@ -120,9 +123,11 @@ runProgram placement_main "$EXPECTED_PLACEMENT" &
 PIDS+=($!)
 runProgram menu_main "$EXPECTED_MENU" &
 PIDS+=($!)
+runProgram notify_main "$EXPECTED_NOTIFY" &
+PIDS+=($!)
 APP_SITE_DIR="$(cd "$HERE/tests/site" && (cygpath -m "$PWD" 2>/dev/null || pwd))" runProgram site_main "$EXPECTED_SITE" &
 PIDS+=($!)
-NAMES="$NAMES files_main programs_main store_main links_main instance_main placement_main menu_main site_main"
+NAMES="$NAMES files_main programs_main store_main links_main instance_main placement_main menu_main notify_main site_main"
 if [ "$HAVE_LORE" -eq 1 ]; then
     runProgram tauriport_main "$EXPECTED_TAURIPORT" &
     PIDS+=($!)
@@ -132,7 +137,7 @@ else
 fi
 for p in "${PIDS[@]}" "${TPIDS[@]}"; do wait "$p"; done
 
-for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main tauriport_main site_main; do
+for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main tauriport_main site_main; do
     [ -f "$W/$n.log" ] || continue
     cat "$W/$n.log"
     [ "$(cat "$W/$n.verdict" 2> /dev/null)" = ok ] || OK=0

@@ -180,6 +180,13 @@ public:
     virtual void happened(string kind) { }
 };
 
+// What runs when the user clicks a notification the application showed (App.onNotificationClick): `clicked` gets the id the application gave it ("" if it gave none).
+class NotificationAction {
+public:
+    NotificationAction() { }
+    virtual void clicked(string id) { }
+};
+
 // Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
 void replyOk(int handle, string id, string json) {
     app_return(handle, id, 0, json);

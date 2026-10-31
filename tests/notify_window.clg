@@ -1,0 +1,45 @@
+// A program with no tray menu that shows a notification (run by tests/run_notify_window.sh): its notification icon is in the notification area only while a notification is up.
+// The program prints what happens: "ready", "notified ok" / "notified FAILED ...", "notification click ID", "closed".
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "settings.clh"
+#include "app.clh"
+
+int main() {
+    App app = new App();
+    if (!app.enableNotifications("notify test")) {
+        std::cout << "selftest FAILED: no notifier" << std::endl;
+        return 2;
+    }
+    app.command("ready", closure Command [] (Item args) {
+        std::cout << "ready" << std::endl;
+        return createNull();
+    });
+    app.command("say", closure Command [] (Item args) {
+        std::cout << requiredString(args, "text") << std::endl;
+        return createNull();
+    });
+    app.command("showit", closure Command [app] (Item args) {
+        string why = app.notify("notify test", "something happened", "warning", "from-app");
+        if (why.length() == 0) {
+            std::cout << "notified ok" << std::endl;
+        } else {
+            std::cout << "notified FAILED " << why << std::endl;
+        }
+        return createNull();
+    });
+    app.enableNotificationCommand();
+    app.onNotificationClick(closure NotificationAction [] (string id) {
+        std::cout << "notification click " << id << std::endl;
+    });
+    if (!app.openSite("notify test", 420, 300, false, "http://app.localhost", "")) {
+        std::cout << "selftest FAILED: no window" << std::endl;
+        return 2;
+    }
+    app.run();
+    app.close();
+    std::cout << "closed" << std::endl;
+    return 0;
+}

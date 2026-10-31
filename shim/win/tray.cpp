@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <map>
 #include <mutex>
@@ -18,6 +19,9 @@
 namespace {
 const UINT kCallback = WM_APP + 1;         // the shell's messages about the icon
 const UINT kUpdate = WM_APP + 2;           // the application changed the tooltip
+const UINT kArm = WM_APP + 3;              // a notification was shown by a notification-only icon: start the timer that takes the icon away (a timer belongs to the thread of its window)
+const UINT_PTR kHideTimer = 1;             // a notification-only icon goes away this long after its notification was shown
+const UINT kHideAfterMs = 15000;
 const wchar_t* kClass = L"app-cling-tray";
 
 struct Tray {
@@ -28,6 +32,9 @@ struct Tray {
     std::condition_variable cv;
     bool started = false;
     bool added = false;
+    bool transient = false;                // a notification-only icon: it is in the notification area only while a notification is up
+    std::atomic<bool> shown{false};        // the icon is in the notification area now
+    std::string notifyId;                  // what the application called the notification that is up
     std::wstring tooltip;
     std::shared_ptr<NativeMenu> menu;
     UINT taskbarCreated = 0;
@@ -69,10 +76,28 @@ NOTIFYICONDATAW dataFor(Tray* t) {
     return d;
 }
 
+void removeIcon(Tray* t) {
+    if (!t->shown) return;
+    NOTIFYICONDATAW d = {};
+    d.cbSize = sizeof d;
+    d.hWnd = t->hwnd;
+    d.uID = 1;
+    Shell_NotifyIconW(NIM_DELETE, &d);
+    t->shown = false;
+}
+
 LRESULT CALLBACK trayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     Tray* t = reinterpret_cast<Tray*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (t == nullptr) return DefWindowProcW(hwnd, msg, wp, lp);
     if (msg == kCallback) {
+        if (lp == NIN_BALLOONUSERCLICK) {
+            std::string id;
+            { std::lock_guard<std::mutex> lock(t->m); id = t->notifyId; t->notifyId.clear(); }
+            if (!id.empty()) tell(t->handle, "notify", id);
+            if (t->transient) removeIcon(t);
+        } else if (lp == NIN_BALLOONTIMEOUT && t->transient) {
+            removeIcon(t);
+        }
         if (lp == WM_LBUTTONUP) tell(t->handle, "tray", "click");
         else if (lp == WM_LBUTTONDBLCLK) tell(t->handle, "tray", "double");
         else if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU) {
@@ -100,7 +125,17 @@ LRESULT CALLBACK trayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         Shell_NotifyIconW(NIM_MODIFY, &d);
         return 0;
     }
+    if (msg == kArm) {
+        SetTimer(hwnd, kHideTimer, kHideAfterMs, nullptr);
+        return 0;
+    }
+    if (msg == WM_TIMER && wp == kHideTimer) {
+        KillTimer(hwnd, kHideTimer);
+        if (t->transient) removeIcon(t);
+        return 0;
+    }
     if (t->taskbarCreated != 0 && msg == t->taskbarCreated) {            // the shell was restarted: its notification area is empty again
+        if (t->transient && !t->shown) return 0;
         NOTIFYICONDATAW d = dataFor(t);
         Shell_NotifyIconW(NIM_ADD, &d);
         return 0;
@@ -128,8 +163,13 @@ void run(Tray* t) {
     if (t->hwnd) {
         SetWindowLongPtrW(t->hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(t));
         t->taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
-        NOTIFYICONDATAW d = dataFor(t);
-        ok = Shell_NotifyIconW(NIM_ADD, &d) != FALSE;
+        if (t->transient) {
+            ok = true;                                                  // (the icon is added when there is something to say)
+        } else {
+            NOTIFYICONDATAW d = dataFor(t);
+            ok = Shell_NotifyIconW(NIM_ADD, &d) != FALSE;
+            t->shown = ok;
+        }
         if (!ok) DestroyWindow(t->hwnd);
     }
     { std::lock_guard<std::mutex> lock(t->m); t->added = ok; t->started = true; }
@@ -143,14 +183,13 @@ void run(Tray* t) {
 }
 }  // namespace
 
-int app_tray_open(std::string tooltip, std::string menuSpec, int& handle) {
+namespace {
+int openTray(std::string tooltip, std::shared_ptr<NativeMenu> menu, bool transient, int& handle) {
     handle = 0;
-    std::string error;
-    std::shared_ptr<NativeMenu> menu(NativeMenu::build(menuSpec, false, error).release());
-    if (!menu) return 5;
     auto t = std::make_shared<Tray>();
     t->tooltip = widen(tooltip);
     t->menu = menu;
+    t->transient = transient;
     t->handle = app_queue_entry_new();
     if (t->handle == 0) return 4;
     t->thread = std::thread(run, t.get());
@@ -166,6 +205,41 @@ int app_tray_open(std::string tooltip, std::string menuSpec, int& handle) {
     { std::lock_guard<std::mutex> lock(g_trayMutex); g_trays[t->handle] = t; }
     handle = t->handle;
     return 0;
+}
+}  // namespace
+
+int app_tray_open(std::string tooltip, std::string menuSpec, int& handle) {
+    handle = 0;
+    std::string error;
+    std::shared_ptr<NativeMenu> menu(NativeMenu::build(menuSpec, false, error).release());
+    if (!menu) return 5;
+    return openTray(tooltip, menu, false, handle);
+}
+
+int app_notifier_open(std::string tooltip, int& handle) {
+    return openTray(tooltip, nullptr, true, handle);
+}
+
+int app_tray_notify(int handle, std::string title, std::string text, int kind, std::string id) {
+    auto t = trayOf(handle);
+    if (!t || !t->hwnd) return 4;
+    const std::wstring wtitle = widen(title), wtext = widen(text);
+    if (wtitle.empty() || wtitle.size() > 63 || wtext.size() > 255) return 5;
+    { std::lock_guard<std::mutex> lock(t->m); t->notifyId = id; }
+    NOTIFYICONDATAW d = dataFor(t.get());
+    d.uFlags |= NIF_INFO;
+    wcsncpy(d.szInfoTitle, wtitle.c_str(), 63);
+    wcsncpy(d.szInfo, wtext.c_str(), 255);
+    d.dwInfoFlags = (kind == 2 ? NIIF_ERROR : kind == 1 ? NIIF_WARNING : NIIF_INFO) | NIIF_RESPECT_QUIET_TIME;
+    BOOL ok;
+    if (t->transient && !t->shown) {
+        ok = Shell_NotifyIconW(NIM_ADD, &d);
+        t->shown = ok != FALSE;
+    } else {
+        ok = Shell_NotifyIconW(NIM_MODIFY, &d);
+    }
+    if (ok && t->transient) PostMessageW(t->hwnd, kArm, 0, 0);
+    return ok ? 0 : 4;
 }
 
 int app_tray_update(int handle, std::string tooltip, std::string menuSpec) {

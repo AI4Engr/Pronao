@@ -4,6 +4,7 @@
 # instance never delivers what it receives; the first never hears of the second launch and the test must fail (time out).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$HERE/tests/lib_stop.sh"
 
 run_case() { # dir  shim-dir-or-empty  -> 0 if the whole story worked
     local S="$1" SHIMDIR="$2"
@@ -15,7 +16,7 @@ run_case() { # dir  shim-dir-or-empty  -> 0 if the whole story worked
     local waited=0
     until grep -q '^first ready' "$S/first.out" 2> /dev/null; do
         sleep 0.2; waited=$((waited + 1))
-        [ "$waited" -gt 100 ] && { echo "the first instance never became ready"; cat "$S/first.out"; kill "$first" 2> /dev/null; return 1; }
+        [ "$waited" -gt 100 ] && { echo "the first instance never became ready"; cat "$S/first.out"; stop_program "$S/t.exe"; return 1; }
     done
     local second
     second="$(cd "$S/run" && timeout 20 "$S/t.exe" alpha "b c" 2>&1)"; local src=$?
@@ -39,5 +40,5 @@ key = "if (!tooLong && !message.empty()) deliver(in, message);"
 assert s.count(key) == 1
 open(p, 'w', encoding='utf-8', newline='').write(s.replace(key, "/* delivery removed */"))
 PYEOF
-if run_case "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then echo "CONTROL DID NOT FAIL: the test does not need the delivery"; exit 1; fi
+if run_case "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then stop_program "$C/case/t.exe"; echo "CONTROL DID NOT FAIL: the test does not need the delivery"; exit 1; fi
 echo "control: without the delivery the test fails, as it must"

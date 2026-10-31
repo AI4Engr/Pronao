@@ -6,6 +6,7 @@
 # What it does not do: open the menu with the mouse and look at it (appearance, keyboard navigation inside the menu, high-DPI drawing) -- see README.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$HERE/tests/lib_stop.sh"
 TITLE="menu test"
 
 story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
@@ -23,7 +24,7 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
         return 0                       # (without this the status would be that of the last test in the loop: false)
     }
     count() { grep -c "^click $1\$" "$OUT" 2> /dev/null; }
-    fail() { echo "FAILED: $1"; "$P" close "$TITLE" 2> /dev/null; kill "$pid" 2> /dev/null; wait "$pid" 2> /dev/null; return 1; }
+    fail() { echo "FAILED: $1"; "$P" close "$TITLE" 2> /dev/null; stop_program "$S/t.exe"; wait "$pid" 2> /dev/null; return 1; }
 
     waitfor '^ready' 30 && "$P" wait "$TITLE" || fail "the program never became ready" || return 1
     echo "page: $(grep '^ready' "$OUT" | head -1)"
@@ -93,7 +94,8 @@ s = open(p, encoding='utf-8', newline='').read()
 assert s.count(old) == 1, (old, s.count(old))
 open(p, 'w', encoding='utf-8', newline='').write(s.replace(old, new))
 PYEOF
-    if story "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then echo "CONTROL DID NOT FAIL: $1"; exit 1; fi
+    if story "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then stop_program "$C/case/t.exe"; echo "CONTROL DID NOT FAIL: $1"; exit 1; fi
+    stop_program "$C/case/t.exe"
     echo "control: $1: the test fails, as it must"
 }
 control "menu commands are not routed" app_shim.cpp 'app_menu_command(a->nav->handle, LOWORD(wp))' 'false'

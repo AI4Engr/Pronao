@@ -64,6 +64,13 @@
   window.cling.onSecondInstance = function (fn) { return window.cling.on('app.secondInstance', fn); };
   // menu.popup({name}) shows a menu the application registered under that name at the mouse and resolves with the id of the item chosen, or null
   window.cling.menu = { popup: function (name) { return window.cling.invoke('menu.popup', { name: name }); } };
+  // notify(title, text, {kind: 'info' | 'warning' | 'error', id}) shows a system notification if the application allowed it (notification.show); onNotificationClick(fn) hears of
+  // a click on one this page showed, with the id it gave
+  window.cling.notify = function (title, text, options) {
+    var o = options || {};
+    return window.cling.invoke('notification.show', { title: title, text: text === undefined ? '' : text, kind: o.kind || 'info', id: o.id || '' });
+  };
+  window.cling.onNotificationClick = function (fn) { return window.cling.on('notification.click', function (e) { fn(e.id); }); };
   window.cling.proc = { run: call('proc.run') };
   // shell: openUrl({url}) opens an address in the default browser, openFile({path}) a file in its default program, reveal({path}) shows a file in the file
   // manager. Only what the application allowed (schemes, file types, the folders of the file commands).

@@ -23,7 +23,7 @@ rm -rf "$BASE/repo/shim_nolock"
 bash "$HERE/scripts/pack_assets.sh" - "$BASE/repo"          # (no embedded web files in these builds)
 
 # transpile everything twice: plain (work) and with the pooled allocator (work_pool)
-MAINS="headless_main files_main programs_main store_main links_main instance_main placement_main menu_main site_main"
+MAINS="headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main site_main"
 for variant in work work_pool; do
     flags=""; [ "$variant" = "work_pool" ] && flags="--pool-shared"
     mkdir -p "$BASE/$variant"
