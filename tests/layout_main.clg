@@ -1,0 +1,177 @@
+// Window layout (src/app.clg: Window.bounds / setBounds / setFullscreen / setAlwaysOnTop / setFrameless / setResizable / startDrag / startResize / setModalFor, and the
+// page commands enableWindowLayoutCommands). The system is a test double that logs what it was asked (style|WHAT|ON, drag|EDGE, modal|OWNER|ON, placement|...);
+// what the system does with it is tests/run_layout_window.sh.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "placement.clh"
+#include "menu.clh"
+#include "app.clh"
+
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_window_rect(string rect);
+ext_fn int app_test_monitors(string fields);
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_test_push_internal(int handle, string request);
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        if (one != "navigation") {
+            all = all + one + ";";
+        }
+    }
+    return all;
+}
+
+string nums(int a, int b, int c, int d) {
+    string r = intToString(a);
+    r.push_back(char(0));
+    r = r + intToString(b);
+    r.push_back(char(0));
+    r = r + intToString(c);
+    r.push_back(char(0));
+    r = r + intToString(d);
+    r.push_back(char(0));
+    return r;
+}
+
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    return intToString(status) + " " + json;
+}
+
+int main() {
+    app_test_monitors(nums(0, 0, 1920, 1040));
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    int h = app.handle;
+    Window w = app.windows.get(h);
+    windowLog(h);
+
+    // ---- what the application can do ----
+    app_test_window_rect("100 120 800 600 0");
+    std::vector<int> b = w.bounds();
+    check("bounds reads the rectangle and the state", b.size() == 5 && b[0] == 100 && b[1] == 120 && b[2] == 800 && b[3] == 600 && b[4] == 0);
+    app_test_window_rect("-1280 100 640 480 41");
+    b = w.bounds();
+    check("negative coordinates and the state bits", b.size() == 5 && b[0] == -1280 && b[4] == 41);
+    app_test_window_rect("");
+    b = w.bounds();
+    check("a window that cannot be asked gives an empty list", b.size() == 0);
+    app_test_window_rect("1 2 3");
+    b = w.bounds();
+    check("an answer that is not five numbers is not believed", b.size() == 0);
+
+    app_test_window_rect("100 120 800 600 0");
+    check("setBounds puts a window that fits where it was asked", w.setBounds(300, 200, 700, 500) && windowLog(h) == "placement|300|200|700|500|0;");
+    check("and fits one that does not: moved in, made smaller", w.setBounds(1800, 900, 5000, 700) && windowLog(h) == "placement|0|340|1920|700|0;");
+    app_test_window_rect("100 120 800 600 4");
+    check("a window in full screen is not moved", !w.setBounds(300, 200, 700, 500) && windowLog(h) == "");
+    app_test_window_rect("100 120 800 600 0");
+
+    check("full screen on and off", w.setFullscreen(true) && w.setFullscreen(false) && windowLog(h) == "style|1|1;style|1|0;");
+    check("always on top", w.setAlwaysOnTop(true) && w.setAlwaysOnTop(false) && windowLog(h) == "style|2|1;style|2|0;");
+    check("no title bar", w.setFrameless(true) && w.setFrameless(false) && windowLog(h) == "style|3|1;style|3|0;");
+    check("fixed size", w.setResizable(false) && w.setResizable(true) && windowLog(h) == "style|4|0;style|4|1;");
+    check("a drag", w.startDrag() && windowLog(h) == "drag|0;");
+    check("resizing from each edge", w.startResize("left") && w.startResize("right") && w.startResize("top") && w.startResize("bottom") && w.startResize("topleft") && w.startResize("topright") && w.startResize("bottomleft") && w.startResize("bottomright") && windowLog(h) == "drag|10;drag|11;drag|12;drag|15;drag|13;drag|14;drag|16;drag|17;");
+    check("an edge that is not one is refused", !w.startResize("middle") && !w.startResize("") && !w.startResize("LEFT") && windowLog(h) == "");
+
+    int second = app.openWindow("two", 300, 300, false, "");
+    Window w2 = app.windows.get(second);
+    windowLog(second);
+    check("a window can be made modal for another", w2.setModalFor(h) && windowLog(second) == "modal|" + intToString(h) + "|1;");
+    check("not for itself or a window that is not there", !w2.setModalFor(second) && !w2.setModalFor(9999));
+
+    // ---- the page ----
+    string getBounds = "[\"window.getBounds\",{}]";
+    check("the page cannot ask before the commands are enabled", startsWithText(roundTrip(app, "l0", getBounds), "1 {\"code\":\"unknown_command\""));
+    app.enableWindowLayoutCommands(false, false);
+    app_test_window_rect("100 120 800 600 25");
+    check("window.getBounds", roundTrip(app, "l1", getBounds) == "0 {\"x\":100,\"y\":120,\"width\":800,\"height\":600,\"maximized\":true,\"minimized\":false,\"fullscreen\":false,\"alwaysOnTop\":true,\"frameless\":true,\"resizable\":true}");
+    app_test_window_rect("100 120 800 600 32");
+    check("a window that cannot be resized says so", containsText(roundTrip(app, "l2", getBounds), "\"resizable\":false"));
+    app_test_window_rect("100 120 800 600 0");
+    windowLog(h);
+    check("window.setBounds", roundTrip(app, "l3", "[\"window.setBounds\",{\"x\":50,\"y\":60,\"width\":640,\"height\":480}]") == "0 null" && windowLog(h) == "placement|50|60|640|480|0;");
+    check("it asks for numbers", roundTrip(app, "l4", "[\"window.setBounds\",{\"x\":\"a\",\"y\":0,\"width\":640,\"height\":480}]") == "1 {\"code\":\"invalid_argument\",\"message\":\"`x`, `y`, `width` and `height` must be numbers\"}");
+    check("and sane ones", startsWithText(roundTrip(app, "l5", "[\"window.setBounds\",{\"x\":99999,\"y\":0,\"width\":640,\"height\":480}]"), "1 {\"code\":\"invalid_argument\"") && startsWithText(roundTrip(app, "l6", "[\"window.setBounds\",{\"x\":0,\"y\":0,\"width\":50,\"height\":480}]"), "1 {\"code\":\"invalid_argument\"") && windowLog(h) == "");
+    check("window.startDrag and window.startResize", roundTrip(app, "l7", "[\"window.startDrag\",{}]") == "0 null" && roundTrip(app, "l8", "[\"window.startResize\",{\"edge\":\"bottomright\"}]") == "0 null" && windowLog(h) == "drag|0;drag|17;");
+    check("an edge that is not one is refused", startsWithText(roundTrip(app, "l9", "[\"window.startResize\",{\"edge\":\"sideways\"}]"), "1 {\"code\":\"invalid_argument\"") && windowLog(h) == "");
+    check("full screen and always on top are not offered unless asked for", startsWithText(roundTrip(app, "l10", "[\"window.setFullscreen\",{\"on\":true}]"), "1 {\"code\":\"unknown_command\"") && startsWithText(roundTrip(app, "l11", "[\"window.setAlwaysOnTop\",{\"on\":true}]"), "1 {\"code\":\"unknown_command\"") && windowLog(h) == "");
+    check("a page cannot take away the title bar or the resize border", startsWithText(roundTrip(app, "l12", "[\"window.setFrameless\",{\"on\":true}]"), "1 {\"code\":\"unknown_command\"") && startsWithText(roundTrip(app, "l13", "[\"window.setResizable\",{\"on\":false}]"), "1 {\"code\":\"unknown_command\"") && startsWithText(roundTrip(app, "l14", "[\"window.setModal\",{}]"), "1 {\"code\":\"unknown_command\""));
+
+    App full = new App();
+    full.open("t", 100, 100, "<html></html>", "", false);
+    int bh = full.handle;
+    windowLog(bh);
+    full.enableWindowLayoutCommands(true, true);
+    check("when asked for, full screen is offered", roundTrip(full, "m1", "[\"window.setFullscreen\",{\"on\":true}]") == "0 null" && roundTrip(full, "m2", "[\"window.setFullscreen\",{\"on\":false}]") == "0 null" && windowLog(bh) == "style|1|1;style|1|0;");
+    check("and always on top", roundTrip(full, "m3", "[\"window.setAlwaysOnTop\",{\"on\":true}]") == "0 null" && windowLog(bh) == "style|2|1;");
+
+    // ---- a page opens a modal window ----
+    App c = new App();
+    c.open("t", 100, 100, "<html></html>", "", false);
+    int ch = c.handle;
+    c.siteOrigin = "http://app.localhost";           // (what openSite would have set: a site to open pages of)
+    c.maxWindows = 4;
+    string plain = "openwin";
+    plain.push_back(char(0));
+    plain = plain + "/dialog.html";
+    plain.push_back(char(0));
+    plain = plain + "dialog";
+    plain.push_back(char(0));
+    plain = plain + "400";
+    plain.push_back(char(0));
+    plain = plain + "300";
+    plain.push_back(char(0));
+    plain = plain + "0";
+    plain.push_back(char(0));
+    app_test_push_internal(ch, plain);
+    c.serveOne(100);
+    check("a window the page opens is an ordinary window", c.windows.count() == 2);
+    string modal = "openwin";
+    modal.push_back(char(0));
+    modal = modal + "/dialog.html";
+    modal.push_back(char(0));
+    modal = modal + "dialog";
+    modal.push_back(char(0));
+    modal = modal + "400";
+    modal.push_back(char(0));
+    modal = modal + "300";
+    modal.push_back(char(0));
+    modal = modal + "1";
+    modal.push_back(char(0));
+    app_test_push_internal(ch, modal);
+    c.serveOne(100);
+    check("with modal the opener is disabled until the new window closes", c.windows.count() == 3);
+    Window opened = c.windows.items[2];
+    check("the new window is modal for the page that opened it", windowLog(opened.handle) == "open|http://app.localhost/dialog.html;modal|" + intToString(ch) + "|1;");
+    check("the other window is not", windowLog(c.windows.items[1].handle) == "open|http://app.localhost/dialog.html;");
+    return 0;
+}

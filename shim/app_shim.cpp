@@ -29,6 +29,15 @@ struct App {
     std::atomic<bool> guard{false};    // closing the window asks CeeLing instead of closing
     std::atomic<bool> track{false};    // report where the window is after the user moves or resizes it (app_window_track)
     bool moving = false;               // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE (UI thread only)
+    std::atomic<void*> hwnd{nullptr};  // the native window (Windows), for the other windows' modal handling
+    // the layout switches (app_window_style); the first four are UI-thread business, the flags are read by reportPlacement
+    std::atomic<bool> fullscreen{false};
+#ifdef _WIN32
+    LONG_PTR savedStyle = 0;           // the style and the rectangle a window had before it went full screen
+    RECT savedRect = {};
+    bool savedMaximized = false;
+#endif
+    std::atomic<int> modalOwner{0};    // the window this one is modal for (its owner is disabled until this one closes)
     std::atomic<int> maxRequest{16 << 20}, maxQueued{1000};
     std::shared_ptr<NavRules> nav = std::make_shared<NavRules>();   // (nav->handle is set by app_open)
     void* oldProc = nullptr;
@@ -42,7 +51,15 @@ std::shared_ptr<App> lookup(int handle) {
     return (handle < 1 || static_cast<size_t>(handle) > g_table.size()) ? nullptr : g_table[static_cast<size_t>(handle) - 1];
 }
 
+// a modal window is gone, however it went (the user's close button: WM_DESTROY; the application's terminate(): the loop just ends): its owner may be used again.
+// Whichever comes first does it, the other finds nothing to do.
+void releaseOwner(App* a) {
+    const int owner = a->modalOwner.exchange(0);
+    if (owner != 0) app_window_modal_ended(owner);
+}
+
 void ended(App* a, bool created) {
+    releaseOwner(a);
     { std::lock_guard<std::mutex> lock(a->m); a->w = nullptr; a->ready = true; a->created = created; }
     a->calls.close();
     a->cv.notify_all();
@@ -55,7 +72,7 @@ void ended(App* a, bool created) {
 void reportPlacement(App* a, HWND h) {
     WINDOWPLACEMENT wp = {};
     wp.length = sizeof wp;
-    if (!a->track.load() || !GetWindowPlacement(h, &wp) || wp.showCmd == SW_SHOWMINIMIZED) return;
+    if (!a->track.load() || a->fullscreen.load() || !GetWindowPlacement(h, &wp) || wp.showCmd == SW_SHOWMINIMIZED) return;      // (full screen is not a place worth keeping)
     RECT r = wp.rcNormalPosition;
     if (wp.showCmd == SW_SHOWMAXIMIZED) {
         MONITORINFO info = {};
@@ -84,7 +101,10 @@ LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     }
     // The webview library ends a window's message loop only when the LAST window of the PROCESS is destroyed (a process-wide count), so with
     // another window still open this window's thread would keep pumping nothing and its queue would never report that it closed.
-    if (msg == WM_DESTROY) PostQuitMessage(0);
+    if (msg == WM_DESTROY) {
+        releaseOwner(a);                                               // a modal window is gone: its owner may be used again
+        PostQuitMessage(0);                                            // this window's own message loop ends (tests/run_multiwindow.sh removes this line as its control)
+    }
     return CallWindowProcW(reinterpret_cast<WNDPROC>(a->oldProc), h, msg, wp, lp);
 }
 #endif
@@ -134,6 +154,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(w.window().value());
             SetPropW(hwnd, L"app_cling", raw);
+            raw->hwnd = hwnd;
             // the program's icon (resource 1, from scripts/build.sh ICON=...) for the title bar, Alt+Tab and the taskbar; none linked in: the default stays
             for (int big = 0; big < 2; big++) {
                 const int cx = GetSystemMetrics(big ? SM_CXICON : SM_CXSMICON), cy = GetSystemMetrics(big ? SM_CYICON : SM_CYSMICON);
@@ -262,6 +283,124 @@ int app_window_track(int handle, int on) {
     if (!app) return 0;
     app->track = on != 0;
     return 1;
+}
+
+// ---- layout: where the window is and how it is dressed (Windows) ----
+
+int app_window_rect(int handle, std::string& out) {
+#ifdef _WIN32
+    out.clear();
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::string text;
+    const int ran = app_ui_call(handle, [&](void* window) {                       // (waits until it has run, so `text` is still there to write to)
+        HWND hwnd = static_cast<HWND>(window);
+        WINDOWPLACEMENT wp = {};
+        wp.length = sizeof wp;
+        RECT r = {};
+        if (!hwnd || !GetWindowRect(hwnd, &r) || !GetWindowPlacement(hwnd, &wp)) return;
+        const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE), ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        const int state = (wp.showCmd == SW_SHOWMAXIMIZED ? 1 : 0) | (wp.showCmd == SW_SHOWMINIMIZED ? 2 : 0) | (app->fullscreen.load() ? 4 : 0) |
+                          ((ex & WS_EX_TOPMOST) ? 8 : 0) | ((style & WS_CAPTION) != WS_CAPTION ? 16 : 0) | ((style & WS_THICKFRAME) ? 0 : 32) | (IsWindowVisible(hwnd) ? 0 : 64);
+        text = std::to_string(r.left) + " " + std::to_string(r.top) + " " + std::to_string(r.right - r.left) + " " + std::to_string(r.bottom - r.top) + " " + std::to_string(state);
+    });
+    if (!ran || text.empty()) return 4;
+    out = text;
+    return 0;
+#else
+    return (void)handle, out.clear(), -1;
+#endif
+}
+
+int app_window_style(int handle, int what, int on) {
+#ifdef _WIN32
+    auto app = lookup(handle);
+    if (!app) return 4;
+    return onUi(handle, [=](webview::webview& w) {
+        HWND hwnd = static_cast<HWND>(w.window().value());
+        LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if (what == 1) {                                                          // full screen: no frame, over the whole monitor; back to what it was
+            if (on && !app->fullscreen.load()) {
+                WINDOWPLACEMENT wp = {};
+                wp.length = sizeof wp;
+                GetWindowPlacement(hwnd, &wp);
+                app->savedMaximized = wp.showCmd == SW_SHOWMAXIMIZED;
+                if (app->savedMaximized) ShowWindow(hwnd, SW_RESTORE);
+                app->savedStyle = style;
+                GetWindowRect(hwnd, &app->savedRect);
+                MONITORINFO info = {};
+                info.cbSize = sizeof info;
+                if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &info)) return;
+                app->fullscreen = true;
+                SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~(WS_CAPTION | WS_THICKFRAME)) | WS_POPUP);
+                SetWindowPos(hwnd, HWND_TOP, info.rcMonitor.left, info.rcMonitor.top, info.rcMonitor.right - info.rcMonitor.left, info.rcMonitor.bottom - info.rcMonitor.top, SWP_FRAMECHANGED | SWP_NOACTIVATE);
+            } else if (!on && app->fullscreen.load()) {
+                app->fullscreen = false;
+                SetWindowLongPtrW(hwnd, GWL_STYLE, app->savedStyle);
+                SetWindowPos(hwnd, nullptr, app->savedRect.left, app->savedRect.top, app->savedRect.right - app->savedRect.left, app->savedRect.bottom - app->savedRect.top, SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+                if (app->savedMaximized) ShowWindow(hwnd, SW_MAXIMIZE);
+            }
+        } else if (what == 2) {                                                   // always on top
+            SetWindowPos(hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        } else if (what == 3) {                                                   // frameless: no title bar and no border line; the resize border stays if the window may be resized
+            if (app->fullscreen.load()) return;
+            style = on ? (style & ~WS_CAPTION) : (style | WS_CAPTION);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        } else if (what == 4) {                                                   // may the user resize it (and maximize it)
+            if (app->fullscreen.load()) return;
+            style = on ? (style | WS_THICKFRAME | WS_MAXIMIZEBOX) : (style & ~(WS_THICKFRAME | WS_MAXIMIZEBOX));
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+    });
+#else
+    return (void)handle, (void)what, (void)on, -1;
+#endif
+}
+
+int app_window_drag(int handle, int edge) {
+#ifdef _WIN32
+    return onUi(handle, [edge](webview::webview& w) {
+        if (!(GetKeyState(VK_LBUTTON) & 0x8000)) return;                           // only while the left button is held: a page cannot start a move out of nothing
+        HWND hwnd = static_cast<HWND>(w.window().value());
+        ReleaseCapture();
+        SendMessageW(hwnd, WM_NCLBUTTONDOWN, edge == 0 ? HTCAPTION : static_cast<WPARAM>(edge), 0);          // returns when the button is released
+    });
+#else
+    return (void)handle, (void)edge, -1;
+#endif
+}
+
+int app_window_modal(int child, int owner, int on) {
+#ifdef _WIN32
+    auto c = lookup(child);
+    auto o = lookup(owner);
+    if (!c || !o || child == owner || !o->hwnd.load()) return 4;
+    HWND ownerWindow = static_cast<HWND>(o->hwnd.load());
+    if (on) {
+        c->modalOwner = owner;
+        EnableWindow(ownerWindow, FALSE);
+        onUi(child, [](webview::webview& w) { SetForegroundWindow(static_cast<HWND>(w.window().value())); });
+    } else if (c->modalOwner.exchange(0) == owner) {
+        EnableWindow(ownerWindow, TRUE);
+    }
+    return 0;
+#else
+    return (void)child, (void)owner, (void)on, -1;
+#endif
+}
+
+void app_window_modal_ended(int owner) {
+#ifdef _WIN32
+    auto o = lookup(owner);
+    if (!o || !o->hwnd.load()) return;
+    HWND ownerWindow = static_cast<HWND>(o->hwnd.load());
+    EnableWindow(ownerWindow, TRUE);
+    SetForegroundWindow(ownerWindow);
+#else
+    (void)owner;
+#endif
 }
 
 int app_window_guard(int handle, int on) {

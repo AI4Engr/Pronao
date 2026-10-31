@@ -20,7 +20,7 @@ python3 - "$C/shim/app_shim.cpp" <<'PYEOF' || { echo "CONTROL SETUP FAILED"; exi
 import sys
 p = sys.argv[1]
 s = open(p, encoding='utf-8', newline='').read()
-key = "if (msg == WM_DESTROY) PostQuitMessage(0);"
+key = "PostQuitMessage(0);                                            // this window's own message loop ends (tests/run_multiwindow.sh removes this line as its control)"
 assert s.count(key) == 1
 open(p, 'w', encoding='utf-8', newline='').write(s.replace(key, "/* WM_DESTROY handling removed */"))
 PYEOF

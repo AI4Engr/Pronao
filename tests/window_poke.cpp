@@ -23,6 +23,7 @@
 //   window_poke.exe menukeys                 presses Down and Enter (chooses the first item of the menu that is open)
 //   window_poke.exe box TITLE               prints the text of a message box whose title starts with TITLE (waits up to 20 s); exit 1 if there is none
 //   window_poke.exe boxanswer TITLE yes|no|ok   answers that message box
+//   window_poke.exe layout TITLE            prints what Windows says about the window: "x y width height topmost caption thickframe enabled coversMonitor" (the flags are 0 / 1)
 //   window_poke.exe wait TITLE               waits up to 20 s for the window to be visible; exit 1 if it never is
 #include <windows.h>
 #include <shellapi.h>
@@ -313,6 +314,18 @@ int main(int argc, char** argv) {
         RECT c;
         if (!GetClientRect(h, &c)) return 1;
         std::printf("%ld %ld\n", c.right - c.left, c.bottom - c.top);
+        return 0;
+    }
+    if (action == "layout") {
+        RECT r;
+        if (!GetWindowRect(h, &r)) return 1;
+        const LONG_PTR style = GetWindowLongPtrW(h, GWL_STYLE), ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+        MONITORINFO info = {};
+        info.cbSize = sizeof info;
+        const bool covers = GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &info) && r.left == info.rcMonitor.left && r.top == info.rcMonitor.top &&
+                            r.right == info.rcMonitor.right && r.bottom == info.rcMonitor.bottom;
+        std::printf("%ld %ld %ld %ld %d %d %d %d %d\n", r.left, r.top, r.right - r.left, r.bottom - r.top, (ex & WS_EX_TOPMOST) ? 1 : 0, (style & WS_CAPTION) == WS_CAPTION ? 1 : 0,
+                    (style & WS_THICKFRAME) ? 1 : 0, IsWindowEnabled(h) ? 1 : 0, covers ? 1 : 0);
         return 0;
     }
     if (action == "menu") {

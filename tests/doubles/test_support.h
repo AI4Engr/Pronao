@@ -33,6 +33,8 @@ int app_test_instance(int first, int status, std::string commandLine);
 int app_test_monitors(std::string fields);
 // a click on a menu item: queues the record "menu" id on the window, as the native layer does (the window log shows menu|set| and menu|item| calls)
 int app_test_menu_click(int handle, std::string id);
+// what app_window_rect answers ("x y width height state"); the style, drag and modal calls show up in the window log (style|WHAT|ON, drag|EDGE, modal|OWNER|ON)
+int app_test_window_rect(std::string rect);
 // what app_runtime_version answers (0 installed with this version, 1 not installed, -1 nothing needed) and what a Yes / No message box answers (1 / 0); the boxes are
 // logged as "box|ASK|TITLE|TEXT" for app_test_dialog_take_request
 int app_test_runtime(int status, std::string version, int boxAnswer);

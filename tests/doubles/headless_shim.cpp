@@ -117,6 +117,39 @@ int app_navigation_allow(int handle, std::vector<std::string> prefixes) {
     logWindow(handle, line);
     return lookup(handle) ? 1 : 0;
 }
+static std::string g_rectAnswer = "100 100 800 600 0";
+int app_test_window_rect(std::string rect) {
+    g_rectAnswer = std::move(rect);
+    return 1;
+}
+int app_window_rect(int handle, std::string& out) {
+    out.clear();
+    if (!lookup(handle)) return 4;
+    out = g_rectAnswer;
+    return out.empty() ? 4 : 0;
+}
+int app_window_style(int handle, int what, int on) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("style|" + std::to_string(what) + "|" + std::to_string(on));
+    return 0;
+}
+int app_window_drag(int handle, int edge) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("drag|" + std::to_string(edge));
+    return 0;
+}
+int app_window_modal(int child, int owner, int on) {
+    auto c = lookup(child);
+    auto o = lookup(owner);
+    if (!c || !o || child == owner) return 4;
+    std::lock_guard<std::mutex> lock(c->m);
+    c->windowLog.push_back("modal|" + std::to_string(owner) + "|" + std::to_string(on));
+    return 0;
+}
 int app_menu_set(int handle, std::string spec) {
     auto app = lookup(handle);
     if (!app) return 4;

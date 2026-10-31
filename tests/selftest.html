@@ -33,8 +33,10 @@
     document.body.appendChild(frame);
     window.open('https://example.invalid/popup');
     setTimeout(function () { location.href = 'https://example.invalid/top'; }, 0);
-    await until(function () { return blocked.length >= 2; });
-    r.nav = [blocked.some(function (u) { return u.indexOf('/frame') > 0; }), blocked.some(function (u) { return u.indexOf('/top') > 0; }), (await cling.invoke('ping')) === 'pong'];
+    // three things are refused and each is reported (a frame, a script navigation, a popup), in whatever order the browser engine gets to them: wait for all three
+    const saw = function (part) { return blocked.some(function (u) { return u.indexOf(part) > 0; }); };
+    await until(function () { return saw('/frame') && saw('/top') && saw('/popup'); });
+    r.nav = [saw('/frame'), saw('/top'), saw('/popup') && (await cling.invoke('ping')) === 'pong'];
     // real native dialogs; tests/close_dialogs.ps1 closes them like a user clicking the X
     r.msg = await cling.invoke('dialog.message', { title: 'app-cling selftest message', message: 'closing by itself', kind: 'info', buttons: 'ok' });
     r.open = await cling.invoke('dialog.open', { title: 'app-cling selftest open', filters: [{ name: 'Text', extensions: ['txt'] }] });

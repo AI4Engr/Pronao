@@ -217,6 +217,42 @@ app.trayChecked(tray, "tray.mute", true);             // also trayEnabled, trayT
   Quit ends the program and the tray window is gone; two controls (hiding does nothing; tray items reach nobody). The test posts the messages the shell sends and does not move the mouse onto the real icon.
 - **Not verified:** the icon's picture and tooltip as the user sees them, a real click on the icon, the shell being restarted (the icon is added again on `TaskbarCreated`: written, not exercised), the icon removal when the process is killed (the shell then keeps a ghost until the mouse passes over it).
 
+## Window layout: position, full screen, always on top, no title bar, fixed size, modal windows
+
+What the application decides (a `Window`, `app.windows.get(app.handle)`):
+
+```
+w.setBounds(100, 80, 900, 600);       // fitted to the monitors that exist (never off the screen, never bigger than the biggest monitor); false in full screen
+std::vector<int> b = w.bounds();      // x, y, width, height, state (a sum: 1 maximized, 2 minimized, 4 full screen, 8 always on top, 16 no title bar, 32 not resizable, 64 hidden)
+w.setFullscreen(true);                // the whole monitor the window is on, no frame; false puts it back exactly as it was (a maximized window comes back maximized)
+w.setAlwaysOnTop(true);
+w.setFrameless(true);                 // no title bar and no border line; the thin resize border stays while the window may be resized
+w.setResizable(false);                // a fixed-size window (no resize border, no maximize button)
+child.setModalFor(owner);             // while child is open the owner is greyed out and ignores the mouse and the keyboard; it is usable again when child closes, however it closes
+```
+
+What a page may ask (off until the application registers it: `app.enableWindowLayoutCommands(allowFullscreen, allowAlwaysOnTop)`):
+
+```js
+const b = await cling.layout.getBounds();                  // {x, y, width, height, maximized, minimized, fullscreen, alwaysOnTop, frameless, resizable}
+await cling.layout.setBounds({ x: 100, y: 80, width: 900, height: 600 });     // fitted, as above
+// a window with no title bar: the page draws its own and starts the system's move or resize from a mouse down on it
+titlebar.onmousedown = function () { cling.layout.startDrag(); };
+grip.onmousedown = function () { cling.layout.startResize('bottomright'); };     // left, right, top, bottom, topleft, topright, bottomleft, bottomright
+await cling.layout.setFullscreen(true);                     // only if the application allowed full screen
+await cling.layout.setAlwaysOnTop(true);                    // only if the application allowed always on top
+await cling.invoke('window.open', { start: '/dialog.html', modal: true });    // a window the page opens that disables the page that opened it
+```
+
+- **What the page cannot do:** take away its own title bar or resize border (`setFrameless` / `setResizable` are the application's), cover the screen or stay in front unless the application said it may (a page that can do both can imitate the system's
+  own windows), or start a move out of nothing: `startDrag` / `startResize` act only while the left mouse button is held down.
+- **A frameless window and the page's own title bar:** the buttons are the page's: `cling.window.minimize()`, `maximize()`, `close()` already exist. Windows' snap layouts and the shadow of a window with a title bar are not kept.
+- **Numbers the page sends** are checked: `x`, `y` within -32000 to 32000, width 200 to 10000, height 150 to 10000.
+- **Test:** `tests/layout_main.clg` (32 checks with a double) and `tests/run_layout_window.sh` (a real window; after each change the test asks Windows what the window looks like: the rectangle, topmost, caption, resize border, enabled, whether it covers its
+  monitor; a drag with no button held does nothing; a modal window disables its owner and gives it back when the application closes it and when the user does; two controls that must fail).
+- **Not done:** transparent windows, owned (non-modal) child windows that stay on top of their parent and minimize with it, a window bigger than one monitor on purpose (full screen across all monitors), more than one real monitor (the fitting is tested with a double; this
+  machine has one), dragging and resizing with a real mouse button (the test checks the guard, not the drag).
+
 ## System notifications
 
 ```
@@ -639,9 +675,10 @@ every slot and starve the queue.
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 100 menus, tray and pop-ups + 33 notifications + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 100 menus, tray and pop-ups + 33 notifications + 32 layout + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
 bash tests/run_distribution.sh       # release build: windowed program, version and icon in the exe, the runtime check with a box, bad version values refused
 bash tests/run_signing.sh            # signing with a throwaway certificate: signed, runs, a changed file is caught, refusals
+bash tests/run_layout_window.sh       # a real window: full screen, always on top, no title bar, fixed size, a place fitted to the monitors, a modal window; two controls that must fail
 bash tests/run_notify_window.sh       # a real program: the shell takes a notification, a click reaches the program and the page, the icon goes away; two controls
 bash tests/run_tray_window.sh         # a real program: the tray icon, hiding on close, the tray menu; two controls that must fail
 bash tests/run_menu_window.sh         # a real window: the menu bar, choosing items, shortcuts, greyed items, ticks; two controls that must fail

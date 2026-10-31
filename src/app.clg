@@ -47,6 +47,10 @@ ext_fn int app_message_box(string title, string text, int ask);
 ext_fn int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
 ext_fn int app_window_track(int handle, int on);
 ext_fn int app_menu_set(int handle, string spec);
+ext_fn int app_window_rect(int handle, ref string out);
+ext_fn int app_window_style(int handle, int what, int on);
+ext_fn int app_window_drag(int handle, int edge);
+ext_fn int app_window_modal(int child, int owner, int on);
 ext_fn int app_menu_item(int handle, string id, int enabled, int checked);
 ext_fn int app_menu_popup(int handle, string spec, ref string chosen);
 ext_fn int app_tray_open(string tooltip, string menu, ref int handle);
@@ -696,11 +700,13 @@ public:
     string title;
     int width;
     int height;
+    bool modal;
     OpenWindowArgs() {
         start = "";
         title = "";
         width = 800;
         height = 600;
+        modal = false;
     }
 };
 
@@ -1764,6 +1770,97 @@ public:
         return app_window_state(handle, 6) >= 0;
     }
 
+    // ---- layout (Windows) ----
+
+    // Where the window is: x, y, width, height (screen pixels, the frame included) and a sum of 1 maximized, 2 minimized, 4 full screen, 8 always on top,
+    // 16 no title bar, 32 not resizable, 64 hidden. An empty list if it cannot be told.
+    std::vector<int> bounds() {
+        std::vector<int> out;
+        string text = "";
+        if (app_window_rect(handle, text) != 0) {
+            return out;
+        }
+        std::vector<string> parts = splitOn(text, ' ');
+        int i = 0;
+        while (i < parts.size() && i < 5) {
+            out.push_back(signedInt(parts[i]));
+            i = i + 1;
+        }
+        if (out.size() != 5) {
+            while (out.size() > 0) {
+                out.pop_back();
+            }
+        }
+        return out;
+    }
+
+    // Puts the window at x, y with this size, FITTED to the monitors there are (never off the screen, never bigger than the biggest monitor: the same rule as
+    // remembered window places, src/placement.clg). false if the window is in full screen, or the system cannot do it.
+    bool setBounds(int x, int y, int width, int height) {
+        std::vector<int> now = bounds();
+        if (now.size() != 5 || (now[4] / 4) % 2 == 1) {
+            return false;
+        }
+        std::vector<int> fit = fitToMonitors(x, y, width, height, monitorList());
+        return app_window_placement(handle, fit[0], fit[1], fit[2], fit[3], 0) >= 0;
+    }
+
+    // The window covers the whole monitor it is on, with no frame; false puts it back as it was. No other window of the program is touched.
+    bool setFullscreen(bool on) {
+        return app_window_style(handle, 1, flag(on)) >= 0;
+    }
+
+    // The window stays above the others, also when it is not the active one.
+    bool setAlwaysOnTop(bool on) {
+        return app_window_style(handle, 2, flag(on)) >= 0;
+    }
+
+    // No title bar and no border line: the page draws its own, and calls startDrag on a mouse down on it to let the user move the window (and startResize for the
+    // edges). The thin resize border stays while the window may be resized. Minimize, maximize and close are then the page's buttons (window.minimize and so on).
+    bool setFrameless(bool on) {
+        return app_window_style(handle, 3, flag(on)) >= 0;
+    }
+
+    // May the user change the size, and maximize? false: a fixed-size window.
+    bool setResizable(bool on) {
+        return app_window_style(handle, 4, flag(on)) >= 0;
+    }
+
+    int flag(bool on) {
+        if (on) {
+            return 1;
+        }
+        return 0;
+    }
+
+    // Starts the system's move for this window; it only does anything while the user is holding the left mouse button (a page calls it from a mouse-down handler).
+    bool startDrag() {
+        return app_window_drag(handle, 0) >= 0;
+    }
+
+    // Starts the system's resize from an edge or corner: left, right, top, bottom, topleft, topright, bottomleft, bottomright. Same condition.
+    bool startResize(string edge) {
+        int code = 0;
+        if (edge == "left") { code = 10; }
+        if (edge == "right") { code = 11; }
+        if (edge == "top") { code = 12; }
+        if (edge == "topleft") { code = 13; }
+        if (edge == "topright") { code = 14; }
+        if (edge == "bottom") { code = 15; }
+        if (edge == "bottomleft") { code = 16; }
+        if (edge == "bottomright") { code = 17; }
+        if (code == 0) {
+            return false;
+        }
+        return app_window_drag(handle, code) >= 0;
+    }
+
+    // Makes this window modal for another: while it is open the owner cannot be used (it is greyed and ignores the mouse and the keyboard) and it is enabled again
+    // when this window closes. false if either window is gone, or they are the same.
+    bool setModalFor(int owner) {
+        return app_window_modal(handle, owner, 1) == 0;
+    }
+
     // Puts a menu bar on this window (src/menu.clg): every id, label and shortcut was checked when the menu was built, and the top level must be only submenus.
     // The menu is taken over by the window; to change it later use setEnabled / setChecked or set a new one. false if the menu is not a complete bar, or the system
     // cannot show one (not Windows).
@@ -1887,6 +1984,15 @@ public:
     std::vector<int> handles;
     std::vector<Window> items;
     WindowBook() { }
+
+    // The window with this handle; a call from a window that is gone is refused.
+    Window needed(int h) {
+        Window w = get(h);
+        if (w == nullptr) {
+            throw "forbidden: the window is gone";
+        }
+        return w;
+    }
 
     // Pushes an event to the page of every open window.
     void emitAll(string name, string payloadJson) {
@@ -2727,6 +2833,82 @@ public:
         });
     }
 
+    // Registers the commands a page needs to lay out ITS OWN window: window.getBounds {} -> {x, y, width, height, maximized, minimized, fullscreen, alwaysOnTop, frameless,
+    // resizable}, window.setBounds {x, y, width, height} (fitted to the monitors, see Window.setBounds), window.startDrag {} and window.startResize {edge} (for a window with no title bar;
+    // they do something only while the left mouse button is held down). `fullscreen` and `alwaysOnTop` also register window.setFullscreen {on} and window.setAlwaysOnTop {on}: off unless asked
+    // for, because a page that can cover the screen and stay in front can imitate the system's own windows. Whether the window HAS a title bar or can be resized, and which windows
+    // are modal, is for the application (Window.setFrameless / setResizable / setModalFor), not the page.
+    void enableWindowLayoutCommands(bool fullscreen, bool alwaysOnTop) {
+        CallContext who = dispatcher.caller;
+        WindowBook book = windows;
+        command("window.getBounds", closure Command [who, book] (Item args) {
+            Window self = book.needed(who.handle);
+            std::vector<int> b = self.bounds();
+            if (b.size() != 5) {
+                throw "unsupported: the position of the window cannot be told on this system";
+            }
+            Item r = createObject();
+            addNumberToObject(r, "x", double(b[0]));
+            addNumberToObject(r, "y", double(b[1]));
+            addNumberToObject(r, "width", double(b[2]));
+            addNumberToObject(r, "height", double(b[3]));
+            addBoolToObject(r, "maximized", (b[4] / 1) % 2 == 1);
+            addBoolToObject(r, "minimized", (b[4] / 2) % 2 == 1);
+            addBoolToObject(r, "fullscreen", (b[4] / 4) % 2 == 1);
+            addBoolToObject(r, "alwaysOnTop", (b[4] / 8) % 2 == 1);
+            addBoolToObject(r, "frameless", (b[4] / 16) % 2 == 1);
+            addBoolToObject(r, "resizable", (b[4] / 32) % 2 == 0);
+            return r;
+        });
+        command("window.setBounds", closure Command [who, book] (Item args) {
+            Window self = book.needed(who.handle);
+            Item x = getObjectItem(objectArg(args), "x");
+            Item y = getObjectItem(objectArg(args), "y");
+            Item w = getObjectItem(objectArg(args), "width");
+            Item h = getObjectItem(objectArg(args), "height");
+            if (x == nullptr || y == nullptr || w == nullptr || h == nullptr || !isNumber(x) || !isNumber(y) || !isNumber(w) || !isNumber(h)) {
+                throw "invalid_argument: `x`, `y`, `width` and `height` must be numbers";
+            }
+            if (x.valuedouble < -32000.0 || x.valuedouble > 32000.0 || y.valuedouble < -32000.0 || y.valuedouble > 32000.0) {
+                throw "invalid_argument: `x` and `y` must be from -32000 to 32000";
+            }
+            if (w.valuedouble < 200.0 || w.valuedouble > 10000.0 || h.valuedouble < 150.0 || h.valuedouble > 10000.0) {
+                throw "invalid_argument: width must be 200 to 10000 and height 150 to 10000";
+            }
+            if (!self.setBounds(int(x.valuedouble), int(y.valuedouble), int(w.valuedouble), int(h.valuedouble))) {
+                throw "command_failed: the window could not be moved (it may be in full screen)";
+            }
+            return createNull();
+        });
+        command("window.startDrag", closure Command [who, book] (Item args) {
+            Window self = book.needed(who.handle);
+            self.startDrag();
+            return createNull();
+        });
+        command("window.startResize", closure Command [who, book] (Item args) {
+            Window self = book.needed(who.handle);
+            string edge = requiredString(args, "edge");
+            if (!self.startResize(edge)) {
+                throw "invalid_argument: `edge` must be left, right, top, bottom, topleft, topright, bottomleft or bottomright";
+            }
+            return createNull();
+        });
+        if (fullscreen) {
+            command("window.setFullscreen", closure Command [who, book] (Item args) {
+                Window self = book.needed(who.handle);
+                self.setFullscreen(optionalBool(args, "on", true));
+                return createNull();
+            });
+        }
+        if (alwaysOnTop) {
+            command("window.setAlwaysOnTop", closure Command [who, book] (Item args) {
+                Window self = book.needed(who.handle);
+                self.setAlwaysOnTop(optionalBool(args, "on", true));
+                return createNull();
+            });
+        }
+    }
+
     // Registers window.open {start, title?, width?, height?}: a page may ask for another window of the program's own site. Off unless this is called
     // (a page that can open windows can show the application's commands to more places); `max` windows at most (1 to 32, counting the open ones).
     // `start` must be a path inside the site ("/settings.html"): plain text, no "..", no scheme. The window opens after the call has been answered
@@ -2769,6 +2951,12 @@ public:
             record.push_back(char(0));
             record = record + intToString(given.height);
             record.push_back(char(0));
+            if (given.modal) {
+                record = record + "1";
+            } else {
+                record = record + "0";
+            }
+            record.push_back(char(0));
             if (app_push(who.handle, "", record, 100) != 1) {
                 throw "busy: the application is not keeping up";
             }
@@ -2798,6 +2986,12 @@ public:
             return;
         }
         dispatcher.rules.inheritRules(opener, h);
+        if (f.size() >= 6 && f[5] == "1") {
+            Window child = windows.get(h);
+            if (child != nullptr) {
+                child.setModalFor(opener);
+            }
+        }
     }
 
     // When the user closes a window (the X, Alt+F4) while its page has said it has unsaved work, ask first with a native box whose text is

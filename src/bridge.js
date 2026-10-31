@@ -82,6 +82,14 @@
     getAll: call('settings.getAll'),
     set: function (key, value) { return window.cling.invoke('settings.set', { key: key, value: value }); }
   };
+  // layout, when the application registered window.getBounds / setBounds / startDrag / startResize (enableWindowLayoutCommands): for a window with no title bar the page calls
+  // startDrag() in a mousedown handler on its own title bar and startResize('bottomright') on the edges; setFullscreen / setAlwaysOnTop exist only if the application asked for them
+  window.cling.layout = {
+    getBounds: call('window.getBounds'), setBounds: call('window.setBounds'), startDrag: call('window.startDrag'),
+    startResize: function (edge) { return window.cling.invoke('window.startResize', { edge: edge }); },
+    setFullscreen: function (on) { return window.cling.invoke('window.setFullscreen', { on: on !== false }); },
+    setAlwaysOnTop: function (on) { return window.cling.invoke('window.setAlwaysOnTop', { on: on !== false }); }
+  };
   window.cling.window = {
     setTitle: call('window.setTitle'), setSize: call('window.setSize'), minimize: call('window.minimize'),
     maximize: call('window.maximize'), restore: call('window.restore'), focus: call('window.focus'),

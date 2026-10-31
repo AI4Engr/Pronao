@@ -34,6 +34,16 @@ int app_window_guard(int handle, int on);
 // maximizes it if asked (Windows; -1 elsewhere). The caller has fitted it to the monitors. app_window_track(on): from now on, after the user moves or resizes
 // the window (or maximizes / restores it) the record "window" "placement" x y width height maximized is queued for the main loop (the restored rectangle).
 int app_monitors(std::string& out);
+// Layout (Windows; -1 elsewhere). app_window_rect: "x y width height state" in screen pixels (the window as it is, frame included); state is a sum: 1 maximized, 2 minimized,
+// 4 full screen, 8 always on top, 16 no title bar, 32 not resizable, 64 hidden. app_window_style: what 1 full screen (no frame, over the whole monitor the window is on;
+// off restores what it was), 2 always on top, 3 no title bar (the resize border stays if the window may be resized), 4 the user may resize and maximize it;
+// on 1 / 0. app_window_drag: starts the system's move (edge 0) or resize (edge 10 left, 11 right, 12 top, 13 top left, 14 top right, 15 bottom, 16 bottom left, 17 bottom right)
+// loop for the window, and only while the left mouse button is held (otherwise nothing happens): for a window with no title bar the page calls this on mouse down.
+// app_window_modal: while `child` exists the window `owner` cannot be used (it is disabled; it is enabled again when the child closes, or with on 0).
+int app_window_rect(int handle, std::string& out);
+int app_window_style(int handle, int what, int on);
+int app_window_drag(int handle, int edge);
+int app_window_modal(int child, int owner, int on);
 // Menus (Windows; -1 elsewhere). app_menu_set: the window's menu bar from the flat spec src/menu.clg writes ("" removes it); 0 ok, 5 the spec is malformed, 4 no such window.
 // Clicking an item, or pressing its shortcut while the page has the keyboard, queues the record "menu" id on the window; the id is always one the spec contained.
 // app_menu_item: ticks / unticks (checked 1 / 0) and enables / greys (enabled 1 / 0) an item of the menu bar, -1 leaves a state alone; 5 if the id is not in it.

@@ -42,3 +42,6 @@ void app_menu_forget(int handle);
 int app_queue_entry_new();
 void app_queue_entry_end(int handle);
 void app_tray_forget(int handle);
+
+// A modal window has closed: its owner (the window it was modal for) can be used again. From the window procedure of the modal window.
+void app_window_modal_ended(int owner);

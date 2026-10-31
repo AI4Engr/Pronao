@@ -1,0 +1,85 @@
+// Window layout in a real window (run by tests/run_layout_window.sh). The program takes instructions from a file, one line "N operation args", so the test can ask for each change
+// and then look at the window with its own eyes (window_poke.exe layout). It prints "done N" after each, and "ready" when the window is up.
+//   fullscreen 1|0   ontop 1|0   frameless 1|0   resizable 1|0   bounds X Y W H   drag   modalopen   modalclose   quit
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "settings.clh"
+#include "placement.clh"
+#include "menu.clh"
+#include "app.clh"
+
+ext_fn int app_os_env(string name, ref string out);
+
+bool on(std::vector<string> parts) {
+    return parts.size() > 1 && parts[1] == "1";
+}
+
+int main() {
+    App app = new App();
+    string folder = "";
+    if (app_os_env("LAYOUT_TEST_DIR", folder) != 1 || !app.allowFolder(folder)) {
+        std::cout << "selftest FAILED: no instruction folder" << std::endl;
+        return 2;
+    }
+    string file = app.gate.join(folder, "instructions.txt");
+    app.command("ready", closure Command [] (Item args) {
+        std::cout << "ready" << std::endl;
+        return createNull();
+    });
+    if (!app.openSite("layout test", 500, 400, false, "http://app.localhost", "")) {
+        std::cout << "selftest FAILED: no window" << std::endl;
+        return 2;
+    }
+    Window w = app.windows.get(app.handle);
+    int child = 0;
+    string last = "";
+    while (app.serveOne(100) != 0) {
+        FsResult c = app.gate.read(file, 1000);
+        if (c.status != 0 || c.text == last) {
+            continue;
+        }
+        last = c.text;
+        std::vector<string> parts = splitOn(last, ' ');
+        if (parts.size() < 2) {
+            continue;
+        }
+        string op = parts[1];
+        std::vector<string> args;
+        int i = 1;
+        while (i < parts.size()) {
+            args.push_back(parts[i]);
+            i = i + 1;
+        }
+        bool ok = true;
+        if (op == "fullscreen") {
+            ok = w.setFullscreen(on(args));
+        } else if (op == "ontop") {
+            ok = w.setAlwaysOnTop(on(args));
+        } else if (op == "frameless") {
+            ok = w.setFrameless(on(args));
+        } else if (op == "resizable") {
+            ok = w.setResizable(on(args));
+        } else if (op == "bounds" && parts.size() >= 6) {
+            ok = w.setBounds(signedInt(parts[2]), signedInt(parts[3]), signedInt(parts[4]), signedInt(parts[5]));
+        } else if (op == "drag") {
+            ok = w.startDrag();
+        } else if (op == "modalopen") {
+            child = app.openWindow("layout child", 300, 200, false, "");
+            Window cw = app.windows.get(child);
+            ok = child != 0 && cw.setModalFor(app.handle);
+        } else if (op == "modalclose") {
+            Window cw = app.windows.get(child);
+            if (cw != nullptr) {
+                cw.close();
+            }
+        } else if (op == "quit") {
+            app.quit();
+        }
+        std::cout << "done " << parts[0] << " " << op << " " << ok << std::endl;
+    }
+    app.close();
+    std::cout << "closed" << std::endl;
+    return 0;
+}
