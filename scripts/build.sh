@@ -8,6 +8,9 @@
 # app_page_html(); empty if unset). src/bridge.js is always embedded as app_bridge_js().
 # RELEASE=1: the window ignores the debug argument of open (no developer tools, no context menu) and the program refuses a development
 # server (APP_DEV_URL): compiled out, not a runtime switch. It also strips the symbols (STRIP=1 does that alone).
+# GUI=1 (and RELEASE=1, unless GUI=0): a program for people, not for a console: it is linked as a Windows (not console) program, so double-clicking it opens no black
+# console window. Its output (std::cout) goes nowhere then, which is why the tests use the console build.
+# APP_VERSION=1.2.3 (APP_NAME, APP_COMPANY, APP_DESCRIPTION, APP_COPYRIGHT): the version resource of the exe, shown by Explorer under Properties > Details.
 # ICON=<file.ico>: the program's icon (Windows): compiled into the exe as resource 1, so Explorer shows it, and the window (and so the taskbar) uses it. Without
 # it the system's default icon is shown. scripts/make_icon.py makes a placeholder.
 # JOBS (parallel compiles, default: the cores), OBJ_CACHE (a folder of compiled objects shared by builds), OPT (optimisation level, default -O1).
@@ -55,7 +58,7 @@ EMBED="$WORK/embedded.cpp"
 # (smaller, but no backtraces or debugger names: keep a non-release build for that)
 SECTIONS="-ffunction-sections -fdata-sections"
 GC="-Wl,--gc-sections"
-STRIP_FLAG="${RELEASE:+-s}${STRIP:+-s}"
+STRIP_FLAG=""; [ -n "${RELEASE:-}${STRIP:-}" ] && STRIP_FLAG="-s"
 OPT="${OPT:--O1}"        # (the headless test runner uses -O0: it compiles more than twice as fast, and the sanitizer runs cover -O1)
 CXXFLAGS="--std=c++17 $OPT -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE}"
 # Speed: the modules are independent once their headers exist, so they are transpiled in parallel, then compiled in parallel (JOBS at a time,
@@ -117,11 +120,12 @@ else
     INC="-I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
     spawn cc "$SHIM/app_shim.cpp" "$WORK/app_shim.o" --std=c++14 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE} $INC
     OBJS+=("$WORK/app_shim.o")
-    NATIVE+=("$SHIM/$PLAT/dialog.cpp" "$SHIM/$PLAT/shell.cpp" "$SHIM/$PLAT/instance.cpp" "$SHIM/$PLAT/menu.cpp")
+    NATIVE+=("$SHIM/$PLAT/dialog.cpp" "$SHIM/$PLAT/shell.cpp" "$SHIM/$PLAT/instance.cpp" "$SHIM/$PLAT/menu.cpp" "$SHIM/$PLAT/runtime.cpp")
     [ -f "$SHIM/$PLAT/nav.cpp" ] && NATIVE+=("$SHIM/$PLAT/nav.cpp")
     [ -f "$SHIM/$PLAT/tray.cpp" ] && NATIVE+=("$SHIM/$PLAT/tray.cpp")
     [ -f "$SHIM/$PLAT/assets.cpp" ] && NATIVE+=("$SHIM/$PLAT/assets.cpp")
     LINK="-static -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
+    if [ "${GUI:-${RELEASE:+1}}" = 1 ] && [ "$PLAT" = win ]; then LINK="-mwindows $LINK"; fi
 fi
 for n in "${NATIVE[@]}"; do
     o="$WORK/native_$(basename "$(dirname "$n")")_$(basename "$n" .cpp).o"
@@ -131,14 +135,58 @@ done
 spawn cc "$EMBED" "$WORK/embedded.o"
 finish
 [ -f "$WORK/assets/assets_blob.o" ] && OBJS+=("$WORK/assets/assets_blob.o")
-if [ -n "${ICON:-}" ] && [ "$MODE" != "--headless" ] && [ "$PLAT" = win ]; then
-    [ -f "$ICON" ] || { echo "ICON $ICON does not exist" >&2; exit 1; }
-    [ "$(head -c4 "$ICON" | od -An -tx1 | tr -d ' \n')" = "00000100" ] || { echo "ICON $ICON is not an .ico file" >&2; exit 1; }
-    ICON_FULL="$(cygpath -m "$(cd "$(dirname "$ICON")" && pwd)/$(basename "$ICON")")"
-    printf '1 ICON "%s"\n' "$ICON_FULL" > "$WORK/icon.rc"
+if { [ -n "${ICON:-}" ] || [ -n "${APP_VERSION:-}" ]; } && [ "$MODE" != "--headless" ] && [ "$PLAT" = win ]; then
+    : > "$WORK/icon.rc"
+    if [ -n "${ICON:-}" ]; then
+        [ -f "$ICON" ] || { echo "ICON $ICON does not exist" >&2; exit 1; }
+        [ "$(head -c4 "$ICON" | od -An -tx1 | tr -d ' \n')" = "00000100" ] || { echo "ICON $ICON is not an .ico file" >&2; exit 1; }
+        ICON_FULL="$(cygpath -m "$(cd "$(dirname "$ICON")" && pwd)/$(basename "$ICON")")"
+        printf '1 ICON "%s"\n' "$ICON_FULL" >> "$WORK/icon.rc"
+    fi
+    if [ -n "${APP_VERSION:-}" ]; then
+        # the version resource: what Explorer shows under Properties > Details (and what SmartScreen and virus scanners read about a program with no signature)
+        case "$APP_VERSION" in *[!0-9.]*|""|.*|*.|*..*) echo "APP_VERSION must be numbers and dots, like 1.2.3 (got $APP_VERSION)" >&2; exit 1 ;; esac
+        IFS=. read -r V1 V2 V3 V4 <<< "$APP_VERSION"
+        VCOMMA="${V1:-0},${V2:-0},${V3:-0},${V4:-0}"
+        vtext() { # NAME -> the value, which may hold letters, digits, spaces and . , - _ ( ) only (nothing that could end the string or the line in the .rc)
+            case "$2" in *[!A-Za-z0-9\ .,_\(\)-]*) echo "$1 may contain only letters, digits, spaces and . , _ - ( )" >&2; exit 1 ;; esac
+            printf '%s' "$2"
+        }
+        P_NAME="$(vtext APP_NAME "${APP_NAME:-$(basename "$OUT" .exe)}")"
+        P_COMPANY="$(vtext APP_COMPANY "${APP_COMPANY:-}")"
+        P_DESC="$(vtext APP_DESCRIPTION "${APP_DESCRIPTION:-$P_NAME}")"
+        P_COPY="$(vtext APP_COPYRIGHT "${APP_COPYRIGHT:-}")"
+        cat >> "$WORK/icon.rc" <<RCEOF
+1 VERSIONINFO
+FILEVERSION $VCOMMA
+PRODUCTVERSION $VCOMMA
+FILEOS 0x4
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "$P_COMPANY"
+      VALUE "FileDescription", "$P_DESC"
+      VALUE "FileVersion", "$APP_VERSION"
+      VALUE "InternalName", "$P_NAME"
+      VALUE "LegalCopyright", "$P_COPY"
+      VALUE "OriginalFilename", "$(basename "$OUT")"
+      VALUE "ProductName", "$P_NAME"
+      VALUE "ProductVersion", "$APP_VERSION"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+RCEOF
+    fi
     WINDRES="${WINDRES:-$(dirname "$(command -v "$CXX")")/windres}"
     [ -x "$WINDRES" ] || WINDRES=windres
-    "$WINDRES" -O coff -i "$WORK/icon.rc" -o "$WORK/icon.o" || { echo "windres failed for $ICON" >&2; exit 1; }
+    "$WINDRES" -O coff -i "$WORK/icon.rc" -o "$WORK/icon.o" || { echo "windres failed for the icon / version resource" >&2; exit 1; }
     OBJS+=("$WORK/icon.o")
 fi
 "$CXX" "${OBJS[@]}" "$WORK/embedded.o" $GC $STRIP_FLAG $LINK -o "$OUT"

@@ -10,13 +10,15 @@ APP_CLING="${APP_CLING:-__APP_CLING__}"
 MODE=window
 for a in "$@"; do
     case "$a" in
-        --release) export RELEASE=1 ;;
+        --release) export RELEASE=1 ;;          # also: no console window when the program is started by double-click (GUI=0 keeps it)
         --headless) MODE=--headless ;;
         *) echo "unknown option $a" >&2; exit 2 ;;
     esac
 done
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=.exe ;; *) EXE= ;; esac
 mkdir -p "$HERE/out"
+# what Explorer shows under Properties > Details of the exe, and what a virus scanner or SmartScreen reads about a program with no signature: fill these in
+export APP_NAME="__NAME__" APP_VERSION="${APP_VERSION:-0.1.0}" APP_COMPANY="${APP_COMPANY:-}" APP_DESCRIPTION="${APP_DESCRIPTION:-__NAME__}"
 [ -f "$HERE/icon.ico" ] && export ICON="$HERE/icon.ico"      # the program's icon: replace icon.ico with your own (a Windows .ico, several sizes)
 PAGE="$HERE/index.html" WORK="${WORK:-$HERE/out/work}" bash "$APP_CLING/scripts/build.sh" "$HERE/main.clg" "$HERE/out/__NAME__$EXE" $MODE
 echo "built out/__NAME__$EXE"

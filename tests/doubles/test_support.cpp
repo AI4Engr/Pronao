@@ -135,6 +135,25 @@ int app_dialog_pick(int, int mode, std::string title, std::string default_name, 
     path = answer.substr(5);
     return 1;
 }
+namespace {
+int g_runtimeStatus = 0, g_boxAnswer = 1;
+std::string g_runtimeVersion = "120.0.0.0";
+}  // namespace
+int app_test_runtime(int status, std::string version, int boxAnswer) {
+    g_runtimeStatus = status;
+    g_runtimeVersion = std::move(version);
+    g_boxAnswer = boxAnswer;
+    return 1;
+}
+int app_runtime_version(std::string& version) {
+    version = g_runtimeStatus == 0 ? g_runtimeVersion : std::string();
+    return g_runtimeStatus;
+}
+int app_message_box(std::string title, std::string text, int ask) {
+    std::lock_guard<std::mutex> lock(g_scriptMutex);
+    g_requests.push_back("box|" + std::to_string(ask) + "|" + title + "|" + text);
+    return ask ? g_boxAnswer : 1;
+}
 int app_shell_open(std::string target, int mode) {
     std::lock_guard<std::mutex> lock(g_scriptMutex);
     g_requests.push_back("shell|" + std::to_string(mode) + "|" + target);     // (read with app_test_dialog_take_request; nothing is started)

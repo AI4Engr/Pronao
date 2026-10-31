@@ -124,6 +124,13 @@ int app_instance_listen(int handle);
 // The arguments this process was started with, without the program name, each followed by a NUL.
 int app_command_line(std::string& out);
 
+// ---- the system the program runs on --------------------------------------------------------------------------------------------------------------
+// app_runtime_version: Windows: 0 and the version of the WebView2 runtime if it is installed, 1 if it is not (then no window can be opened); elsewhere -1 (nothing is needed).
+// app_message_box: a message box that needs no window of ours (a program that cannot open its window has nothing else to tell the user with); ask 0: an OK button, 1: Yes / No.
+// 1 for OK or Yes, 0 for No, -1 if it could not be shown. Blocks until the user answers. The text was vetted by the caller.
+int app_runtime_version(std::string& version);
+int app_message_box(std::string title, std::string text, int ask);
+
 // ---- the shell: an address in the default browser, a file in its default program, a file shown in the file manager -----------------------------
 // mode 0 open `target` (an http, https or mailto address, or the absolute path of a file), 1 show the file (or folder) in the file manager. 0 asked the
 // system to do it (not that it succeeded: a program starts on its own), 4 could not, 5 the target is not acceptable. The caller has vetted the target.

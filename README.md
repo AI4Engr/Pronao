@@ -144,6 +144,22 @@ await cling.shell.reveal({ path: '...' });                          // shown in 
   itself was checked only for its refusals. Click it once by hand on a machine with a browser.
 - **What it cannot know:** what the browser or the default program will do with what it gets. Listing `html` or `svg` for `openFile` is the application's choice.
 
+## Giving the program to someone else
+
+`docs/distribution.md` has the whole page; the short version for a portable exe:
+
+```
+RELEASE=1 ICON=app.ico APP_VERSION=1.4.0 APP_NAME="My app" APP_COMPANY="Example Co" bash scripts/build.sh main.clg out/my-app.exe     # or: bash build.sh --release in a new project
+if (!app.checkRuntime("My app")) { return 1; }       // first thing in main: a message box, not a silent failure, on a computer without the WebView2 runtime
+app.showMessage("My app", "It cannot start.");        // a message box for what a windowless program has to say (a release build has no console)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\sign.ps1 -File out\my-app.exe -Pfx cert.pfx -PasswordEnv SIGN_PASSWORD -Timestamp http://timestamp.digicert.com
+```
+
+- `RELEASE=1` links a **windowed** program (no console window on double-click); `GUI=0` keeps the console. `APP_VERSION` etc. become the version resource Explorer shows.
+- **Tested:** the subsystem, the version resource and icon read back from the exe, the windowed program starting and ending, a computer without the runtime (the shim made to report it missing: box, no window, exit 3),
+  signing with a throwaway certificate (who signed, a changed file reported as changed, a wrong password refused).
+- **Not tested:** a computer that really lacks the runtime, a certificate from a recognized authority, a timestamp server, SmartScreen. No installer (a portable exe has none; see the page for what that leaves out).
+
 ## Menus: the window's menu bar and keyboard shortcuts
 
 The application declares every menu (`src/menu.clg`); a page cannot add, change or show an item. It can only be told which item was chosen.
@@ -597,6 +613,8 @@ bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
 bash tests/run_headless.sh            # ~20 s: 295 end-to-end + 147 file policy and text + 54 folders and settings + 49 links and shell + 19 single instance + 41 window places + 100 menus, tray and pop-ups + 18 program lookup + 38 site + 50 tauriport (needs lore) + 29 process + 27 watcher + 18 two-process single instance, no window (SLOW=1: build at -O1)
+bash tests/run_distribution.sh       # release build: windowed program, version and icon in the exe, the runtime check with a box, bad version values refused
+bash tests/run_signing.sh            # signing with a throwaway certificate: signed, runs, a changed file is caught, refusals
 bash tests/run_tray_window.sh         # a real program: the tray icon, hiding on close, the tray menu; two controls that must fail
 bash tests/run_menu_window.sh         # a real window: the menu bar, choosing items, shortcuts, greyed items, ticks; two controls that must fail
 bash tests/run_icon.sh                # the icon is in the exe and on the running window; the build without one is the control
@@ -630,6 +648,8 @@ a fresh project builds in all three ways and its window starts.
 | `src/files.clg` | `FileGate`: the allowed-folder policy and every file operation, on top of the native open-and-ask primitives |
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
 | `src/menu.clg` | menus: `Menu` (the rules for ids, labels, shortcuts) and the flat spec the native layer builds a menu from |
+| `scripts/sign.ps1`, `scripts/check_signature.ps1` | sign an exe with a certificate file or a certificate in the store; say what the signature of an exe is |
+| `docs/distribution.md` | giving the program to someone else: the runtime check, the release build, signing, a checklist |
 | `scripts/make_icon.py` | a placeholder `.ico` (the build option `ICON=`) |
 | `src/placement.clg` | where windows were: `WindowMemory` and `fitToMonitors` |
 | `shim/win/instance.cpp` | one running copy per user: the mutex, the pipe and the hand-over of a later launch's arguments |

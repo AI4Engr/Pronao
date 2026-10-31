@@ -16,6 +16,14 @@ ext_fn int app_test_remove_tree(string path);
 ext_fn int app_test_write_raw(string path, string data);
 ext_fn int app_test_mkdir_raw(string path);
 ext_fn int app_test_sleep_ms(int ms);
+ext_fn int app_test_runtime(int status, string version, int boxAnswer);
+
+string notText() {
+    string s = "x";
+    s.push_back(char(255));
+    s.push_back(char(254));
+    return s;
+}
 
 void check(string name, bool ok) {
     if (ok) {
@@ -227,6 +235,29 @@ int main() {
     app_test_push_internal(app.handle, blockedRecord("https://example.com/at-once", "1"));
     app.serveOne(100);
     check("a flood of clicks opens at most one", lastAsked() == "shell|0|https://example.com/again");
+
+    // ---- starting up on someone else's computer ----
+    lastAsked();
+    App r1 = new App();
+    app_test_runtime(0, "120.0.0.0", 1);
+    check("with the runtime installed the program goes on and nothing is shown", r1.checkRuntime("My app") && lastAsked() == "");
+    app_test_runtime(-1, "", 1);
+    check("where nothing is needed it goes on too", r1.checkRuntime("My app") && lastAsked() == "");
+    app_test_runtime(1, "", 1);
+    check("without the runtime the program is told to end", !r1.checkRuntime("My app"));
+    string boxLog = "";
+    string oneLog = "";
+    while (app_test_dialog_take_request(oneLog) == 1) {
+        boxLog = boxLog + oneLog + ";";
+    }
+    check("a box said why and offered the page; Yes opened it", containsText(boxLog, "box|1|My app|My app needs the Microsoft WebView2 Runtime") && containsText(boxLog, ";shell|0|https://developer.microsoft.com/microsoft-edge/webview2/;"));
+    app_test_runtime(1, "", 0);
+    check("No opens nothing", !r1.checkRuntime("My app") && !containsText(lastAsked(), "shell|0|"));
+    app_test_runtime(1, "", 0);
+    check("a name that is not text is replaced", !r1.checkRuntime(notText()) && containsText(lastAsked(), "This program needs"));
+    app_test_runtime(0, "120.0.0.0", 1);
+    check("showMessage shows a box", r1.showMessage("My app", "It cannot start.") && containsText(lastAsked(), "box|0|My app|It cannot start."));
+    check("and refuses a title or text that is empty, too long or not text", !r1.showMessage("", "x") && !r1.showMessage("x", "") && !r1.showMessage(repeated("t", 81), "x") && !r1.showMessage("x", repeated("t", 1001)) && !r1.showMessage("x", notText()));
 
     app_test_remove_tree(base);
     return 0;

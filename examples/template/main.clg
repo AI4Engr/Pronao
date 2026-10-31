@@ -13,6 +13,10 @@ public:
 
 int main() {
     App app = new App();
+    // on a computer without the window's runtime (an old Windows 10) a message box says so and the program ends instead of failing silently
+    if (!app.checkRuntime("__NAME__")) {
+        return 1;
+    }
     app.command("greet", closure Command [] (Item args) {
         GreetArgs a = decodeGreetArgs(args);
         if (a.name.length() == 0 || a.times < 1 || a.times > 5) {
@@ -38,6 +42,7 @@ int main() {
     }
     if (!opened) {
         std::cout << "could not open the window" << std::endl;
+        app.showMessage("__NAME__", "The window could not be opened.");      // (a release build has no console to print to)
         return 1;
     }
     app.run();

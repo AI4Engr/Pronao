@@ -1,0 +1,25 @@
+// Starting up on a computer that may lack the window's runtime (run by tests/run_distribution.sh). With the runtime the window opens and the program ends when it
+// is closed; without it a message box says why and the program ends with 3 and never opens a window.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "settings.clh"
+#include "app.clh"
+
+int main() {
+    App app = new App();
+    if (!app.checkRuntime("Runtime Test")) {
+        return 3;
+    }
+    app.command("ready", closure Command [] (Item args) {
+        std::cout << "ready" << std::endl;
+        return createNull();
+    });
+    if (!app.openSite("runtime window", 420, 300, false, "http://app.localhost", "")) {
+        return 2;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

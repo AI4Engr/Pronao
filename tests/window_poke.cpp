@@ -17,6 +17,8 @@
 //   window_poke.exe traycommand N           chooses item number N (counting from 0, separators excluded) of the tray menu, as the menu would
 //   window_poke.exe rightclick TITLE        brings the window to the front and right-clicks in the middle of its page
 //   window_poke.exe menukeys                 presses Down and Enter (chooses the first item of the menu that is open)
+//   window_poke.exe box TITLE               prints the text of a message box whose title starts with TITLE (waits up to 20 s); exit 1 if there is none
+//   window_poke.exe boxanswer TITLE yes|no|ok   answers that message box
 //   window_poke.exe wait TITLE               waits up to 20 s for the window to be visible; exit 1 if it never is
 #include <windows.h>
 #include <shellapi.h>
@@ -156,7 +158,45 @@ BOOL CALLBACK lookAny(HWND h, LPARAM p) {
     return TRUE;
 }
 
+// a message box (class #32770) whose title starts with `prefix`
+HWND findBox(const std::wstring& prefix) {
+    struct S { std::wstring prefix; HWND found = nullptr; } s;
+    s.prefix = prefix;
+    EnumWindows([](HWND h, LPARAM p) -> BOOL {
+        auto* s = reinterpret_cast<S*>(p);
+        wchar_t cls[32], title[256];
+        if (GetClassNameW(h, cls, 32) && std::wstring(cls) == L"#32770" && GetWindowTextW(h, title, 256) > 0 && std::wstring(title).compare(0, s->prefix.size(), s->prefix) == 0) {
+            s->found = h;
+            return FALSE;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&s));
+    return s.found;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "box") {
+        const std::string t(argv[2]);
+        HWND box = nullptr;
+        for (int i = 0; i < 200 && !box; i++) { box = findBox(std::wstring(t.begin(), t.end())); if (!box) Sleep(100); }
+        if (!box) return 1;
+        std::wstring text;
+        EnumChildWindows(box, [](HWND c, LPARAM p) -> BOOL {
+            wchar_t cls[32], buf[2048];
+            if (GetClassNameW(c, cls, 32) && std::wstring(cls) == L"Static" && GetWindowTextW(c, buf, 2048) > 0) *reinterpret_cast<std::wstring*>(p) += std::wstring(buf) + L" ";
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&text));
+        std::string out;
+        for (wchar_t c : text) out += (c == L'\n' || c == L'\r') ? ' ' : static_cast<char>(c < 128 ? c : '?');
+        std::printf("%s\n", out.c_str());
+        return 0;
+    }
+    if (argc >= 4 && std::string(argv[1]) == "boxanswer") {
+        const std::string t(argv[2]), a(argv[3]);
+        HWND box = findBox(std::wstring(t.begin(), t.end()));
+        if (!box) return 1;
+        return PostMessageW(box, WM_COMMAND, a == "yes" ? IDYES : a == "no" ? IDNO : IDOK, 0) ? 0 : 1;
+    }
     if (argc >= 2 && std::string(argv[1]) == "trayexists") {
         HWND t = findTray();
         if (!t) return 1;

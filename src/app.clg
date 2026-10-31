@@ -42,6 +42,8 @@ ext_fn int app_watch_start(int handle, string root, int recursive, ref int watch
 ext_fn int app_watch_stop(int handle, int watchId);
 ext_fn int app_os_windows();
 ext_fn int app_shell_open(string target, int mode);
+ext_fn int app_runtime_version(ref string version);
+ext_fn int app_message_box(string title, string text, int ask);
 ext_fn int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
 ext_fn int app_window_track(int handle, int on);
 ext_fn int app_menu_set(int handle, string spec);
@@ -2074,6 +2076,37 @@ public:
             book.emitAll("settings.changed", printUnformatted(changed));
             return createNull();
         });
+    }
+
+    // ---- starting up on someone else's computer ----
+
+    // Is what the window needs installed? On Windows the window is the Microsoft WebView2 Runtime, which every current Windows has but an older Windows 10 may not.
+    // If it is missing, a message box (it needs no window) says so and offers the download page; the answer here is false and the program should end:
+    //     if (!app.checkRuntime("My app")) { return 1; }
+    // true if the runtime is there or nothing is needed on this system. Call it before the first window is opened; `appName` is plain text of at most 80 bytes.
+    bool checkRuntime(string appName) {
+        string version = "";
+        if (app_runtime_version(version) != 1) {
+            return true;
+        }
+        string name = appName;
+        if (name.length() == 0 || !plainText(name, 80)) {
+            name = "This program";
+        }
+        string text = name + " needs the Microsoft WebView2 Runtime to show its window, and this computer does not have it.\n\nOpen the page where Microsoft offers it?";
+        if (app_message_box(name, text, 1) == 1) {
+            app_shell_open("https://developer.microsoft.com/microsoft-edge/webview2/", 0);
+        }
+        return false;
+    }
+
+    // A message box with an OK button and no window of ours, for what a program has to say when it cannot open its window (a program without a console has nowhere to
+    // print to). Title up to 80 and text up to 1000 bytes of plain text. false if it could not be shown.
+    bool showMessage(string title, string text) {
+        if (title.length() == 0 || !plainText(title, 80) || text.length() == 0 || !plainText(text, 1000)) {
+            return false;
+        }
+        return app_message_box(title, text, 0) >= 0;
     }
 
     // ---- opening things in the system (src/links.clg) ----
