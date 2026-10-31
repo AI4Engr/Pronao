@@ -47,6 +47,13 @@ The part in brackets is the stable name of the rule; the arrow is the `.clg` lin
 | ``error[semantic/struct-json-needs-cjson]: generated struct decoders need cjson-cling`` | The decoder calls `getObjectItem`, `isString`, ... which are not visible. | `#include "cjson_api.clh"` (and `cjson_item.clh`). |
 | ``call to unknown function/method `decodeDialogArgs` `` | Seen while building app-cling: a decoder was called from a file that included the struct's file, and the compiler had not declared it there. **Fixed in CeeLing** (the pass now also runs on included files). | If it shows up on a new compiler, update `cling.exe`: `dist/cling.exe` may be older than `build/cling.exe`. |
 
+### Files compiled one by one
+
+| Message | What it meant | What to do |
+|---|---|---|
+| ``conversion from 'std::unique_ptr<Item>' to non-scalar type 'std::shared_ptr<Item>' requested`` (a g++ error in a generated file, not a CeeLing message) | Pointer kinds are chosen per file. The file that declares a class made a field or a vector's elements `unique_ptr`; another file uses them in a way that needs `shared_ptr` (an element copied out, a field handed to a closure). | Build with `scripts/build.sh`: it runs `scripts/pointer_demands.sh` first, which makes the declaring file read what the other files need. When you call the compiler by hand, use `--ptr-demands-out` / `--ptr-demands` the same way. |
+| ``call to unknown function/method `decodeDialogArgs` `` in another module | `decodeX` may only be called in the file that declares the struct. | Add a small function next to the struct (`readDialogArgs(item)`) that calls it, and call that. |
+
 ## Where the language got in the way (seen while writing app-cling)
 
 These are limits of today's language. The first two are plain messages; the others come out as a parser error or are quietly different.

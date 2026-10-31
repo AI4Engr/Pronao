@@ -74,7 +74,7 @@ rejects with.
 
 ## 5. The command: CeeLing beside the C++ it became
 
-`enableFileCommands` registers it (`src/app.clg`):
+`enableFileCommands` registers it (`src/app.clg`; the helpers it uses are in `src/fscommands.clg`):
 
 | CeeLing | generated C++ |
 |---|---|

@@ -1,0 +1,163 @@
+// app-cling -- The arguments of the dialog commands (dialog.open, dialog.save, dialog.folder, dialog.message), read by generated decoders (decodeX), and the checks on what they MEAN.
+
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "fscommands.clh"
+
+ext_fn int app_push(int handle, string id, string request, int maxQueued);
+
+// ---- what a page sends: the shapes are structs, CeeLing writes the decoders (decodeDialogArgs, ...: see CeeLing's CLAUDE.md "generated JSON decoders") ----
+// A struct with a constructor that takes no parameters has OPTIONAL fields: a missing (or null) field keeps the value the constructor gave it, a field that is
+// present must have the right type or the call is refused with the field's name. What a value MEANS (lengths, characters, ranges) is checked below.
+struct FilterArgs {
+public:
+    string name;
+    std::vector<string> extensions;
+    FilterArgs() {
+        name = "";
+    }
+};
+
+struct DialogArgs {
+public:
+    string title;
+    string defaultName;
+    std::vector<FilterArgs> filters;
+    DialogArgs() {
+        title = "";
+        defaultName = "";
+    }
+};
+
+struct MessageArgs {
+public:
+    string title;
+    string message;
+    string kind;
+    string buttons;
+    MessageArgs() {
+        title = "";
+        message = "";
+        kind = "info";
+        buttons = "ok";
+    }
+};
+
+string checkedTitle(string title) {
+    if (!plainText(title, 200)) {
+        throw "invalid_argument: `title` must be plain text of at most 200 bytes";
+    }
+    return title;
+}
+
+// [{name: "Text", extensions: ["txt", "md"]}, {name: "Everything"}] -> label, pattern, label, pattern ... ("*.txt;*.md", "*.*")
+std::vector<string> filterList(DialogArgs a) {
+    std::vector<string> out;
+    if (a.filters.size() > 20) {
+        throw "invalid_argument: at most 20 filters";
+    }
+    int i = 0;
+    while (i < a.filters.size()) {
+        FilterArgs f = a.filters[i];
+        if (f.name.length() == 0 || !plainText(f.name, 80)) {
+            throw "invalid_argument: a filter `name` must be plain text of 1 to 80 bytes";
+        }
+        string pattern = "*.*";
+        if (f.extensions.size() > 0) {
+            pattern = "";
+            int j = 0;
+            while (j < f.extensions.size()) {
+                if (!extensionOk(f.extensions[j])) {
+                    throw "invalid_argument: an extension is 1 to 16 letters, digits, _ or -";
+                }
+                if (j > 0) {
+                    pattern = pattern + ";";
+                }
+                pattern = pattern + "*." + f.extensions[j];
+                j = j + 1;
+            }
+        }
+        out.push_back(f.name);
+        out.push_back(pattern);
+        i = i + 1;
+    }
+    return out;
+}
+
+// the first extension of the first filter, which a "save as" dialog appends to a name typed without one
+string defaultExtension(DialogArgs a) {
+    if (a.filters.size() == 0) {
+        return "";
+    }
+    FilterArgs first = a.filters[0];
+    if (first.extensions.size() == 0) {
+        return "";
+    }
+    return first.extensions[0];
+}
+
+// What the worker that showed a dialog sends the main loop when the user chose something: the main loop applies the grant
+// (the allow-list is touched by one thread only) and answers the page.
+string pickRecord(string id, bool folder, string chosen) {
+    string record = "pick";
+    record.push_back(char(0));
+    record = record + id;
+    record.push_back(char(0));
+    if (folder) {
+        record.push_back('1');
+    } else {
+        record.push_back('0');
+    }
+    record.push_back(char(0));
+    record = record + chosen;
+    record.push_back(char(0));
+    return record;
+}
+
+// Runs on the worker that showed the dialog.
+void finishPick(int handle, string id, int status, string chosen, bool folder) {
+    if (status == 0) {
+        replyOk(handle, id, "null");
+    } else if (status < 0) {
+        replyError(handle, id, "unsupported", "the dialog could not be shown");
+    } else if (app_push(handle, "", pickRecord(id, folder, chosen), 100000) != 1) {
+        replyError(handle, id, "busy", "the application is not keeping up");
+    }
+}
+
+string buttonName(int button) {
+    if (button == 1) { return "ok"; }
+    if (button == 3) { return "yes"; }
+    if (button == 4) { return "no"; }
+    return "cancel";
+}
+
+int dialogKind(string kind) {
+    if (kind == "info") { return 0; }
+    if (kind == "warning") { return 1; }
+    if (kind == "error") { return 2; }
+    if (kind == "question") { return 3; }
+    return -1;
+}
+
+int dialogButtons(string buttons) {
+    if (buttons == "ok") { return 0; }
+    if (buttons == "okcancel") { return 1; }
+    if (buttons == "yesno") { return 2; }
+    return -1;
+}
+
+// (a struct is decoded in the file that declares it: other files call this)
+DialogArgs readDialogArgs(Item args) {
+    return decodeDialogArgs(args);
+}
+
+// (a struct is decoded in the file that declares it: other files call this)
+MessageArgs readMessageArgs(Item args) {
+    return decodeMessageArgs(args);
+}

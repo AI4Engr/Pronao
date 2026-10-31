@@ -7,6 +7,7 @@
 set -uo pipefail
 T0=$(date +%s)
 cd "$1"
+. ./modules.sh                 # (copied here by run_sanitizers.sh: the list of src/ modules)
 EXPECTED=295
 EXPECTED_FILES=131
 EXPECTED_PROGRAMS=15
@@ -19,7 +20,7 @@ EXPECTED_NOTIFY=33
 EXPECTED_LAYOUT=32
 ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g -O1"
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
-LIBS="cjson_item cjson_api cjson_parse cjson_print text core files assets settings links placement menu app embedded"
+LIBS="cjson_item cjson_api cjson_parse cjson_print $APP_MODULES embedded"
 EXPECTED_SITE=38
 MAXPAR="${MAXPAR:-8}"
 mkdir -p sec

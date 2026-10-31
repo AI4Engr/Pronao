@@ -22,7 +22,8 @@ MAIN="$1"; OUT="$2"; MODE="${3:-window}"
 WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
-MODULES="text core files assets settings links placement menu app"
+. "$HERE/scripts/modules.sh"
+MODULES="$APP_MODULES"
 # EXTRA: more modules (paths to .clg files, space separated) that sit between the library and the main program
 EXTRA_NAMES=""
 for x in ${EXTRA:-}; do EXTRA_NAMES="$EXTRA_NAMES $(basename "$x" .clg)"; done
@@ -85,6 +86,10 @@ transpile() { # module
     fi
 }
 ALL_MODULES="cjson_item cjson_api cjson_parse cjson_print $MODULES $EXTRA_NAMES $MAIN_NAME"
+# The modules of src/ are compiled one by one, and CeeLing chooses unique_ptr or shared_ptr per file: what one module needs shared from a class that another one declares is
+# worked out first (scripts/pointer_demands.sh) and every file, the program's own included, is then compiled knowing it. Needs a compiler with --ptr-demands.
+JOBS="$JOBS" bash "$HERE/scripts/pointer_demands.sh" "$CLING" "$WORK" "$CLING_FLAGS" "$MODULES" || exit 1
+CLING_FLAGS="$CLING_FLAGS --ptr-demands $WORK/demands.txt"
 for f in $ALL_MODULES; do spawn transpile "$f"; done
 finish
 HKEY="$(cat "$WORK"/*.h | md5sum | cut -d' ' -f1)"

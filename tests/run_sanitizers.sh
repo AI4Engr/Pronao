@@ -28,9 +28,13 @@ for variant in work work_pool; do
     flags=""; [ "$variant" = "work_pool" ] && flags="--pool-shared"
     mkdir -p "$BASE/$variant"
     for f in cjson_item cjson_api cjson_parse cjson_print; do cp "$CJSON/src/$f.clg" "$BASE/$variant/"; done
-    for f in text core files assets settings links placement menu app; do cp "$HERE/src/$f.clg" "$BASE/$variant/"; done
+    . "$HERE/scripts/modules.sh"
+    for f in $APP_MODULES; do cp "$HERE/src/$f.clg" "$BASE/$variant/"; done
     for m in $MAINS; do cp "$HERE/tests/$m.clg" "$BASE/$variant/"; done
-    for f in cjson_item cjson_api cjson_parse cjson_print text core files assets settings links placement menu app $MAINS; do
+    # the modules are compiled one by one: what they need from each other's classes is worked out first (as scripts/build.sh does)
+    bash "$HERE/scripts/pointer_demands.sh" "$CLING" "$BASE/$variant" "$flags" "$APP_MODULES" || { echo "POINTER DEMANDS FAILED: $variant"; exit 1; }
+    flags="$flags --ptr-demands $BASE/$variant/demands.txt"
+    for f in cjson_item cjson_api cjson_parse cjson_print $APP_MODULES $MAINS; do
         "$CLING" $flags --cpp "$BASE/$variant/$f.cpp" "$BASE/$variant/$f.clg" > "$BASE/$variant/$f.log" 2>&1 || { grep -v Detected "$BASE/$variant/$f.log"; echo "TRANSPILE FAILED: $variant/$f"; exit 1; }
         case " $MAINS " in *" $f "*) ;; *) "$CLING" $flags --cpp "$BASE/$variant/$f.h" "$BASE/$variant/$f.clg" >> "$BASE/$variant/$f.log" 2>&1 || { echo "TRANSPILE FAILED (header): $variant/$f"; exit 1; } ;; esac
     done
@@ -91,7 +95,7 @@ for p in glob.glob(sys.argv[1] + "/*.cpp"):
 assert n > 0, "no generated file carries the Channel template"
 PYEOF
 [ $? -eq 0 ] || { echo "NEGATIVE CONTROL 3 SETUP FAILED"; exit 1; }
-cp "$HERE/tests/wsl_run.sh" "$BASE/"
+cp "$HERE/tests/wsl_run.sh" "$HERE/scripts/modules.sh" "$BASE/"
 
 if command -v cygpath >/dev/null 2>&1; then
     # Windows: the sanitizer half runs in WSL, which reaches the folder as /mnt/<drive>/... (asked of WSL itself, so any drive works)

@@ -36,8 +36,11 @@ control_run() { # name  file (relative to src/, or shim/...)  old  new  program 
 import sys
 p, old, new = sys.argv[1:4]
 s = open(p, encoding='utf-8', newline='').read()
+crlf = '\r\n' in s                                  # (a checkout may have CRLF line ends: compare with LF, write back the original ends)
+s = s.replace('\r\n', '\n')
 assert s.count(old) == 1, (old, s.count(old))
-open(p, 'w', encoding='utf-8', newline='').write(s.replace(old, new))
+s = s.replace(old, new)
+open(p, 'w', encoding='utf-8', newline='').write(s.replace('\n', '\r\n') if crlf else s)
 PYEOF
     local extra=""
     [ "$5" = "tauriport_main" ] && extra="$HERE/tests/support.clg $dir/src/tauriport.clg"
@@ -55,37 +58,37 @@ PYEOF
 control "final-path check" files.clg 'if (!allowedFinal(o.fin)) {' 'if (false) {' files_main "through a link that leads out"
 control "root-itself guard on remove" files.clg 'if (isRootItself(o.fin)) {' 'if (false) {' files_main "remove the allowed folder itself"
 control "a file grant stays exact" files.clg '            return addGrant(o.fin, 1);' '            return addGrant(parentOf(o.fin), 0);' files_main "its neighbour is not"
-control "permission re-check before a watch delivers" app.clg 'if (now.status != 0 || now.text != s.root) {' 'if (false) {' headless_main "withdrawing the permission ends the watch"
+control "permission re-check before a watch delivers" watches.clg 'if (now.status != 0 || now.text != s.root) {' 'if (false) {' headless_main "withdrawing the permission ends the watch"
 control "a dialog pick must be granted" app.clg 'g = gate.grantFile(f[3]);' 'g = new FsResult(0, f[3]);' headless_main "the picked file is now readable"
 control "program name check" app.clg 'if (!programNameOk(name) || programs.indexOf(name) >= 0 || elements.size() > 64) {' 'if (programs.indexOf(name) >= 0 || elements.size() > 64) {' headless_main "a name with a space is refused"
 control "watch limit" app.clg 'if (owner.watches.states.size() >= 32) {' 'if (false) {' headless_main "at most 32 folders"
-control "dialog title check" app.clg 'if (!plainText(title, 200)) {' 'if (false) {' headless_main "an over-long title is refused"
+control "dialog title check" dialogs.clg 'if (!plainText(title, 200)) {' 'if (false) {' headless_main "an over-long title is refused"
 control "a call is answered once" shim/queue.h '    bool answer(const std::string& id) { std::lock_guard<std::mutex> l(m_); return pending_.erase(id) > 0; }' '    bool answer(const std::string& id) { return true; }' headless_main "and nothing else arrives"
-control "a window command list" app.clg '        if (!defaultRestricted) {' '        if (true) {' headless_main "a registered command that is not listed is forbidden"
-control "dev server must be loopback" app.clg '    if (host != "localhost" && host != "127.0.0.1" && host != "[::1]") {' '    if (false) {' headless_main "another host is refused"
-control "pending calls are told apart by window" app.clg '            if (ids[i] == id && handles[i] == handle) {' '            if (ids[i] == id) {' headless_main "a record for window b settles b's pending call only"
-control "cancel tags are told apart by window" app.clg '            if (tags[i] == tag && tagHandles[i] == handle) {' '            if (tags[i] == tag) {' headless_main "and leaves a's call with the same tag and id running"
-control "a window own command list" app.clg '        if (own) {' '        if (false) {' headless_main "it then calls what its own list allows"
-control "a run is vetted before the native runner" app.clg '    if (!toolRunOk(run)) {' '    if (false) {' headless_main "runTool refuses what is not fit, without starting anything"
-control "a relative program is not fit to run" app.clg '    if (!exeAbsolute || !cwdAbsolute || !plainText(exe, 32000) || !plainText(cwd, 32000)) {' '    if (!plainText(exe, 32000) || !plainText(cwd, 32000)) {' headless_main "a relative program is not"
+control "a window command list" dispatch.clg '        if (!defaultRestricted) {' '        if (true) {' headless_main "a registered command that is not listed is forbidden"
+control "dev server must be loopback" windows.clg '    if (host != "localhost" && host != "127.0.0.1" && host != "[::1]") {' '    if (false) {' headless_main "another host is refused"
+control "pending calls are told apart by window" later.clg '            if (ids[i] == id && handles[i] == handle) {' '            if (ids[i] == id) {' headless_main "a record for window b settles b's pending call only"
+control "cancel tags are told apart by window" dispatch.clg '            if (tags[i] == tag && tagHandles[i] == handle) {' '            if (tags[i] == tag) {' headless_main "and leaves a's call with the same tag and id running"
+control "a window own command list" dispatch.clg '        if (own) {' '        if (false) {' headless_main "it then calls what its own list allows"
+control "a run is vetted before the native runner" programs.clg '    if (!toolRunOk(run)) {' '    if (false) {' headless_main "runTool refuses what is not fit, without starting anything"
+control "a relative program is not fit to run" programs.clg '    if (!exeAbsolute || !cwdAbsolute || !plainText(exe, 32000) || !plainText(cwd, 32000)) {' '    if (!plainText(exe, 32000) || !plainText(cwd, 32000)) {' headless_main "a relative program is not"
 control "a site origin is vetted" assets.clg ' || endsWithText(origin, "/")) {' ') {' site_main "an origin with a trailing slash is refused"
 control "request size limit" shim/queue.h '        if (static_cast<int>(request.size()) > max_request) return 1;' '' headless_main "a call over the size limit is refused"
 control "queue length limit" shim/queue.h '        if (static_cast<int>(q_.size()) >= max_queued) return 2;' '        if (false) return 2;' headless_main "with 3 waiting"
 control "ids a page cannot have" shim/queue.h '        if (id.empty() || id.size() > 64) return 3;' '' headless_main "an id the page could not have been given"
-control "environment is withheld" app.clg 'splitOn("PATH,SystemRoot,' 'splitOn("APP_CLING_SECRET,PATH,SystemRoot,' headless_main "a variable of this process is not passed"
+control "environment is withheld" programs.clg 'splitOn("PATH,SystemRoot,' 'splitOn("APP_CLING_SECRET,PATH,SystemRoot,' headless_main "a variable of this process is not passed"
 control "asset names are vetted" assets.clg '        if (part.length() == 0 || part == "." || part == "..") {' '        if (false) {' site_main "names it may not"
 control "the origin boundary" shim/assets.h "(url.size() > origin_.size() && url[origin_.size()] != '/' && url[origin_.size()] != '?' && url[origin_.size()] != '#')" "false" site_main "another origin is left to the network"
 control "unknown addresses are 404" shim/assets.h '        if (it == items_.end()) { status = 404;' '        if (it == items_.end()) { return false; status = 404;' site_main "an unknown address is a 404"
-control "a window in full screen is not moved" app.clg '        if (now.size() != 5 || (now[4] / 4) % 2 == 1) {' '        if (now.size() != 5) {' layout_main "a window in full screen is not moved"
-control "a place is fitted to the monitors" app.clg '        std::vector<int> fit = fitToMonitors(x, y, width, height, monitorList());' '        std::vector<int> fit; fit.push_back(x); fit.push_back(y); fit.push_back(width); fit.push_back(height);' layout_main "and fits one that does not: moved in, made smaller"
-control "an edge must be one of eight" app.clg '        if (code == 0) {' '        if (false) {' layout_main "an edge that is not one is refused"
+control "a window in full screen is not moved" windows.clg '        if (now.size() != 5 || (now[4] / 4) % 2 == 1) {' '        if (now.size() != 5) {' layout_main "a window in full screen is not moved"
+control "a place is fitted to the monitors" windows.clg '        std::vector<int> fit = fitToMonitors(x, y, width, height, monitorList());' '        std::vector<int> fit; fit.push_back(x); fit.push_back(y); fit.push_back(width); fit.push_back(height);' layout_main "and fits one that does not: moved in, made smaller"
+control "an edge must be one of eight" windows.clg '        if (code == 0) {' '        if (false) {' layout_main "an edge that is not one is refused"
 control "full screen is offered only when asked for" app.clg '        if (fullscreen) {' '        if (true) {' layout_main "full screen and always on top are not offered unless asked for"
 control "the position a page asks for is sane" app.clg '            if (x.valuedouble < -32000.0 || x.valuedouble > 32000.0 || y.valuedouble < -32000.0 || y.valuedouble > 32000.0) {' '            if (false) {' layout_main "and sane ones"
 control "a modal window disables its opener" app.clg '                child.setModalFor(opener);' '' layout_main "the new window is modal for the page that opened it"
-control "notifications are rate limited" app.clg '        if (now - lastMs < gapMs) {' '        if (false) {' notify_main "a second one at once is held back"
-control "a notification title is limited" app.clg '        if (title.length() == 0 || !cleanText(title, 63, false)) {' '        if (title.length() == 0) {' notify_main "a title is 1 to 63 bytes on one line"
-control "a notification has no control characters" app.clg '            if ((c >= 0 && c < 32 && !(lines && c == 10)) || c == 127) {' '            if (false) {' notify_main "no control characters"
-control "a notification id is a name" app.clg '        if (id.length() > 0 && !menuId(id)) {
+control "notifications are rate limited" notify.clg '        if (now - lastMs < gapMs) {' '        if (false) {' notify_main "a second one at once is held back"
+control "a notification title is limited" notify.clg '        if (title.length() == 0 || !cleanText(title, 63, false)) {' '        if (title.length() == 0) {' notify_main "a title is 1 to 63 bytes on one line"
+control "a notification has no control characters" notify.clg '            if ((c >= 0 && c < 32 && !(lines && c == 10)) || c == 127) {' '            if (false) {' notify_main "no control characters"
+control "a notification id is a name" notify.clg '        if (id.length() > 0 && !menuId(id)) {
             return "invalid_argument: `id`' '        if (false) {
             return "invalid_argument: `id`' notify_main "the id is a name"
 control "a click on a window is not a notification click" app.clg '        if (trayIndex(from) < 0 || (id.length() > 0 && !menuId(id))) {' '        if (id.length() > 0 && !menuId(id)) {' notify_main "a notify record on a window is ignored"
@@ -100,7 +103,7 @@ control "the close button hides a window that asked for it" app.clg '        if 
 control "a tray tooltip has a limit" app.clg '        if (!plainText(tooltip, 127) || tooltip.length() == 0 || !popup.complete() || trays.size() >= 4) {' '        if (tooltip.length() == 0 || !popup.complete() || trays.size() >= 4) {' menu_main "a tooltip is at most 127 bytes"
 control "a program with a tray ends on quit" app.clg '                    if (windows.count() == 0 && (!stayWithoutWindows || quitCalled)) {' '                    if (windows.count() == 0) {' menu_main "with no window the loop goes on"
 control "a click must name an item the menu has" app.clg '        if (w == nullptr || !(w.menuItemEnabled(id) || popups.hasItem(id))) {' '        if (w == nullptr) {' menu_main "an id the menu does not have does nothing"
-control "a greyed item cannot be clicked" app.clg '        return (kind == "i" || kind == "c") && (menu.flags[i] / 2) % 2 == 0;' '        return kind == "i" || kind == "c";' menu_main "a greyed item does nothing"
+control "a greyed item cannot be clicked" windows.clg '        return (kind == "i" || kind == "c") && (menu.flags[i] / 2) % 2 == 0;' '        return kind == "i" || kind == "c";' menu_main "a greyed item does nothing"
 control "a menu id is used once" menu.clg '        if (known(id)) {' '        if (false) {' menu_main "the same id again is refused and nothing is added"
 control "a shortcut that types into a page needs a modifier" menu.clg '    if (!functionKey && !commandKey) {' '    if (false) {' menu_main "a key that types into a page needs Ctrl or Alt"
 control "a label has at most one mnemonic" menu.clg '    return marks <= 1;' '    return true;' menu_main "menu labels"

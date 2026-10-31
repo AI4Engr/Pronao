@@ -1,0 +1,117 @@
+// app-cling -- Helpers of the file commands (fs.read, fs.write, ...): status numbers to error codes, the shape of a directory entry, what a dialog filter extension or a
+// proposed file name may look like, and the write modes. The policy itself is FileGate (files.clg).
+
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+
+// ---- file commands --------------------------------------------------------------------------------
+// The allowed folders and every check on a path live in FileGate (files.clg), which decides on what the operating system
+// actually opened. These helpers only map its status codes to error codes and shape the JSON.
+
+string fsCodeFor(int status) {
+    if (status == 1) { return "forbidden"; }
+    if (status == 2) { return "not_found"; }
+    if (status == 3) { return "too_large"; }
+    if (status == 5) { return "invalid_path"; }
+    if (status == 6) { return "already_exists"; }
+    if (status == 7) { return "not_empty"; }
+    if (status == 8) { return "is_directory"; }
+    if (status == 9) { return "not_directory"; }
+    if (status == 10) { return "permission_denied"; }
+    if (status == 11) { return "too_many"; }
+    return "io_error";
+}
+
+void fsCheck(int status, string what) {
+    if (status != 0) {
+        string message = fsCodeFor(status) + ": " + what;
+        throw message;
+    }
+}
+
+string kindName(string code) {
+    if (code == "d") { return "dir"; }
+    if (code == "l") { return "link"; }
+    return "file";
+}
+
+// {name, kind: "file" | "dir" | "link", size, modified (seconds since 1970)}
+Item entryItem(string kind, string size, string modified, string name) {
+    Item e = createObject();
+    addStringToObject(e, "name", name);
+    addStringToObject(e, "kind", kindName(kind));
+    addNumberToObject(e, "size", decimalValue(size));
+    addNumberToObject(e, "modified", decimalValue(modified));
+    return e;
+}
+
+// ---- dialog commands ------------------------------------------------------------------------------
+// The user's choice in a native dialog is a grant: exactly the file (or folder) they picked becomes reachable through
+// the file commands, and nothing around it. A page cannot reach a file it has not been given, by the app or by the
+// user; and a dialog is the only way the user can give one. What a dialog may say is decided here: the native layer shows
+// whatever it is handed.
+
+bool extensionOk(string e) {
+    if (e.length() == 0 || e.length() > 16) {
+        return false;
+    }
+    int i = 0;
+    while (i < e.length()) {
+        char c = e[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (!ok) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// a file name with no folder in it and none of the characters Windows refuses
+bool plainFileName(string name) {
+    if (name.length() == 0 || !plainText(name, 200) || name == "." || name == "..") {
+        return false;
+    }
+    int i = 0;
+    while (i < name.length()) {
+        char c = name[i];
+        if (int(c) >= 0 && int(c) < 32) {
+            return false;
+        }
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// "replace" (default), "append" or "create" as the numbers FileGate.write takes
+int writeMode(Item args) {
+    string mode = optionalString(args, "mode", "replace");
+    if (mode == "append") {
+        return 1;
+    }
+    if (mode == "create") {
+        return 2;
+    }
+    if (mode != "replace") {
+        throw "invalid_argument: `mode` must be \"replace\", \"append\" or \"create\"";
+    }
+    return 0;
+}
+
+// the folders above `path` that do not exist yet (inside an allowed place, like everything else)
+void makeParents(FileGate files, string path) {
+    FsResult n = files.normalize(path, true, true);
+    fsCheck(n.status, "cannot write " + path);
+    int st = files.mkdir(files.parentOf(n.text), true);
+    if (st != 6) {
+        fsCheck(st, "cannot create the folder for " + path);
+    }
+}

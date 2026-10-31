@@ -1,0 +1,124 @@
+// app-cling -- Answers that come later: a worker hands a result to the main thread (Later, LaterBook, finishLater) or asks it to do something only it may (Pump, PumpBook, wakeMain).
+
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+
+ext_fn int app_push(int handle, string id, string request, int maxQueued);
+
+// ---- background work whose last step needs the main thread -----------------------------------------------------------
+// The file policy (FileGate) and every other piece of state belongs to the main thread, so a worker that has to read or write a file
+// after its program has finished cannot do it itself. It sends the main loop a record instead: finishLater(handle, id, status, text).
+// The command registered a `Later` for that page call (App.later); the main loop runs its `done` with the worker's result.
+class Later {
+public:
+    Later() { }
+    virtual void done(int handle, string id, int status, string payload) { }
+};
+
+class LaterBook {
+public:
+    std::vector<int> handles;      // the window each call came from: a call id is only unique within its window
+    std::vector<string> ids;
+    std::vector<Later> items;
+    LaterBook() { }
+    int indexOf(int handle, string id) {
+        int i = 0;
+        while (i < ids.size()) {
+            if (ids[i] == id && handles[i] == handle) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+    void drop(int index) {
+        int last = ids.size() - 1;
+        if (index != last) {
+            handles[index] = handles[last];
+            ids[index] = ids[last];
+            items[index] = items[last];
+        }
+        handles.pop_back();
+        ids.pop_back();
+        items.pop_back();
+    }
+    // A window is gone: the calls it was still waiting for are forgotten.
+    void forgetWindow(int handle) {
+        int i = ids.size() - 1;
+        while (i >= 0) {
+            if (handles[i] == handle) {
+                drop(i);
+            }
+            i = i - 1;
+        }
+    }
+};
+
+// Runs on the worker: status 0 means `payload` is the JSON for the page, anything else means it is "code: message".
+void finishLater(int handle, string id, int status, string payload) {
+    string record = "later";
+    record.push_back(char(0));
+    record = record + id;
+    record.push_back(char(0));
+    record = record + intToString(status);
+    record.push_back(char(0));
+    record = record + payload;
+    record.push_back(char(0));
+    if (app_push(handle, "", record, 100000) != 1) {
+        replyError(handle, id, "busy", "the application is not keeping up");
+    }
+}
+
+// ---- work that goes through a Channel and needs the main thread ----------------------------------------------------------
+// A worker that needs something only the main thread may do (read a file through the file policy, say) sends a request on a Channel<T>
+// and waits for the answer on another; the main thread answers from a pump. The main loop sleeps in its own queue, so a send on a
+// Channel does not wake it: the worker calls wakeMain(handle, name) after sending, and the loop runs the pump registered under that name
+// (App.onPump), which drains the channel:
+//
+//     Channel<Job> toMain;                                    // struct Job { string path; Channel<string> reply; ... }
+//     app.onPump("files", closure Pump [toMain] (FileGate gate) {
+//         while (toMain.wait(0)) {                           // poll: never wait on the main thread
+//             Job j = toMain.take();
+//             j.reply.send(gate.read(j.path, 1048576).text);
+//         }
+//     });
+//     // in a worker (spawn): toMain.send(new Job(path, reply)); wakeMain(handle, "files"); reply.wait(5000) ...
+//
+// A pump must not throw (there is no page call to reject; the error is dropped) and must not wait: it runs on the thread that serves the window.
+class Pump {
+public:
+    Pump() { }
+    virtual void pump(FileGate gate) { }
+};
+
+class PumpBook {
+public:
+    std::vector<string> names;
+    std::vector<Pump> items;
+    PumpBook() { }
+    int indexOf(string name) {
+        int i = 0;
+        while (i < names.size()) {
+            if (names[i] == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+};
+
+// Runs on a worker: asks the main loop to run the pump called `name`. false if the main loop's queue is full (the pump will run on the next
+// wake, so a worker that must not stall should wake again later).
+bool wakeMain(int handle, string name) {
+    string record = "pump";
+    record.push_back(char(0));
+    record = record + name;
+    record.push_back(char(0));
+    return app_push(handle, "", record, 100000) == 1;
+}

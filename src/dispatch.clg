@@ -1,0 +1,433 @@
+// app-cling -- How a call from a page is answered: who is calling (CallContext), which commands a window may call (CommandRules) and the Dispatcher that parses a request,
+// checks it, runs the command and turns what it throws into {code, message}.
+
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+
+ext_fn int app_cancel(int handle, string call);
+ext_fn int app_pending(int handle, string call);
+ext_fn double app_now_ms();
+
+// Which window is calling right now: set by the Dispatcher around a synchronous command (0 outside one). A command that acts on "its" window
+// holds this object and reads `handle`.
+class CallContext {
+public:
+    int handle;
+    CallContext() {
+        handle = 0;
+    }
+};
+
+// The commands each window's page may call. The default list (once restrictAll has been used; before that: every registered command) applies
+// to every window without a list of its own; restrictWindow gives one window its own. Anything else is answered {code: "forbidden"}, whether or not
+// such a command exists, so the page cannot probe for names. `known` is every registered command name.
+class CommandRules {
+public:
+    std::vector<string> known;
+    bool defaultRestricted;
+    std::vector<string> defaultNames;
+    std::vector<int> restrictedHandles;
+    std::vector<int> ruleHandles;
+    std::vector<string> ruleNames;
+
+    CommandRules() {
+        defaultRestricted = false;
+    }
+
+    bool hasCommand(string name) {
+        int i = 0;
+        while (i < known.size()) {
+            if (known[i] == name) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    bool mayCall(int handle, string name) {
+        bool own = false;
+        int i = 0;
+        while (i < restrictedHandles.size()) {
+            if (restrictedHandles[i] == handle) {
+                own = true;
+            }
+            i = i + 1;
+        }
+        if (own) {
+            int r = 0;
+            while (r < ruleNames.size()) {
+                if (ruleHandles[r] == handle && ruleNames[r] == name) {
+                    return true;
+                }
+                r = r + 1;
+            }
+            return false;
+        }
+        if (!defaultRestricted) {
+            return true;
+        }
+        int d = 0;
+        while (d < defaultNames.size()) {
+            if (defaultNames[d] == name) {
+                return true;
+            }
+            d = d + 1;
+        }
+        return false;
+    }
+
+    // A window opened by another one starts with the opener's own list, if it has one (the default list applies to it anyway).
+    void inheritRules(int from, int to) {
+        bool own = false;
+        int i = 0;
+        while (i < restrictedHandles.size()) {
+            if (restrictedHandles[i] == from) {
+                own = true;
+            }
+            i = i + 1;
+        }
+        if (!own) {
+            return;
+        }
+        std::vector<string> names;
+        int r = 0;
+        while (r < ruleNames.size()) {
+            if (ruleHandles[r] == from) {
+                names.push_back(ruleNames[r]);
+            }
+            r = r + 1;
+        }
+        restrictWindow(to, names);
+    }
+
+    void restrictAll(std::vector<string> names) {
+        defaultNames = names;
+        defaultRestricted = true;
+    }
+
+    void restrictWindow(int handle, std::vector<string> names) {
+        forgetRules(handle);
+        restrictedHandles.push_back(handle);
+        int i = 0;
+        while (i < names.size()) {
+            ruleHandles.push_back(handle);
+            ruleNames.push_back(names[i]);
+            i = i + 1;
+        }
+    }
+
+    void forgetRules(int handle) {
+        int i = restrictedHandles.size() - 1;
+        while (i >= 0) {
+            if (restrictedHandles[i] == handle) {
+                restrictedHandles[i] = restrictedHandles[restrictedHandles.size() - 1];
+                restrictedHandles.pop_back();
+            }
+            i = i - 1;
+        }
+        int r = ruleNames.size() - 1;
+        while (r >= 0) {
+            if (ruleHandles[r] == handle) {
+                int last = ruleNames.size() - 1;
+                ruleHandles[r] = ruleHandles[last];
+                ruleNames[r] = ruleNames[last];
+                ruleHandles.pop_back();
+                ruleNames.pop_back();
+            }
+            r = r - 1;
+        }
+    }
+
+};
+
+class Dispatcher {
+public:
+    std::vector<string> names;
+    std::vector<Command> handlers;
+    std::vector<string> asyncNames;
+    std::vector<AsyncCommand> asyncHandlers;
+    // How long the page waits for an async command before it is answered {code: "timed_out"} (0 = as long as it takes), per command name
+    // with a default for the rest, and the calls that are waiting against their deadline.
+    std::vector<string> timeoutNames;
+    std::vector<int> timeoutValues;
+    int defaultTimeoutMs;
+    std::vector<string> dueIds;
+    std::vector<int> dueHandles;       // (a page's call ids are only unique within its window: every table of calls is keyed by window AND id)
+    std::vector<double> dueAt;
+    // The tag a page gave an async call (cling.invoke(..., {signal})) and the call it names, newest last, at most 256 of them.
+    std::vector<string> tags;
+    std::vector<int> tagHandles;
+    std::vector<string> tagCalls;
+
+    // Which commands each window's page may call (see CommandRules), and which window's synchronous command is running right now (see
+    // CallContext). Both are separate objects so that the commands, which are owned by this Dispatcher, can hold them without pointing back at it.
+    CommandRules rules;
+    CallContext caller;
+
+    Dispatcher() {
+        defaultTimeoutMs = 0;
+        rules = new CommandRules();
+        caller = new CallContext();
+    }
+
+    // A window is gone: its list, its tags and its deadlines go with it.
+    void forgetWindow(int handle) {
+        rules.forgetRules(handle);
+        int t = tags.size() - 1;
+        while (t >= 0) {
+            if (tagHandles[t] == handle) {
+                int k = t;
+                while (k + 1 < tags.size()) {
+                    tags[k] = tags[k + 1];
+                    tagHandles[k] = tagHandles[k + 1];
+                    tagCalls[k] = tagCalls[k + 1];
+                    k = k + 1;
+                }
+                tags.pop_back();
+                tagHandles.pop_back();
+                tagCalls.pop_back();
+            }
+            t = t - 1;
+        }
+        int d = dueIds.size() - 1;
+        while (d >= 0) {
+            if (dueHandles[d] == handle) {
+                dropDue(d);
+            }
+            d = d - 1;
+        }
+    }
+
+    int timeoutFor(string name) {
+        int i = 0;
+        while (i < timeoutNames.size()) {
+            if (timeoutNames[i] == name) {
+                return timeoutValues[i];
+            }
+            i = i + 1;
+        }
+        return defaultTimeoutMs;
+    }
+
+    void setTimeout(string name, int ms) {
+        int i = 0;
+        while (i < timeoutNames.size()) {
+            if (timeoutNames[i] == name) {
+                timeoutValues[i] = ms;
+                return;
+            }
+            i = i + 1;
+        }
+        timeoutNames.push_back(name);
+        timeoutValues.push_back(ms);
+    }
+
+    void rememberTag(int handle, string tag, string call) {
+        if (tags.size() >= 256) {
+            int i = 0;
+            while (i + 1 < tags.size()) {
+                tags[i] = tags[i + 1];
+                tagHandles[i] = tagHandles[i + 1];
+                tagCalls[i] = tagCalls[i + 1];
+                i = i + 1;
+            }
+            tags.pop_back();
+            tagHandles.pop_back();
+            tagCalls.pop_back();
+        }
+        tags.push_back(tag);
+        tagHandles.push_back(handle);
+        tagCalls.push_back(call);
+    }
+
+    // The page abandons the call it tagged: the work is told to stop. Unknown or finished tags are ignored, and a tag only names a call of the
+    // window that sent it.
+    void cancelTag(int handle, string tag) {
+        int i = 0;
+        while (i < tags.size()) {
+            if (tags[i] == tag && tagHandles[i] == handle) {
+                app_cancel(handle, tagCalls[i]);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    void dropDue(int index) {
+        int last = dueIds.size() - 1;
+        if (index != last) {
+            dueIds[index] = dueIds[last];
+            dueHandles[index] = dueHandles[last];
+            dueAt[index] = dueAt[last];
+        }
+        dueIds.pop_back();
+        dueHandles.pop_back();
+        dueAt.pop_back();
+    }
+
+    // Answers every call whose time is up {code: "timed_out"} and tells the work to stop (callCancelled, and a program it started is
+    // killed). A call that was answered meanwhile is just forgotten; the late answer of a job that kept going is dropped by the shim
+    // (a page call is answered once).
+    void sweep() {
+        double now = app_now_ms();
+        int i = dueIds.size() - 1;
+        while (i >= 0) {
+            string id = dueIds[i];
+            int handle = dueHandles[i];
+            if (app_pending(handle, id) == 0) {
+                dropDue(i);
+            } else if (now >= dueAt[i]) {
+                replyError(handle, id, "timed_out", "the command took longer than the application allows");
+                app_cancel(handle, id);      // (after the reply: replying forgets a cancel; the job's own late reply forgets this one)
+                dropDue(i);
+            }
+            i = i - 1;
+        }
+    }
+
+    // Milliseconds until the first deadline, or -1 if no call is waiting against one.
+    int nextDueMs() {
+        if (dueAt.size() == 0) {
+            return -1;
+        }
+        double now = app_now_ms();
+        double first = dueAt[0];
+        int i = 1;
+        while (i < dueAt.size()) {
+            if (dueAt[i] < first) {
+                first = dueAt[i];
+            }
+            i = i + 1;
+        }
+        if (first <= now) {
+            return 0;
+        }
+        return int(first - now);
+    }
+
+    void add(string name, Command handler) {
+        names.push_back(name);
+        handlers.push_back(handler);
+        rules.known.push_back(name);
+    }
+
+    void addAsync(string name, AsyncCommand handler) {
+        asyncNames.push_back(name);
+        asyncHandlers.push_back(handler);
+        rules.known.push_back(name);
+    }
+
+    // The index of the async command called `name`, or -1.
+    int indexOfAsync(string name) {
+        int i = 0;
+        while (i < asyncNames.size()) {
+            if (asyncNames[i] == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // The index of the command called `name`, or -1.
+    int indexOf(string name) {
+        int i = 0;
+        while (i < names.size()) {
+            if (names[i] == name) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // One request in, one reply out. Never throws and never aborts on a malformed request: a bad
+    // request is a rejected promise, not a dead application. For an async command the reply has status 2
+    // ("deferred"): nothing is sent now, the worker answers later.
+    Reply handle(int appHandle, string id, string request) {
+        Item parsed = parse(request);
+        if (parsed == nullptr) {
+            return new Reply(1, errorJson("bad_request", "the request is not valid JSON"));
+        }
+        if (!isArray(parsed) || getArraySize(parsed) < 1) {
+            return new Reply(1, errorJson("bad_request", "the request must be a JSON array [command, args]"));
+        }
+        Item nameItem = getArrayItem(parsed, 0);
+        if (!isString(nameItem)) {
+            return new Reply(1, errorJson("bad_request", "the command name must be a string"));
+        }
+        if (nameItem.valuestring == "$cancel") {
+            Item which = getArrayItem(parsed, 1);
+            if (which != nullptr && isString(which) && which.valuestring.length() <= 64) {
+                cancelTag(appHandle, which.valuestring);
+            }
+            return new Reply(0, "null");
+        }
+        string tag = "";
+        Item tagItem = getArrayItem(parsed, 2);
+        if (tagItem != nullptr && isString(tagItem) && tagItem.valuestring.length() <= 64) {
+            tag = tagItem.valuestring;
+        }
+        if (!rules.mayCall(appHandle, nameItem.valuestring)) {
+            return new Reply(1, errorJson("forbidden", "this window may not call that command"));
+        }
+        int index = indexOf(nameItem.valuestring);
+        int asyncIndex = indexOfAsync(nameItem.valuestring);
+        if (index < 0 && asyncIndex < 0) {
+            return new Reply(1, errorJson("unknown_command", "no command named " + nameItem.valuestring));
+        }
+        Item args = getArrayItem(parsed, 1);
+        if (args == nullptr) {
+            args = createNull();
+        }
+        if (index < 0) {
+            try {
+                AsyncCommand starter = asyncHandlers[asyncIndex];
+                // every job this start() spawns inherits this: a throw inside it rejects the page's promise
+                onJobFailure(closure Failure [id, appHandle] (string message) {
+                    replyError(appHandle, id, errorCodeOf(message), errorTextOf(message));
+                });
+                starter.start(args, id, appHandle);
+                cling::clearJobFailure();
+                if (tag.length() > 0) {
+                    rememberTag(appHandle, tag, id);
+                }
+                int limitMs = timeoutFor(nameItem.valuestring);
+                if (limitMs > 0) {
+                    dueIds.push_back(id);
+                    dueHandles.push_back(appHandle);
+                    dueAt.push_back(app_now_ms() + double(limitMs));
+                }
+                return new Reply(2, "");
+            } catch (string message) {
+                cling::clearJobFailure();
+                return new Reply(1, errorJson(errorCodeOf(message), errorTextOf(message)));
+            }
+        }
+        try {
+            // (a local first: the checker cannot resolve a method call made directly on `handlers[index]`)
+            Command handler = handlers[index];
+            caller.handle = appHandle;
+            Item result = handler.call(args);
+            caller.handle = 0;
+            if (result == nullptr) {
+                return new Reply(0, "null");
+            }
+            string text = printUnformatted(result);
+            if (text.length() == 0) {
+                return new Reply(1, errorJson("command_failed", "the command returned a value that cannot be printed"));
+            }
+            return new Reply(0, text);
+        } catch (string message) {
+            caller.handle = 0;
+            return new Reply(1, errorJson(errorCodeOf(message), errorTextOf(message)));
+        }
+        return new Reply(1, errorJson("internal", "unreachable"));
+    }
+};

@@ -4,22 +4,22 @@ First version, 2026-10-29. It is meant to grow; see "To add" at the end. Everyth
 numbers come from `scripts/ceeling_stats.sh`, which you can run again.
 
 app-cling is written in CeeLing (the checked language, `src/*.clg`) on top of a small trusted C++ layer (`shim/`). This page is about the first part: what the
-language and its compiler give a real program of about 4,500 lines, and where they got in the way.
+language and its compiler give a real program of about 6,000 lines, and where they got in the way.
 
 ## In numbers
 
-Measured on 2026-10-29 with `scripts/ceeling_stats.sh` after `tests/run_headless.sh`:
+Measured on 2026-10-31 (the app in 17 modules, since the split of `app.clg`; tauriport's column is from 2026-10-29, its file did not change) with `scripts/ceeling_stats.sh` after `tests/run_headless.sh`:
 
 | | app-cling `src/` | tauriport (`examples/tauriport/tauriport.clg`) |
 |---|---|---|
-| CeeLing source (comments and blank lines left out) | 4,458 lines | 771 lines |
+| CeeLing source (comments and blank lines left out) | 6,115 lines | 771 lines |
 | Memory-management words in that source (`delete`, `.get()`, `reinterpret`, `std::move`, `unique_ptr`, `shared_ptr`, `weak_ptr`) | **0** | **0** |
-| Smart pointers the compiler chose and wrote in the generated C++ | 75 `unique_ptr`, 372 `shared_ptr`, 0 `weak_ptr` | 3 `unique_ptr`, 143 `shared_ptr`, 0 `weak_ptr` |
-| `std::move` the compiler inserted | 34 | 28 |
-| Bounds checks the compiler inserted (`cling::at`) | 343 | 62 |
-| Null checks the compiler inserted (`cling::nn`) | 430 | 79 |
-| Closures, of which thread jobs (`spawn`) | 35, of which 6 | 23, of which 9 |
-| `ext_fn` functions: the native surface the checked code can call (different names; a function several files use is declared in each, 52 lines in all) | 48 | 1 |
+| Smart pointers the compiler chose and wrote in the generated C++ | 79 `unique_ptr`, 559 `shared_ptr`, 0 `weak_ptr` | 3 `unique_ptr`, 143 `shared_ptr`, 0 `weak_ptr` |
+| `std::move` the compiler inserted | 59 | 28 |
+| Bounds checks the compiler inserted (`cling::at`) | 508 | 62 |
+| Null checks the compiler inserted (`cling::nn`) | 586 | 79 |
+| Closures, of which thread jobs (`spawn`) | 47, of which 7 | 23, of which 9 |
+| `ext_fn` functions: the native surface the checked code can call (different names; a function several files use is declared in each, 88 lines in all) | 69 | 1 |
 
 tauriport is a port of a Tauri application's backend (a folder under version control with the `lore` tool, shown by a web UI) written on top of app-cling; its column
 counts its own file only, not the app-cling modules it uses. Its single `ext_fn` is an environment-variable lookup. The count of `shared_ptr` is high relative to its size;
@@ -39,10 +39,10 @@ caller both hold it) and writes `std::shared_ptr`; a value only one place owns b
 
 **Every subscript and every object dereference is checked at run time.** `v[i]` is `cling::at(v, i, line)` and `n.field` is `cling::nn(n, line)`; a bad index or an
 empty handle prints the `.clg` line and aborts instead of reading memory. `scripts/build.sh` builds app-cling with both checks on (the opt-out flags exist and are
-not used here). The program has 343 and 430 of them (previous section: what they cost).
+not used here). The program has 508 and 586 of them (previous section: what they cost).
 
-**Threads share nothing but plain values.** The 6 `spawn(closure Job [...])` in `src/app.clg` (the `proc.run` command, the four dialogs, the close
-confirmation) can capture strings, numbers and vectors of them, and structs made of those; the compiler refuses an object. That rule shapes the design:
+**Threads share nothing but plain values.** The 7 `spawn(closure Job [...])` in `src/app.clg` (the `proc.run` command, the four dialogs, the close
+confirmation, the notification) can capture strings, numbers and vectors of them, and structs made of those; the compiler refuses an object. That rule shapes the design:
 - `ToolRun` and `ToolResult` are `struct`s, because they have to travel into a worker;
 - state that belongs to the main thread (the file policy, the window book) stays there, and a worker hands its result back as a record
   (`finishLater`, `Pump` + `wakeMain`) or through a `Channel<T>`, which carries copies of plain values;
@@ -62,8 +62,8 @@ kind of exception, so an error cannot carry a hidden object.
 
 ## Generated decoders for command arguments
 
-`window.open` and the four dialogs do not pick fields out of the JSON by hand. `src/app.clg` declares the shapes as structs (`OpenWindowArgs`, `DialogArgs`, `FilterArgs`,
-`MessageArgs`) and writes `OpenWindowArgs given = decodeOpenWindowArgs(args);`; the compiler writes `decodeOpenWindowArgs` (see CeeLing's `struct_json.cpp`). Each struct has a
+`window.open` and the four dialogs do not pick fields out of the JSON by hand. The shapes are structs (`OpenWindowArgs` in `src/windows.clg`; `DialogArgs`, `FilterArgs`,
+`MessageArgs` in `src/dialogs.clg`; `NotifyArgs` in `src/notify.clg`) and writes `OpenWindowArgs given = decodeOpenWindowArgs(args);`; the compiler writes `decodeOpenWindowArgs` (see CeeLing's `struct_json.cpp`). Each struct has a
 constructor without parameters, which makes every field optional with the constructor's value as the default (`width = 800`). What the decoder checks is the *type*: a field
 of the wrong type is refused with its path, ``invalid_argument: `filters[0].name` must be a string``, and an `int` must be a whole number inside the range of an `int`. What a
 value *means* is still checked by hand next to it (a title is plain text of at most 200 bytes, a width is 200 to 10000, a message is 1 to 4000 bytes).
@@ -98,6 +98,27 @@ These are real, from building app-cling; they are the honest other half of the t
 - **Races the language does not model.** `fs.watch` answered before the operating system was watching; a file changed right away could be lost. Not a memory-safety
   bug, so nothing in CeeLing could have caught it: the test suite did, under load. Checking says "no dangling references, no data races through `spawn` / `Channel`",
   not "correct".
+
+## One program, several files
+
+`src/app.clg` was 3,915 lines in one file; it is now 1,852 lines plus eight modules (`dispatch`, `fscommands`, `dialogs`, `notify`, `programs`, `later`, `watches`,
+`windows`; the list is `scripts/modules.sh`). CeeLing chooses `unique_ptr`, `shared_ptr` or `weak_ptr` **per file**, and a file's header fixes the kind of its
+fields, container elements and method results. The first attempt at the split did not compile: a module that copied an element out of another module's vector needed
+`shared_ptr` where the declaring module, which cannot see that use, had written `unique_ptr`. Three changes fixed it, in the compiler and not by annotating the source:
+- two analyzer rules that were missing (an element copied out of a vector and then swapped or removed; a local initialised from a call that returns a shared object,
+  then returned);
+- **pointer demands**: each module is compiled once to write what it needs from the classes it includes (`--ptr-demands-out`, only members it reaches), the demands of
+  all modules are merged, and every module is compiled again reading them (`--ptr-demands`). A demand can only make a member shared. `scripts/pointer_demands.sh`
+  repeats this until nothing changes (a few rounds); `scripts/build.sh` runs it before it transpiles anything;
+- a module that needs the arguments of a command declared in another module calls a small reader there (`readDialogArgs`, `readMessageArgs`, `readNotifyArgs`,
+  `readOpenWindowArgs`), because a generated decoder `decodeX` may only be called in the file that declares the struct.
+
+**Was the inference kept?** Checked with `scripts/ptr_table.py` against the last commit before the split, compiled with the unmodified compiler: the table of every
+pointer kind in the generated C++ is identical except for four new wrappers (the readers above). The text of every function (line numbers and closure numbers
+normalised) is identical except `Watches::flush`, which no longer copies `s.root` into a temporary `std::string` before passing it to `FileGate.resolve`. The cause: the
+analysis decides whether a callee may modify a string field by matching calls **by name**, so in the 3,915-line program a name shared with some other function made it
+cautious, and in the smaller file it is not. `FileGate.resolve` does not write that field, so the omitted copy is not a behaviour change; it is a difference, and this
+page does not claim there are none beyond the ones the comparison found. The limit of the method: it compares what the compiler wrote, and says nothing about meaning.
 
 ## Where the language got in the way
 

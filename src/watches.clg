@@ -1,0 +1,209 @@
+// app-cling -- Watching folders for a window: the watches a page started, merging of bursts of changes, and the events that go to the page.
+
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+
+ext_fn int app_watch_stop(int handle, int watchId);
+ext_fn double app_now_ms();
+
+// ---- watching folders -----------------------------------------------------------------------------
+// fs.watch {path, recursive?} starts a watch and answers {id}; changes then arrive on the page as "fs.change" events
+//     {watch: id, kind: "created" | "modified" | "removed", path}              path is relative to the watched folder
+//     {watch: id, kind: "renamed", path: newName, from: oldName}
+//     {watch: id, kind: "overflow"}                                              events were lost: read the folder again
+//     {watch: id, kind: "stopped", reason: "closed" | "access_revoked" | "folder_gone" | "failed"}   no more will come
+// The native watcher thread queues one record per change (id empty: a page's own call always has one); this side merges bursts
+// (a program saving a file touches it many times in a few milliseconds), re-checks the permission before every delivery, and
+// ends a watch whose folder can no longer be reached. At most 32 watches at a time.
+
+class WatchEvent {
+public:
+    string kind;
+    string path;
+    string from;
+    WatchEvent(string k, string p, string f) {
+        kind = k;
+        path = p;
+        from = f;
+    }
+};
+
+class WatchState {
+public:
+    int id;
+    string root;                       // canonical, as FileGate.resolve spelled it
+    std::vector<WatchEvent> pending;   // merged, not yet delivered
+    bool overflowed;
+    double firstAt;                    // when the oldest pending event arrived
+    double lastAt;                     // when the newest did
+    WatchState(int watchId, string folder) {
+        id = watchId;
+        root = folder;
+        overflowed = false;
+        firstAt = 0.0;
+        lastAt = 0.0;
+    }
+
+    void clearPending() {
+        while (pending.size() > 0) {
+            pending.pop_back();
+        }
+        overflowed = false;
+    }
+
+    // The same change again straight away, or one more "modified" for a file that already has one, adds nothing.
+    void merge(string kind, string path, string from, double now) {
+        if (pending.size() == 0) {
+            firstAt = now;
+        }
+        lastAt = now;
+        if (kind == "overflow") {
+            overflowed = true;
+            return;
+        }
+        int i = 0;
+        while (i < pending.size()) {
+            WatchEvent e = pending[i];
+            bool same = e.kind == kind && e.path == path && e.from == from;
+            if (same && (kind == "modified" || i == pending.size() - 1)) {
+                return;
+            }
+            i = i + 1;
+        }
+        if (pending.size() >= 500) {
+            overflowed = true;
+            return;
+        }
+        pending.push_back(new WatchEvent(kind, path, from));
+    }
+};
+
+void emitWatchEvent(int handle, int watch, string kind, string path, string from) {
+    if (!isUtf8(path) || !isUtf8(from)) {
+        return;
+    }
+    Item e = createObject();
+    addNumberToObject(e, "watch", double(watch));
+    addStringToObject(e, "kind", kind);
+    if (kind == "stopped") {
+        addStringToObject(e, "reason", path);
+    } else if (kind != "overflow") {
+        addStringToObject(e, "path", path);
+        if (kind == "renamed") {
+            addStringToObject(e, "from", from);
+        }
+    }
+    emitEvent(handle, "fs.change", printUnformatted(e));
+}
+
+// All the watches of a window, with the logic that delivers them.
+class Watches {
+public:
+    std::vector<WatchState> states;
+    Watches() { }
+
+    int indexOf(int id) {
+        int i = 0;
+        while (i < states.size()) {
+            WatchState s = states[i];
+            if (s.id == id) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    // (order does not matter: the last one takes the place of the dropped one)
+    void drop(int index) {
+        int last = states.size() - 1;
+        if (index != last) {
+            states[index] = states[last];
+        }
+        states.pop_back();
+    }
+
+    bool anyPending() {
+        int i = 0;
+        while (i < states.size()) {
+            WatchState s = states[i];
+            if (s.pending.size() > 0 || s.overflowed) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    // Delivers what a watch has merged so far, after checking that the folder can still be reached. If it cannot (the
+    // permission was withdrawn, or the folder is gone) the watch ends: the thread is stopped and "stopped" is the last event.
+    void flush(FileGate gate, int handle, int index) {
+        WatchState s = states[index];
+        FsResult now = gate.resolve(s.root, 2);
+        if (now.status != 0 || now.text != s.root) {
+            string reason = "access_revoked";
+            if (now.status == 2) {
+                reason = "folder_gone";
+            }
+            app_watch_stop(handle, s.id);
+            emitWatchEvent(handle, s.id, "stopped", reason, "");
+            drop(index);
+            return;
+        }
+        int i = 0;
+        while (i < s.pending.size()) {
+            WatchEvent e = s.pending[i];
+            emitWatchEvent(handle, s.id, e.kind, e.path, e.from);
+            i = i + 1;
+        }
+        if (s.overflowed) {
+            emitWatchEvent(handle, s.id, "overflow", "", "");
+        }
+        s.clearPending();
+    }
+
+    // Delivers every watch that has been quiet for 40 ms, or has been collecting for 400 ms.
+    void flushQuiet(FileGate gate, int handle) {
+        double now = app_now_ms();
+        int i = states.size() - 1;
+        while (i >= 0) {
+            WatchState s = states[i];
+            bool some = s.pending.size() > 0 || s.overflowed;
+            if (some && (now - s.lastAt >= 40.0 || now - s.firstAt >= 400.0)) {
+                flush(gate, handle, i);
+            }
+            i = i - 1;
+        }
+    }
+
+    // A record from the native watcher: "watch" id kind path from.
+    void onRecord(FileGate gate, int handle, std::vector<string> f) {
+        if (f.size() < 5) {
+            return;
+        }
+        int index = indexOf(int(decimalValue(f[1])));
+        if (index < 0) {
+            return;
+        }
+        WatchState s = states[index];
+        string kind = f[2];
+        if (kind == "stopped") {
+            if (s.pending.size() > 0 || s.overflowed) {
+                flush(gate, handle, index);
+                index = indexOf(s.id);
+            }
+            if (index >= 0) {
+                app_watch_stop(handle, s.id);
+                emitWatchEvent(handle, s.id, "stopped", f[3], "");
+                drop(index);
+            }
+            return;
+        }
+        s.merge(kind, f[3], f[4], app_now_ms());
+    }
+};
