@@ -67,6 +67,17 @@ int app_tray_item(int handle, std::string id, int enabled, int checked);
 int app_menu_popup(int handle, std::string spec, std::string& chosen);
 int app_menu_set(int handle, std::string spec);
 int app_menu_item(int handle, std::string id, int enabled, int checked);
+// The system's colour scheme (Windows; -1 elsewhere): app_theme_system is 0 for light and 1 for dark (what the user chose for applications in Settings > Colours).
+// app_window_theme: how the window looks: mode 0 follow the system, 1 always light, 2 always dark. It sets the title bar and what the page's CSS media query
+// prefers-color-scheme answers (the browser engine keeps that per profile, and all windows of a program share one: the last call wins for the page). From the first call
+// on, a change of the system's scheme queues the record "window" "theme" 0|1 on the window (once per change). 0 ok, 4 no such window, or this browser runtime cannot
+// set the page's scheme (the title bar was set), 5 not a mode, -1 not supported.
+int app_theme_system();
+int app_window_theme(int handle, int mode);
+// Files dragged from the shell onto the window (Windows; -1 elsewhere). app_drop_accept(handle, 1): the window's page is told that dropped files matter (window.__cling_drop, which
+// src/bridge.js looks at), and the paths of the files it hands the browser engine are queued as the record "drop" "files" x y path... (x and y are the pointer in the page's CSS
+// pixels; at most 512 paths, vetted by the application, not here). app_drop_accept(handle, 0) turns it off. 0 ok, 4 could not (no such window, or the runtime lacks the interface), 5 not 0 / 1.
+int app_drop_accept(int handle, int on);
 int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
 int app_window_track(int handle, int on);
 int app_release_build();                                                          // 1 if built with RELEASE=1 (no development server, no developer tools)

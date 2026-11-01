@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>system test</title></head>
+<body><h1>system test</h1>
+<script>
+// everything the page learns is reported to the program, which prints it for the test script to read
+var mq = window.matchMedia('(prefers-color-scheme: dark)');
+function say(kind, data) { return cling.invoke('seen', { kind: kind, data: typeof data === 'string' ? data : JSON.stringify(data) }); }
+mq.addEventListener('change', function () { say('scheme', mq.matches ? 'dark' : 'light'); });
+cling.theme.onChange(function (e) { say('theme', e); });
+cling.onDragEnter(function (e) { say('enter', e); });
+cling.onDragOver(function (e) { say('over', e); });
+cling.onDragLeave(function (e) { say('leave', e); });
+cling.onDrop(function (e) {
+  var texts = [];
+  var chain = Promise.resolve();
+  e.files.forEach(function (f) {
+    chain = chain.then(function () { return cling.fs.read({ path: f.path }); })
+      .then(function (r) { texts.push(r.text); }, function (x) { texts.push('ERR ' + x.code); });
+  });
+  chain.then(function () { say('drop', { n: e.files.length, skipped: e.skipped, kinds: e.files.map(function (f) { return f.kind; }), texts: texts }); });
+});
+cling.on('probe', function () { say('now', mq.matches ? 'dark' : 'light'); });
+cling.invoke('ready', {}).then(function () { say('scheme', mq.matches ? 'dark' : 'light'); say('flag', String(window.__cling_drop)); });
+</script></body></html>

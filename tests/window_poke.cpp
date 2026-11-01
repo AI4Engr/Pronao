@@ -24,14 +24,23 @@
 //   window_poke.exe box TITLE               prints the text of a message box whose title starts with TITLE (waits up to 20 s); exit 1 if there is none
 //   window_poke.exe boxanswer TITLE yes|no|ok   answers that message box
 //   window_poke.exe layout TITLE            prints what Windows says about the window: "x y width height topmost caption thickframe enabled coversMonitor" (the flags are 0 / 1)
+//   window_poke.exe drop TITLE file...      drags the files over the middle of the window's page and lets go there, the way the file manager does (OLE drag and drop with the cursor
+//                                            moved by SendInput); prints what the window answered: copy, move or link (it took them), none (it does not want them) or cancel; exit 0 if it took them
+//   window_poke.exe droptext TITLE           the same with a piece of text instead of files (a window that wants files only must answer none)
+//   window_poke.exe darkbar TITLE            prints 1 if Windows draws the window's title bar dark, 0 if light (DWMWA_USE_IMMERSIVE_DARK_MODE as DWM holds it)
+//   window_poke.exe themechange TITLE        sends the window the notice Windows sends when the colour scheme changes (WM_SETTINGCHANGE "ImmersiveColorSet"); changes no setting
+//   window_poke.exe appsdark                 prints 1 if the user chose dark applications (the registry value Windows keeps), else 0
 //   window_poke.exe wait TITLE               waits up to 20 s for the window to be visible; exit 1 if it never is
 #include <windows.h>
+#include <ole2.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <cstdio>
 #include <cctype>
 #include <cstdlib>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -179,7 +188,213 @@ HWND findBox(const std::wstring& prefix) {
     return s.found;
 }
 
+// ---- dragging something over a window ----------------------------------------------------------------------------------------------------------------------------
+class DragData : public IDataObject {
+public:
+    explicit DragData(const std::vector<std::wstring>& files, const std::wstring& text) : files_(files), text_(text) {}
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override { const ULONG r = --refs_; if (!r) delete this; return r; }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** out) override {
+        *out = (IsEqualIID(id, IID_IUnknown) || IsEqualIID(id, IID_IDataObject)) ? static_cast<IDataObject*>(this) : nullptr;
+        if (*out) AddRef();
+        return *out ? S_OK : E_NOINTERFACE;
+    }
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC* f, STGMEDIUM* m) override {
+        if (!(f->tymed & TYMED_HGLOBAL)) return DV_E_TYMED;
+        if (f->cfFormat == CF_HDROP && !files_.empty()) {
+            size_t chars = 1;
+            for (const auto& p : files_) chars += p.size() + 1;
+            HGLOBAL g = GlobalAlloc(GHND, sizeof(DROPFILES) + chars * sizeof(wchar_t));
+            auto* d = static_cast<DROPFILES*>(GlobalLock(g));
+            d->pFiles = sizeof(DROPFILES);
+            d->fWide = TRUE;
+            wchar_t* at = reinterpret_cast<wchar_t*>(reinterpret_cast<char*>(d) + sizeof(DROPFILES));
+            for (const auto& p : files_) { memcpy(at, p.c_str(), (p.size() + 1) * sizeof(wchar_t)); at += p.size() + 1; }
+            GlobalUnlock(g);
+            m->tymed = TYMED_HGLOBAL; m->hGlobal = g; m->pUnkForRelease = nullptr;
+            return S_OK;
+        }
+        if (f->cfFormat == CF_UNICODETEXT && files_.empty()) {
+            HGLOBAL g = GlobalAlloc(GHND, (text_.size() + 1) * sizeof(wchar_t));
+            memcpy(GlobalLock(g), text_.c_str(), (text_.size() + 1) * sizeof(wchar_t));
+            GlobalUnlock(g);
+            m->tymed = TYMED_HGLOBAL; m->hGlobal = g; m->pUnkForRelease = nullptr;
+            return S_OK;
+        }
+        return DV_E_FORMATETC;
+    }
+    HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*, STGMEDIUM*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f) override {
+        if (!(f->tymed & TYMED_HGLOBAL) || f->dwAspect != DVASPECT_CONTENT) return DV_E_FORMATETC;
+        return (f->cfFormat == CF_HDROP && !files_.empty()) || (f->cfFormat == CF_UNICODETEXT && files_.empty()) ? S_OK : DV_E_FORMATETC;
+    }
+    HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*, FORMATETC* out) override { out->ptd = nullptr; return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*, STGMEDIUM*, BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD dir, IEnumFORMATETC** out) override {
+        if (dir != DATADIR_GET) return E_NOTIMPL;
+        FORMATETC f = {static_cast<CLIPFORMAT>(files_.empty() ? CF_UNICODETEXT : CF_HDROP), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        return SHCreateStdEnumFmtEtc(1, &f, out);
+    }
+    HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
+    HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
+
+private:
+    ULONG refs_ = 1;
+    std::vector<std::wstring> files_;
+    std::wstring text_;
+};
+
+// lets the drag run for a while with the cursor moving a little over the target, then lets go
+class DragSource : public IDropSource {
+public:
+    DragSource(int x, int y) : x_(x), y_(y), began_(GetTickCount()) {}
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override { const ULONG r = --refs_; if (!r) delete this; return r; }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** out) override {
+        *out = (IsEqualIID(id, IID_IUnknown) || IsEqualIID(id, IID_IDropSource)) ? static_cast<IDropSource*>(this) : nullptr;
+        if (*out) AddRef();
+        return *out ? S_OK : E_NOINTERFACE;
+    }
+    HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escape, DWORD) override {
+        if (escape) return DRAGDROP_S_CANCEL;
+        return GetTickCount() - began_ > 1200 ? DRAGDROP_S_DROP : S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD) override { return DRAGDROP_S_USEDEFAULTCURSORS; }
+
+private:
+    ULONG refs_ = 1;
+    int x_, y_;
+    DWORD began_;
+};
+
+// keeps the pointer moving a little over the target while the drag runs: OLE looks at what is under the pointer, and asks the source whether to go on, only when something happens
+void wiggle(int x, int y, volatile bool* stop) {
+    bool step = false;
+    for (int i = 1; i <= 8 && !*stop; i++) {                                   // from where the drag began to the target, in steps, so that every window on the way sees the pointer
+        POINT now;
+        GetCursorPos(&now);
+        SetCursorPos(now.x + (x - now.x) * i / 8, now.y + (y - now.y) * i / 8);
+        Sleep(40);
+    }
+    while (!*stop) {
+        step = !step;
+        INPUT in = {};
+        in.type = INPUT_MOUSE;
+        in.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+        const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN), vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        in.mi.dx = static_cast<LONG>((x + (step ? 6 : 0) - vx) * 65535.0 / (vw - 1));
+        in.mi.dy = static_cast<LONG>((y + (step ? 4 : 0) - vy) * 65535.0 / (vh - 1));
+        SendInput(1, &in, sizeof in);
+        Sleep(60);
+    }
+}
+
+int dragOver(HWND window, const std::vector<std::wstring>& files, const std::wstring& text) {
+    RECT r;
+    GetWindowRect(window, &r);
+    // the drag starts in a small window of this tool, in front of everything: a drag needs the program that holds it to be the one that has the keyboard and mouse, as Explorer is
+    // when the user drags from it
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"poke-drag-source";
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        RegisterClassW(&wc);
+        registered = true;
+    }
+    keybd_event(VK_MENU, 0, 0, 0);                       // (pressing Alt lets a program take the foreground)
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+    if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+    SetForegroundWindow(window);                         // the target first: in front of whatever else is on the screen (a drop must land on it and on nothing else)
+    Sleep(500);
+    HWND source_window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"poke-drag-source", L"poke", WS_POPUP | WS_VISIBLE, 5, 5, 80, 50, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    for (int i = 0; i < 10; i++) { MSG m; while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); } Sleep(20); }
+    keybd_event(VK_MENU, 0, 0, 0);                       // (pressing Alt lets a program take the foreground)
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+    SetForegroundWindow(source_window);
+    Sleep(300);
+    SetCursorPos(30, 30);
+    Sleep(100);
+    POINT middle = {(r.left + r.right) / 2, (r.top + r.bottom) / 2 + 20};
+    SetCursorPos(middle.x, middle.y);
+    Sleep(100);
+    {   // if another window is over the target at that point the drag would end in a program that has nothing to do with the test: do not start it
+        HWND under = WindowFromPoint(middle);
+        if (!under || GetAncestor(under, GA_ROOT) != window) {
+            DestroyWindow(source_window);
+            std::printf("covered\n");
+            return 3;
+        }
+    }
+    SetCursorPos(30, 30);
+    Sleep(100);
+    INPUT button = {};
+    button.type = INPUT_MOUSE;
+    button.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    SendInput(1, &button, sizeof button);                  // pressed over the tool's own window, where the drag starts
+    Sleep(100);
+    OleInitialize(nullptr);
+    DragData* data = new DragData(files, text);
+    DragSource* source = new DragSource(middle.x, middle.y);
+    DWORD effect = DROPEFFECT_NONE;
+    volatile bool stop = false;
+    std::thread mover(wiggle, static_cast<int>(middle.x), static_cast<int>(middle.y), &stop);
+    const HRESULT hr = DoDragDrop(data, source, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, &effect);
+    stop = true;
+    mover.join();
+    button.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    SendInput(1, &button, sizeof button);
+    data->Release();
+    source->Release();
+    DestroyWindow(source_window);
+    const char* said = hr == DRAGDROP_S_CANCEL ? "cancel" : effect == DROPEFFECT_COPY ? "copy" : effect == DROPEFFECT_MOVE ? "move" : effect == DROPEFFECT_LINK ? "link" : "none";
+    std::printf("%s\n", said);
+    return std::string(said) == "none" || std::string(said) == "cancel" ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 4 && std::string(argv[1]) == "drop") {
+        HWND w = findWindow(wide(argv[2]));
+        if (!w) return 2;
+        std::vector<std::wstring> files;
+        for (int i = 3; i < argc; i++) { const std::string s(argv[i]); files.emplace_back(s.begin(), s.end()); }
+        return dragOver(w, files, L"");
+    }
+    if (argc >= 2 && std::string(argv[1]) == "mouseup") {          // lets go of the left button (a drag that was cut short may leave it held)
+        INPUT in = {};
+        in.type = INPUT_MOUSE;
+        in.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+        SendInput(1, &in, sizeof in);
+        return 0;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "droptext") {
+        HWND w = findWindow(wide(argv[2]));
+        return w ? dragOver(w, {}, L"just some text") : 2;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "darkbar") {
+        HWND w = findWindow(wide(argv[2]));
+        BOOL dark = FALSE;
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        auto get = dwm ? reinterpret_cast<HRESULT(WINAPI*)(HWND, DWORD, PVOID, DWORD)>(reinterpret_cast<void*>(GetProcAddress(dwm, "DwmGetWindowAttribute"))) : nullptr;
+        if (!w || !get || FAILED(get(w, 20, &dark, sizeof dark))) return 2;
+        std::printf("%d\n", dark ? 1 : 0);
+        return 0;
+    }
+    if (argc >= 3 && std::string(argv[1]) == "themechange") {
+        HWND w = findWindow(wide(argv[2]));
+        if (!w) return 2;
+        DWORD_PTR result = 0;
+        return SendMessageTimeoutW(w, WM_SETTINGCHANGE, 0, reinterpret_cast<LPARAM>(L"ImmersiveColorSet"), SMTO_ABORTIFHUNG, 3000, &result) ? 0 : 1;
+    }
+    if (argc >= 2 && std::string(argv[1]) == "appsdark") {
+        DWORD light = 1, size = sizeof light;
+        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+        std::printf("%d\n", light == 0 ? 1 : 0);
+        return 0;
+    }
     if (argc >= 3 && std::string(argv[1]) == "box") {
         const std::string t(argv[2]);
         HWND box = nullptr;

@@ -42,7 +42,7 @@ echo "$out" | grep -q "^signed by: CN=app-cling signing test" || { echo "sign.ps
 
 # 3: a signed program still runs
 export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$S/profile-$$")"
-g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$S/poke.exe" -luser32 -lgdi32 -lshell32 > /dev/null 2>&1 || { echo "POKE BUILD FAILED"; exit 1; }
+g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$S/poke.exe" -luser32 -lgdi32 -lshell32 -lole32 -luuid -ladvapi32 > /dev/null 2>&1 || { echo "POKE BUILD FAILED"; exit 1; }
 (cd "$S/run" && timeout 60 "$S/app.exe"; echo $? > "$S/app.rc") &
 pid=$!
 "$S/poke.exe" wait "runtime window" || { kill "$pid" 2> /dev/null; echo "the signed program did not open its window"; exit 1; }

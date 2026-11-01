@@ -12,7 +12,7 @@ TITLE="notify test"
 story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     local S="$1" SHIMDIR="$2"
     rm -rf "$S" 2>/dev/null || true; mkdir -p "$S/work" "$S/run"
-    g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$S/poke.exe" -luser32 -lgdi32 -lshell32 > "$S/poke.log" 2>&1 || { cat "$S/poke.log"; echo "POKE BUILD FAILED"; return 2; }
+    g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$S/poke.exe" -luser32 -lgdi32 -lshell32 -lole32 -luuid -ladvapi32 > "$S/poke.log" 2>&1 || { cat "$S/poke.log"; echo "POKE BUILD FAILED"; return 2; }
     SHIM="${SHIMDIR:-$HERE/shim}" ASSETS="$HERE/tests/site_notify" WORK="$S/work" bash "$HERE/scripts/build.sh" "$HERE/tests/notify_window.clg" "$S/t.exe" > "$S/build.log" 2>&1 || { cat "$S/build.log"; echo "BUILD FAILED"; return 2; }
     export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$S/profile-$$")"
     local P="$S/poke.exe" OUT="$S/out.txt"

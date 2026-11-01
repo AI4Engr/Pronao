@@ -7,7 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 S="${TMPDIR:-/tmp}/app-cling-icon"
 rm -rf "$S" 2>/dev/null || true; mkdir -p "$S/with space" "$S/run"
 P="$S/poke.exe"
-g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$P" -luser32 -lgdi32 -lshell32 > "$S/poke.log" 2>&1 || { cat "$S/poke.log"; echo "POKE BUILD FAILED"; exit 1; }
+g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$P" -luser32 -lgdi32 -lshell32 -lole32 -luuid -ladvapi32 > "$S/poke.log" 2>&1 || { cat "$S/poke.log"; echo "POKE BUILD FAILED"; exit 1; }
 
 # the icon: the same bytes every time, and the right shape
 python3 "$HERE/scripts/make_icon.py" "$S/with space/my icon.ico" red-app ff0000 || { echo "make_icon failed"; exit 1; }

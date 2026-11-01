@@ -133,6 +133,11 @@ if command -v lore > /dev/null 2>&1 || [ -n "${LORE_CLI_PATH:-}" ]; then
     control "recursive remove checks the folder first" files.clg '            if (isRootItself(here.text)) {' '            if (false) {' tauriport_main "the opened folder itself is never removed"
     control "paths that could be options are refused" tauriport.clg '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000) || path[0] == '"'"'-'"'"'' '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000)' tauriport_main "a path that could be read as an option is refused"
 fi
+control "a dropped file is granted to the policy" drops.clg '                g = gate.grantFile(path);' '                g = new FsResult(0, path);' system_main "and the page can read it"
+control "a dropped folder needs the application yes" drops.clg '                if (folders) {' '                if (true) {' system_main "only what exists"
+control "a drop takes at most the number set" drops.clg 'if (taken >= maxFiles || !plainText(path, 32000)) {' 'if (!plainText(path, 32000)) {' system_main "at most the number"
+control "a dropped name must exist" drops.clg '            } else if (found == 1 || found == 5) {' '            } else {' system_main "only what exists"
+control "a colour mode must be one of three" theme.clg '        if (code < 0) {' '        if (false) {' system_main "a word that is not a mode"
 wait
 for ((k = 0; k < ${#NAMES[@]}; k++)); do
     cat "$W/result.$k"

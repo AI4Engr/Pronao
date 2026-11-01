@@ -19,6 +19,8 @@
 #include "links.clh"
 #include "placement.clh"
 #include "menu.clh"
+#include "theme.clh"
+#include "drops.clh"
 #include "assets.clh"
 
 ext_fn int app_open(string title, int width, int height, string html, string url, string initJs, int debug);
@@ -40,6 +42,8 @@ ext_fn int app_runtime_version(ref string version);
 ext_fn int app_message_box(string title, string text, int ask);
 ext_fn int app_window_placement(int handle, int x, int y, int width, int height, int maximized);
 ext_fn int app_window_track(int handle, int on);
+ext_fn int app_drop_accept(int handle, int on);
+ext_fn int app_theme_system();
 ext_fn int app_menu_popup(int handle, string spec, ref string chosen);
 ext_fn int app_tray_open(string tooltip, string menu, ref int handle);
 ext_fn int app_tray_update(int handle, string tooltip, string menu);
@@ -80,6 +84,8 @@ public:
     MenuAction menuHandler;            // what runs when a menu item is clicked (onMenu)
     bool menuToPage;                   // a click is also an event for the page of the window (menuEventsToPage)
     LinkRules links;                   // what a page may ask the system to open (allowLinkSchemes, allowOpenExtensions, enableShellCommands)
+    ThemeState theme;                  // how the windows look: follow the system's light or dark scheme, or stay light or dark (setTheme)
+    DropRules drops;                   // files dragged onto a window (enableFileDrop)
     WindowBook windows;                // the open windows
     std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
     Watches watches;                   // the first window's (see `handle`); each Window has its own
@@ -103,6 +109,7 @@ public:
         gate = new FileGate();
         settings = new SettingsStore();
         links = new LinkRules();
+        drops = new DropRules(gate);
         memory = new WindowMemory();
         menuHandler = new MenuAction();
         trayHandler = new TrayAction();
@@ -115,6 +122,7 @@ public:
         instanceClaimed = false;
         cling::setExitGraceMs(5000);
         windows = new WindowBook();
+        theme = new ThemeState(windows);
         watches = new Watches();
         window = new WindowState();
         maxRequestBytes = 4194304;
@@ -302,6 +310,83 @@ public:
             }
             return createNull();
         });
+    }
+
+    // ---- the colour scheme (src/theme.clg) ----
+
+    // How every window looks, now and for windows opened later: "system" follows the user's choice of light or dark applications (the title bar, and what the page's
+    // `prefers-color-scheme` says), "light" and "dark" stay as they are. The page of every window gets the event theme.changed {mode, system}. From the first call on the
+    // title bar also follows the system when it changes and the event is sent then too. false for any other word (nothing changes). Windows only; elsewhere the call is
+    // harmless and changes nothing. The page part is the browser engine's per-program setting, so with several windows the page of all of them follows the last choice.
+    bool setTheme(string mode) {
+        return theme.apply(mode);
+    }
+
+    // The system's scheme right now: "light", "dark", or "unknown" (a system with no such setting, or not Windows).
+    string systemTheme() {
+        return themeSchemeName(app_theme_system());
+    }
+
+    // Registers theme.get {} -> {mode, system} ("system" | "light" | "dark", and "light" | "dark" | "unknown") and, if `pageMaySet`, theme.set {mode} -> null (a word that is
+    // not system, light or dark is "invalid_argument"). The event theme.changed {mode, system} reaches every window when the choice or the system's scheme changes (once
+    // setTheme was called).
+    void enableThemeCommands(bool pageMaySet) {
+        ThemeState state = theme;
+        command("theme.get", closure Command [state] (Item args) {
+            return state.stateItem();
+        });
+        if (pageMaySet) {
+            command("theme.set", closure Command [state] (Item args) {
+                string mode = requiredString(args, "mode");
+                if (!state.apply(mode)) {
+                    throw "invalid_argument: `mode` must be system, light or dark";
+                }
+                return createNull();
+            });
+        }
+    }
+
+    // ---- files dragged onto a window (src/drops.clg) ----
+
+    // From now on files dropped on a window from the file manager reach its page as the event drop.files {x, y, files: [{path, kind}], skipped} (and drop.enter / over / leave
+    // while the drag is over the page); every file in it has been granted to the file commands like a dialog pick (that file only). At most `maxFiles` (1 to 64) paths are taken from one drop. With `folders` a dropped folder is accepted too and granted as a folder.
+    // false if the number is out of range, or if some open window could not accept drops (not Windows).
+    bool enableFileDrop(int maxFiles, bool folders) {
+        if (maxFiles < 1 || maxFiles > 64) {
+            return false;
+        }
+        drops.on = true;
+        drops.maxFiles = maxFiles;
+        drops.folders = folders;
+        bool all = true;
+        int i = 0;
+        while (i < windows.items.size()) {
+            Window w = windows.items[i];
+            if (app_drop_accept(w.handle, 1) != 0) {
+                all = false;
+            }
+            i = i + 1;
+        }
+        return all;
+    }
+
+    // Stops accepting files (every window, and windows opened later).
+    void disableFileDrop() {
+        drops.on = false;
+        int i = 0;
+        while (i < windows.items.size()) {
+            Window w = windows.items[i];
+            app_drop_accept(w.handle, 0);
+            i = i + 1;
+        }
+    }
+
+    // A record "drop" "files" x y path... from the window `from`: the event it comes to (see DropRules.eventFor).
+    void onDropRecord(int from, std::vector<string> f) {
+        string made = drops.eventFor(f);
+        if (made.length() > 0) {
+            emitEvent(from, "drop.files", made);
+        }
     }
 
     // Withdraws everything the user granted through dialogs (the folders added with allowFolder stay).
@@ -968,6 +1053,10 @@ public:
             }
             return;
         }
+        if (f[1] == "theme" && f.size() >= 3) {
+            theme.systemChanged(f[2]);
+            return;
+        }
         if (f[1] == "navigation_blocked" && f.size() >= 3) {
             if (isUtf8(f[2])) {
                 Item e = createObject();
@@ -1125,6 +1214,10 @@ public:
         }
         if (instanceClaimed && windows.count() == 1) {
             app_instance_listen(h);
+        }
+        theme.windowOpened(h);
+        if (drops.on) {
+            app_drop_accept(h, 1);
         }
         if (memory.isOpen()) {
             string key = memoryKeyFor(start, windows.count() == 1);
@@ -1669,6 +1762,8 @@ public:
             onWindowRecord(from, f);
         } else if (f[0] == "instance") {
             onSecondInstance(from, f);
+        } else if (f[0] == "drop" && f.size() >= 4) {
+            onDropRecord(from, f);
         } else if (f[0] == "menu" && f.size() >= 2) {
             onMenuClick(from, f[1]);
         } else if (f[0] == "notify" && f.size() >= 2) {

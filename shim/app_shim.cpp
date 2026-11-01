@@ -37,6 +37,9 @@ struct App {
     RECT savedRect = {};
     bool savedMaximized = false;
 #endif
+    std::atomic<void*> controller{nullptr};   // the browser engine's controller (Windows), for what needs the engine rather than the window
+    std::atomic<int> themeMode{-1};    // app_window_theme: 0 follow the system, 1 light, 2 dark; -1 = never asked, and then no change is reported
+    std::atomic<int> systemTheme{-1};  // the system's scheme as last seen: 0 light, 1 dark
     std::atomic<int> modalOwner{0};    // the window this one is modal for (its owner is disabled until this one closes)
     std::atomic<int> maxRequest{16 << 20}, maxQueued{1000};
     std::shared_ptr<NavRules> nav = std::make_shared<NavRules>();   // (nav->handle is set by app_open)
@@ -89,8 +92,26 @@ void reportPlacement(App* a, HWND h) {
     a->calls.push(std::string(), record, 100);
 }
 
+// Windows says the colour scheme may have changed with WM_SETTINGCHANGE "ImmersiveColorSet" (and says it more than once). The webview library has just set the title bar to the
+// system's scheme in its own handler; a window the application fixed to light or dark gets its choice back. When the scheme really changed, the record "window" "theme" 0|1 is queued.
+void themeSettingChanged(App* a, HWND h) {
+    const int mode = a->themeMode.load();
+    if (mode == 1 || mode == 2) app_theme_titlebar(h, mode == 2);
+    const int now = app_theme_system();
+    if (now < 0 || mode < 0 || now == a->systemTheme.exchange(now)) return;
+    std::string record("window\0theme\0", 13);
+    record += now == 1 ? "1" : "0";
+    record += '\0';
+    a->calls.push(std::string(), record, 100);
+}
+
 LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     App* a = static_cast<App*>(GetPropW(h, L"app_cling"));
+    if (msg == WM_SETTINGCHANGE && lp != 0 && lstrcmpW(reinterpret_cast<const wchar_t*>(lp), L"ImmersiveColorSet") == 0) {
+        const LRESULT result = CallWindowProcW(reinterpret_cast<WNDPROC>(a->oldProc), h, msg, wp, lp);
+        themeSettingChanged(a, h);
+        return result;
+    }
     if (msg == WM_COMMAND && HIWORD(wp) == 0 && lp == 0 && app_menu_command(a->nav->handle, LOWORD(wp))) return 0;      // a menu item (not a control, not an accelerator)
     if (msg == WM_ENTERSIZEMOVE) a->moving = true;
     if (msg == WM_EXITSIZEMOVE) { a->moving = false; reportPlacement(a, h); }
@@ -102,6 +123,7 @@ LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     // The webview library ends a window's message loop only when the LAST window of the PROCESS is destroyed (a process-wide count), so with
     // another window still open this window's thread would keep pumping nothing and its queue would never report that it closed.
     if (msg == WM_DESTROY) {
+        app_drop_forget(h);
         releaseOwner(a);                                               // a modal window is gone: its owner may be used again
         PostQuitMessage(0);                                            // this window's own message loop ends (tests/run_multiwindow.sh removes this line as its control)
     }
@@ -147,6 +169,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
             if (!site.empty()) raw->nav->prefixes.push_back(site + "/");        // (no lock needed yet: nothing else has the window)
             app_nav_install(w.browser_controller().value(), raw->nav, debug);
             app_assets_install(w.browser_controller().value(), assetStore());
+            raw->controller = w.browser_controller().value();
 #endif
             if (!init_js.empty()) w.init(init_js);
             if (!url.empty()) w.navigate(url);
@@ -263,6 +286,38 @@ int app_monitors(std::string& out) {
     return out.empty() ? 4 : 0;
 #else
     return (void)out, -1;
+#endif
+}
+
+int app_window_theme(int handle, int mode) {
+#ifdef _WIN32
+    if (mode < 0 || mode > 2) return 5;
+    auto app = lookup(handle);
+    if (!app) return 4;
+    int rc = 4;
+    const int ran = app_ui_call(handle, [&](void* window) {
+        const int system = app_theme_system();
+        app->systemTheme = system;
+        app->themeMode = mode;
+        app_theme_titlebar(window, mode == 2 || (mode == 0 && system == 1));
+        rc = app_theme_page(app->controller.load(), mode);
+    });
+    return ran ? rc : 4;
+#else
+    return (void)handle, (void)mode, -1;
+#endif
+}
+
+int app_drop_accept(int handle, int on) {
+#ifdef _WIN32
+    if (on != 0 && on != 1) return 5;
+    auto app = lookup(handle);
+    if (!app) return 4;
+    int rc = 4;
+    const int ran = app_ui_call(handle, [&](void* window) { rc = app_drop_set(window, app->controller.load(), handle, on == 1); });
+    return ran ? rc : 4;
+#else
+    return (void)handle, (void)on, -1;
 #endif
 }
 

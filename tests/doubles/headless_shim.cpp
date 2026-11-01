@@ -272,6 +272,44 @@ int app_window_track(int handle, int on) {
     app->windowLog.push_back("track|" + std::to_string(on));
     return 1;
 }
+static int g_systemTheme = 0;
+int app_test_system_theme(int dark) {
+    g_systemTheme = dark;
+    return 1;
+}
+int app_theme_system() { return g_systemTheme; }
+int app_window_theme(int handle, int mode) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    if (mode < 0 || mode > 2) return 5;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("theme|" + std::to_string(mode) + "|" + std::to_string(g_systemTheme));
+    return 0;
+}
+// the system's scheme changed: the record "window" "theme" 0|1, as the native layer queues it (the test also changes the answer of app_theme_system)
+int app_test_theme_changed(int handle, int dark) {
+    g_systemTheme = dark;
+    std::string record("window\0theme\0", 13);
+    record += dark ? "1" : "0";
+    record += '\0';
+    return app_push(handle, std::string(), record, 100);
+}
+int app_drop_accept(int handle, int on) {
+    auto app = lookup(handle);
+    if (!app) return 4;
+    std::lock_guard<std::mutex> lock(app->m);
+    app->windowLog.push_back("drop|" + std::to_string(on));
+    return 0;
+}
+// files dropped on the window: the pointer and the paths (each followed by a NUL), as the native layer queues them
+int app_test_drop(int handle, std::string kind, int x, int y, std::string paths) {
+    std::string record("drop", 4);
+    record += '\0'; record += kind; record += '\0';
+    record += std::to_string(x); record += '\0';
+    record += std::to_string(y); record += '\0';
+    record += paths;
+    return app_push(handle, std::string(), record, 100);
+}
 int app_window_guard(int handle, int on) {
     auto app = lookup(handle);
     if (!app) return 0;

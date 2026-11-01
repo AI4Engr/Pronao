@@ -128,6 +128,8 @@ else
     NATIVE+=("$SHIM/$PLAT/dialog.cpp" "$SHIM/$PLAT/shell.cpp" "$SHIM/$PLAT/instance.cpp" "$SHIM/$PLAT/menu.cpp" "$SHIM/$PLAT/runtime.cpp")
     [ -f "$SHIM/$PLAT/nav.cpp" ] && NATIVE+=("$SHIM/$PLAT/nav.cpp")
     [ -f "$SHIM/$PLAT/tray.cpp" ] && NATIVE+=("$SHIM/$PLAT/tray.cpp")
+    [ -f "$SHIM/$PLAT/theme.cpp" ] && NATIVE+=("$SHIM/$PLAT/theme.cpp")
+    [ -f "$SHIM/$PLAT/drop.cpp" ] && NATIVE+=("$SHIM/$PLAT/drop.cpp")
     [ -f "$SHIM/$PLAT/assets.cpp" ] && NATIVE+=("$SHIM/$PLAT/assets.cpp")
     LINK="-static -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
     if [ "${GUI:-${RELEASE:+1}}" = 1 ] && [ "$PLAT" = win ]; then LINK="-mwindows $LINK"; fi

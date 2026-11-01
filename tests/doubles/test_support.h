@@ -45,6 +45,12 @@ int app_test_tray_event(int handle, std::string kind);
 // the user clicked the notification that was shown with this id: queues the record "notify" id on the tray (or notifier) handle
 int app_test_notification_click(int handle, std::string id);
 
+// the colour scheme: what app_theme_system answers (1 dark); app_test_theme_changed also queues the record "window" "theme" 0|1 on the window. The window log shows theme|MODE|SYSTEM
+// (app_window_theme) and drop|ON (app_drop_accept). app_test_drop queues what the native layer queues for a drag: kind enter | over | leave | files, the pointer, the paths each followed by a NUL
+int app_test_system_theme(int dark);
+int app_test_theme_changed(int handle, int dark);
+int app_test_drop(int handle, std::string kind, int x, int y, std::string paths);
+
 // a program for the process tests to run (the environment variable APP_PROC_ECHO); 0 if unset
 int app_test_helper(std::string& path);
 

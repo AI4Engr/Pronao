@@ -1,0 +1,72 @@
+// The colour scheme and dropped files in a real window (run by tests/run_theme_window.sh and tests/run_drop_window.sh). The program takes instructions from a file, one line
+// "N operation args", prints "done N operation ok" after each and "ready" when the page is up, and prints every report of the page as "seen KIND DATA".
+//   theme system|light|dark   dropon   dropoff   probe   quit
+// SYSTEM_TEST_DIR names the folder of the instructions; SYSTEM_TEST_DROP is "on" when the program asks for dropped files (else it does not).
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "assets.clh"
+#include "settings.clh"
+#include "placement.clh"
+#include "menu.clh"
+#include "app.clh"
+
+ext_fn int app_os_env(string name, ref string out);
+
+int main() {
+    App app = new App();
+    string folder = "";
+    if (app_os_env("SYSTEM_TEST_DIR", folder) != 1 || !app.allowFolder(folder)) {
+        std::cout << "selftest FAILED: no instruction folder" << std::endl;
+        return 2;
+    }
+    string file = app.gate.join(folder, "instructions.txt");
+    string drop = "";
+    app_os_env("SYSTEM_TEST_DROP", drop);
+    app.enableFileCommands(1000);
+    app.enableThemeCommands(true);
+    if (drop == "on") {
+        app.enableFileDrop(4, true);
+    }
+    app.command("ready", closure Command [] (Item args) {
+        std::cout << "ready" << std::endl;
+        return createNull();
+    });
+    app.command("seen", closure Command [] (Item args) {
+        std::cout << "seen " << requiredString(args, "kind") << " " << requiredString(args, "data") << std::endl;
+        return createNull();
+    });
+    if (!app.openSite("system test", 600, 400, false, "http://app.localhost", "")) {
+        std::cout << "selftest FAILED: no window" << std::endl;
+        return 2;
+    }
+    string last = "";
+    while (app.serveOne(100) != 0) {
+        FsResult c = app.gate.read(file, 1000);
+        if (c.status != 0 || c.text == last) {
+            continue;
+        }
+        last = c.text;
+        std::vector<string> parts = splitOn(last, ' ');
+        if (parts.size() < 2) {
+            continue;
+        }
+        string op = parts[1];
+        bool ok = true;
+        if (op == "theme" && parts.size() >= 3) {
+            ok = app.setTheme(parts[2]);
+        } else if (op == "dropon") {
+            ok = app.enableFileDrop(4, true);
+        } else if (op == "dropoff") {
+            app.disableFileDrop();
+        } else if (op == "probe") {
+            app.emit("probe", "null");
+        } else if (op == "quit") {
+            app.quit();
+        }
+        std::cout << "done " << parts[0] << " " << op << " " << ok << std::endl;
+    }
+    app.close();
+    std::cout << "closed" << std::endl;
+    return 0;
+}

@@ -280,6 +280,58 @@ cling.onNotificationClick(function (id) { /* the user clicked a notification THI
 - **Test:** `tests/notify_main.clg` (33 checks with a double: the rules, the rate limit, the page command, clicks) and `tests/run_notify_window.sh` (a real program: the shell takes the notification and shows the icon while it is up, a click reaches the program and the page and the icon goes,
   an unclicked notification's icon goes away; two controls). It cannot see the toast on the screen, and it posts the message the shell sends for a balloon click.
 
+## Light and dark: the system's colour scheme
+
+```
+string now = app.systemTheme();                        // "light", "dark" or "unknown"
+app.setTheme("system");                                // follow the user's choice (the title bar, and the page's prefers-color-scheme) -- or "light" / "dark" to stay as they are
+app.enableThemeCommands(true);                         // the page may ask: theme.get {} and, with true, theme.set {mode}
+```
+
+```js
+const { mode, system } = await cling.theme.get();      // mode: "system" | "light" | "dark"; system: "light" | "dark" | "unknown"
+cling.theme.onChange(({ mode, system }) => { /* the choice or the system changed */ });
+await cling.theme.set('dark');                         // only if the application allowed it
+```
+
+- **Without any of this** a window already follows the system: its page (the browser engine's `prefers-color-scheme`) and its title bar (the window library). What this adds is the application knowing, a **forced** light or dark
+  for the title bar and the page, going back to "system", and the event `theme.changed {mode, system}` for pages that draw their own colours (CSS alone needs no event).
+- **Once `setTheme` was called**, a change of the user's scheme in Windows reaches the program as one event per change (Windows sends the notice several times), and a forced scheme is given back to the title bar after it.
+- **The page's scheme is the browser engine's setting for the whole program** (all windows share one profile): with several windows the page of all of them follows the last choice. The title bar is per window.
+- **A page can choose only among the three words;** it cannot make a window look like anything else.
+- **Not done:** other systems (`systemTheme` is "unknown", `setTheme` changes nothing), accent colour, high-contrast mode, a handler in CeeLing for a change (the event goes to the pages; read `systemTheme()` when you need it).
+- **Test:** `tests/system_main.clg` (the rules, the events, the commands, with a double) and `tests/run_system_window.sh` (a real window: the page's media query and, from Windows itself, the title bar's dark flag, for forced dark, forced
+  light and "system"; the system's change is played by flipping the registry value Windows keeps and sending only this window the notice, and the value is put back, also if the test is cut short; three controls). It does not
+  change the user's setting for other programs and it does not see the pixels of the title bar.
+
+## Files dragged onto a window
+
+```
+app.enableFileDrop(8, false);                          // up to 8 files from one drop; true as the second argument also accepts a dropped folder
+app.disableFileDrop();
+```
+
+```js
+cling.onDrop(async ({ x, y, files, skipped }) => {      // files: [{path, kind: "file" | "folder"}], x and y in CSS pixels
+  for (const f of files) console.log(await cling.fs.read({ path: f.path }));       // each dropped file is already granted, as a dialog pick would be
+});
+cling.onDragEnter(({ x, y }) => {}); cling.onDragOver(({ x, y }) => {}); cling.onDragLeave(() => {});    // to draw a drop zone
+```
+
+- **What is granted:** exactly the dropped file (or folder, if allowed), as a dialog pick is: the file next to it is not reachable; at most 256 grants exist at a time (`app.revokeGrants()` takes them back). `skipped` counts the paths
+  that were over the limit, are not plain text, do not exist (any more), or are folders when folders are not accepted.
+- **Where the paths come from.** The browser engine owns the window's drop target, and the program cannot take it over (tried: a drop target registered on the program's own window is never asked, because the engine's windows sit
+  between the pointer and it). So `src/bridge.js` listens to the page's drag events and, on a drop, hands the engine the files (`postMessageWithAdditionalObjects`); the engine names their paths for the program. This needs
+  WebView2 SDK 1.0.2210.55 or later at build time (`scripts/fetch.sh`) and a current runtime (the interface is there from version 110).
+- **Trust, stated exactly:** the paths are those of files the **user** put into the page, by dropping them or by choosing them in a file input of the page's own; a page cannot make a `File` that has a path. A page that holds such a
+  file can ask for the same grant a drop would give, and nothing else (it still cannot name a path of its own). Without `enableFileDrop` the engine's default stays: the drop is refused by the navigation guard.
+- **A page that handles drops itself** (it calls `preventDefault` in its own dragover/drop handler) is left alone. A drag of text or a picture is not a drop of files.
+- **Not done:** an application-side handler in CeeLing (the event goes to the page), dragging files OUT of the window, other systems.
+- **Test:** `tests/system_main.clg` (the grants, the limit, the folder rule, a path that does not exist, a late drop) and `tests/run_system_window.sh` (a real OLE drag with the left button held and the pointer moved over the window by
+  `SendInput`, as the file manager does: one file, three in order, five cut to four, a folder, a drag of text that is not a drop of files, "off" and on again; a control in which the paths never reach the program). The drag is made by
+  the test with the same OLE calls Explorer uses; it is not a real Explorer window. It refuses to start if another window covers the target (once it landed in a code editor), and a drag the engine refuses the first time is
+  tried once more.
+
 ## Menus a page may ask for
 
 ```
@@ -680,6 +732,7 @@ bash tests/run_distribution.sh       # release build: windowed program, version 
 bash tests/run_signing.sh            # signing with a throwaway certificate: signed, runs, a changed file is caught, refusals
 bash tests/run_layout_window.sh       # a real window: full screen, always on top, no title bar, fixed size, a place fitted to the monitors, a modal window; two controls that must fail
 bash tests/run_notify_window.sh       # a real program: the shell takes a notification, a click reaches the program and the page, the icon goes away; two controls
+bash tests/run_system_window.sh       # a real window: forced and followed light/dark (page and title bar), a played change of the system, files dragged onto it; four controls
 bash tests/run_tray_window.sh         # a real program: the tray icon, hiding on close, the tray menu; two controls that must fail
 bash tests/run_menu_window.sh         # a real window: the menu bar, choosing items, shortcuts, greyed items, ticks; two controls that must fail
 bash tests/run_icon.sh                # the icon is in the exe and on the running window; the build without one is the control
@@ -716,6 +769,8 @@ a fresh project builds in all three ways and its window starts.
 | `scripts/sign.ps1`, `scripts/check_signature.ps1` | sign an exe with a certificate file or a certificate in the store; say what the signature of an exe is |
 | `docs/distribution.md` | giving the program to someone else: the runtime check, the release build, signing, a checklist |
 | `scripts/make_icon.py` | a placeholder `.ico` (the build option `ICON=`) |
+| `src/theme.clg` | the colour scheme: `ThemeState` (system / light / dark), its event and commands |
+| `src/drops.clg` | files dragged onto a window: `DropRules` (the grants, the limit) |
 | `src/placement.clg` | where windows were: `WindowMemory` and `fitToMonitors` |
 | `shim/win/instance.cpp` | one running copy per user: the mutex, the pipe and the hand-over of a later launch's arguments |
 | `src/links.clg` | what a page may ask the system to open: addresses, files, show in the file manager |

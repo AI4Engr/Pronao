@@ -1,0 +1,273 @@
+// The system's colour scheme (src/theme.clg: App.setTheme / systemTheme / enableThemeCommands) and files dragged onto a window (src/drops.clg: App.enableFileDrop /
+// disableFileDrop). The system is a test double: it logs what it was asked (theme|MODE|SYSTEM, drop|ON) and the test plays what the native layer queues
+// (app_test_theme_changed, app_test_drop). What Windows really does with it is tests/run_theme_window.sh and tests/run_drop_window.sh.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "placement.clh"
+#include "menu.clh"
+#include "app.clh"
+
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_test_push_internal(int handle, string request);
+ext_fn int app_test_system_theme(int dark);
+ext_fn int app_test_theme_changed(int handle, int dark);
+ext_fn int app_test_drop(int handle, string kind, int x, int y, string paths);
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_mkdir_raw(string path);
+ext_fn int app_os_windows();
+
+void check(string name, bool ok) {
+    if (ok) {
+        std::cout << "PASS " << name << std::endl;
+    } else {
+        std::cout << "FAIL " << name << std::endl;
+    }
+}
+
+string under(string dir, string leaf) {
+    if (app_os_windows() == 1) {
+        return dir + "\\" + leaf;
+    }
+    return dir + "/" + leaf;
+}
+
+// the window's log without the entries every window makes
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        if (startsWithText(one, "theme|") || startsWithText(one, "drop|")) {
+            all = all + one + ";";
+        }
+    }
+    return all;
+}
+
+// the events the page of the window has been sent since the last call, one per line
+string events(int handle) {
+    string all = "";
+    string js = "";
+    while (app_test_take_eval(handle, js) == 1) {
+        if (startsWithText(js, "window.__cling_emit([\"theme.") || startsWithText(js, "window.__cling_emit([\"drop.")) {
+            all = all + js.substr(21, js.length() - 24) + "\n";
+        }
+    }
+    return all;
+}
+
+// the same, only the drop switches
+string dropLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        if (startsWithText(one, "drop|")) {
+            all = all + one + ";";
+        }
+    }
+    return all;
+}
+
+string roundTrip(App app, string id, string request) {
+    app_test_inject(app.handle, id, request);
+    int turns = 0;
+    while (app_test_response_ready(app.handle) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    int r = app_test_take_response(app.handle, gotId, status, json);
+    if (r != 1) {
+        return "NO RESPONSE";
+    }
+    return intToString(status) + " " + json;
+}
+
+string nul(string a) {
+    string r = a;
+    r.push_back(char(0));
+    return r;
+}
+
+// a path as it is written inside a JSON string (a backslash is doubled)
+string jsonPath(string p) {
+    string out = "";
+    int i = 0;
+    while (i < p.length()) {
+        if (p[i] == '\\') {
+            out = out + "\\\\";
+        } else {
+            out.push_back(p[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    int h = app.handle;
+    windowLog(h);
+    events(h);
+
+    // ---- the colour scheme ----
+    app_test_system_theme(0);
+    check("the system's scheme is read: light", app.systemTheme() == "light");
+    app_test_system_theme(1);
+    check("and dark", app.systemTheme() == "dark");
+    app_test_theme_changed(h, 0);
+    app.serveOne(50);
+    check("until the application makes a choice a change of the system's scheme tells nobody", events(h) == "");
+
+    check("a word that is not a mode is refused", !app.setTheme("blue") && !app.setTheme("") && !app.setTheme("Dark") && !app.setTheme("dark ") && windowLog(h) == "");
+    check("and nothing was sent to the page", events(h) == "");
+    app_test_system_theme(0);
+    check("dark: the window is told, and so is the page", app.setTheme("dark") && windowLog(h) == "theme|2|0;" && events(h) == "\"theme.changed\",{\"mode\":\"dark\",\"system\":\"light\"}\n");
+    check("light", app.setTheme("light") && windowLog(h) == "theme|1|0;" && events(h) == "\"theme.changed\",{\"mode\":\"light\",\"system\":\"light\"}\n");
+    check("follow the system", app.setTheme("system") && windowLog(h) == "theme|0|0;" && events(h) == "\"theme.changed\",{\"mode\":\"system\",\"system\":\"light\"}\n");
+
+    app_test_theme_changed(h, 1);
+    app.serveOne(50);
+    check("the system went dark: the page is told once", events(h) == "\"theme.changed\",{\"mode\":\"system\",\"system\":\"dark\"}\n");
+    app_test_theme_changed(h, 1);
+    app.serveOne(50);
+    check("a second report of the same change tells nothing more", events(h) == "");
+    app_test_theme_changed(h, 0);
+    app.serveOne(50);
+    check("and back to light", events(h) == "\"theme.changed\",{\"mode\":\"system\",\"system\":\"light\"}\n");
+    string bad = nul("window") + nul("theme") + nul("7");
+    app_test_push_internal(h, bad);
+    app.serveOne(50);
+    check("a report that is not 0 or 1 is ignored", events(h) == "");
+
+    int second = app.openWindow("two", 300, 300, false, "");
+    check("a window opened after the choice looks as chosen", windowLog(second) == "theme|0|0;");
+    app.setTheme("dark");
+    windowLog(h);
+    windowLog(second);
+    events(h);
+    events(second);
+    app_test_theme_changed(second, 1);
+    app.serveOne(50);
+    string told = "\"theme.changed\",{\"mode\":\"dark\",\"system\":\"dark\"}\n";
+    check("the page of every window is told of a change in the system, even when the window stays as chosen", events(h) == told && events(second) == told);
+
+    // ---- the page commands ----
+    string get = "[\"theme.get\",{}]";
+    check("the page cannot ask before the commands are enabled", startsWithText(roundTrip(app, "t0", get), "1 {\"code\":\"unknown_command\""));
+    app.enableThemeCommands(false);
+    app_test_system_theme(1);
+    check("theme.get", roundTrip(app, "t1", get) == "0 {\"mode\":\"dark\",\"system\":\"dark\"}");
+    check("theme.set is not there unless the application allowed it", startsWithText(roundTrip(app, "t2", "[\"theme.set\",{\"mode\":\"light\"}]"), "1 {\"code\":\"unknown_command\""));
+    check("so the choice did not change", roundTrip(app, "t3", get) == "0 {\"mode\":\"dark\",\"system\":\"dark\"}");
+    app.enableThemeCommands(true);
+    check("theme.set", roundTrip(app, "t4", "[\"theme.set\",{\"mode\":\"light\"}]") == "0 null");
+    check("the window and the pages heard", containsText(windowLog(h), "theme|1|1;") && containsText(events(h), "\"mode\":\"light\""));
+    check("a mode that is not one is refused", startsWithText(roundTrip(app, "t5", "[\"theme.set\",{\"mode\":\"purple\"}]"), "1 {\"code\":\"invalid_argument\""));
+    check("so is a missing one", startsWithText(roundTrip(app, "t6", "[\"theme.set\",{}]"), "1 {\"code\":\"invalid_argument\""));
+    check("and a number", startsWithText(roundTrip(app, "t7", "[\"theme.set\",{\"mode\":3}]"), "1 {\"code\":\"invalid_argument\""));
+
+    // ---- files dragged onto a window ----
+    string base = "";
+    app_test_make_temp_dir(base);
+    string dir = under(base, "dropped");
+    app_test_mkdir_raw(dir);
+    string a = under(dir, "a.txt");
+    string b = under(dir, "b.txt");
+    string sibling = under(dir, "neighbour.txt");
+    app_test_write_raw(a, "alpha");
+    app_test_write_raw(b, "bravo");
+    app_test_write_raw(sibling, "secret");
+    string sub = under(dir, "sub");
+    app_test_mkdir_raw(sub);
+    app_test_write_raw(under(sub, "inner.txt"), "inside");
+    windowLog(h);
+    windowLog(second);
+    events(h);
+    events(second);
+    app.enableFileCommands(1000);
+
+    string read = "[\"fs.read\",{\"path\":\"" + jsonPath(a) + "\"}]";
+    app_test_drop(h, "files", 10, 20, nul(a));
+    app.serveOne(50);
+    check("until the application asks a drop reaches nobody", events(h) == "");
+    check("and grants nothing", startsWithText(roundTrip(app, "d0", read), "1 {\"code\":\"forbidden\""));
+
+    check("a count that is not 1 to 64 is refused", !app.enableFileDrop(0, false) && !app.enableFileDrop(65, false) && !app.enableFileDrop(-1, false));
+    check("accepted: every open window is told", app.enableFileDrop(4, false) && windowLog(h) == "drop|1;" && windowLog(second) == "drop|1;");
+    int third = app.openWindow("three", 300, 300, false, "");
+    check("a window opened later accepts drops too", dropLog(third) == "drop|1;");
+
+    app_test_push_internal(h, nul("drop") + nul("files") + nul("x") + nul("1") + nul(a));
+    app.serveOne(50);
+    check("a pointer that is not two numbers is ignored", events(h) == "");
+    app_test_drop(h, "files", 5, 6, "");
+    app.serveOne(50);
+    check("a drop of no paths is ignored", events(h) == "");
+
+    app_test_drop(h, "files", 11, 22, nul(a));
+    app.serveOne(50);
+    string got = events(h);
+    check("a dropped file is reported with the name the policy knows it by", got == "\"drop.files\",{\"x\":11,\"y\":22,\"files\":[{\"path\":\"" + jsonPath(a) + "\",\"kind\":\"file\"}],\"skipped\":0}\n");
+    check("and the page can read it", roundTrip(app, "d1", read) == "0 {\"text\":\"alpha\"}");
+    check("but not the file next to it", startsWithText(roundTrip(app, "d2", "[\"fs.read\",{\"path\":\"" + jsonPath(sibling) + "\"}]"), "1 {\"code\":\"forbidden\""));
+    check("nor one that was not dropped", startsWithText(roundTrip(app, "d3", "[\"fs.read\",{\"path\":\"" + jsonPath(b) + "\"}]"), "1 {\"code\":\"forbidden\""));
+
+    app_test_drop(h, "files", 1, 2, nul(b) + nul(under(dir, "gone.txt")) + nul("relative.txt") + nul(sub));
+    app.serveOne(50);
+    got = events(h);
+    check("only what exists, as a file, is taken: a missing name, a relative one and a folder are skipped", got == "\"drop.files\",{\"x\":1,\"y\":2,\"files\":[{\"path\":\"" + jsonPath(b) + "\",\"kind\":\"file\"}],\"skipped\":3}\n");
+    check("a folder that was refused grants nothing inside it", startsWithText(roundTrip(app, "d4", "[\"fs.read\",{\"path\":\"" + jsonPath(under(sub, "inner.txt")) + "\"}]"), "1 {\"code\":\"forbidden\""));
+
+    app_test_drop(h, "files", 0, 0, nul(a) + nul(b) + nul(a) + nul(b) + nul(a) + nul(b));
+    app.serveOne(50);
+    got = events(h);
+    check("at most the number the application set is taken from one drop", containsText(got, "\"skipped\":2}") && !containsText(got, "\"skipped\":0"));
+
+    string badUtf = "bad";
+    badUtf.push_back(char(255));
+    app_test_drop(h, "files", 0, 0, nul(badUtf) + nul(a));
+    app.serveOne(50);
+    got = events(h);
+    check("a path that is not text is skipped", containsText(got, "\"skipped\":1}") && containsText(got, "a.txt"));
+
+    app_test_drop(h, "files", 3, 4, "");
+    app.serveOne(50);
+    check("a drop with no paths tells nothing (again)", events(h) == "");
+    app_test_drop(h, "wave", 3, 4, nul(a));
+    app.serveOne(50);
+    check("a kind that is not one is ignored", events(h) == "");
+
+    check("with folders on, a dropped folder is accepted and granted as a folder", app.enableFileDrop(4, true));
+    windowLog(h);
+    app_test_drop(h, "files", 9, 9, nul(sub));
+    app.serveOne(50);
+    got = events(h);
+    check("it is reported as a folder", got == "\"drop.files\",{\"x\":9,\"y\":9,\"files\":[{\"path\":\"" + jsonPath(sub) + "\",\"kind\":\"folder\"}],\"skipped\":0}\n");
+    check("and what is in it can be read", startsWithText(roundTrip(app, "d5", "[\"fs.read\",{\"path\":\"" + jsonPath(under(sub, "inner.txt")) + "\"}]"), "0 "));
+    check("but not beside it", startsWithText(roundTrip(app, "d6", "[\"fs.read\",{\"path\":\"" + jsonPath(sibling) + "\"}]"), "1 {\"code\":\"forbidden\""));
+
+    app.revokeGrants();
+    check("revokeGrants takes the drops back", startsWithText(roundTrip(app, "d7", read), "1 {\"code\":\"forbidden\""));
+
+    app.disableFileDrop();
+    check("disabled: the windows are told", windowLog(h) == "drop|0;");
+    app_test_drop(h, "files", 1, 1, nul(a));
+    app.serveOne(50);
+    check("and a late drop is ignored", events(h) == "" && startsWithText(roundTrip(app, "d8", read), "1 {\"code\":\"forbidden\""));
+    int fourth = app.openWindow("four", 300, 300, false, "");
+    check("a window opened now does not accept drops", dropLog(fourth) == "");
+
+    app_test_remove_tree(base);
+    return 0;
+}

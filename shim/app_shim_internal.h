@@ -43,5 +43,15 @@ int app_queue_entry_new();
 void app_queue_entry_end(int handle);
 void app_tray_forget(int handle);
 
+// The colour scheme (shim/win/theme.cpp). The title bar of a window: dark or light. The page's preferred scheme through the browser engine's controller: mode 0 follow the
+// system, 1 light, 2 dark; 0 ok, 4 this runtime cannot.
+void app_theme_titlebar(void* nativeWindow, bool dark);
+int app_theme_page(void* controller, int mode);
+
+// Files dragged onto the window (shim/win/drop.cpp): makes the window a drop target for files, or stops (on false). `controller` is the browser engine's. Both UI thread only.
+// app_drop_forget: the window is being destroyed.
+int app_drop_set(void* nativeWindow, void* controller, int handle, bool on);
+void app_drop_forget(void* nativeWindow);
+
 // A modal window has closed: its owner (the window it was modal for) can be used again. From the window procedure of the modal window.
 void app_window_modal_ended(int owner);

@@ -1,0 +1,115 @@
+// app-cling -- The system's colour scheme (light or dark) and the application's choice of how its windows look: follow the system, or stay light, or stay dark.
+// The native layer sets the title bar and what the page's CSS media query `prefers-color-scheme` answers, and says when the system's scheme changed
+// (the record "window" "theme" 0|1); WHAT is allowed and what the page is told is decided here. A page only ever gets the NAMES "system", "light", "dark".
+//
+// A window follows the system by itself even if none of this is used: its page (the browser engine does that) and its title bar (the window library does). What this adds is the
+// application knowing (`systemTheme`), a FORCED light or dark for the title bar and the page, going back to "system", and the event `theme.changed {mode, system}` for pages that
+// draw their own colours.
+#include "cjson_item.clh"
+#include "cjson_api.clh"
+#include "cjson_parse.clh"
+#include "cjson_print.clh"
+#include "text.clh"
+#include "core.clh"
+#include "windows.clh"
+
+ext_fn int app_theme_system();
+ext_fn int app_window_theme(int handle, int mode);
+
+// 0 "system", 1 "light", 2 "dark"; -1 for any other word
+int themeModeCode(string name) {
+    if (name == "system") {
+        return 0;
+    }
+    if (name == "light") {
+        return 1;
+    }
+    if (name == "dark") {
+        return 2;
+    }
+    return -1;
+}
+
+string themeModeName(int mode) {
+    if (mode == 1) {
+        return "light";
+    }
+    if (mode == 2) {
+        return "dark";
+    }
+    return "system";
+}
+
+// what app_theme_system answered: 0 light, 1 dark, anything else (a system that has no such setting) unknown
+string themeSchemeName(int scheme) {
+    if (scheme == 0) {
+        return "light";
+    }
+    if (scheme == 1) {
+        return "dark";
+    }
+    return "unknown";
+}
+
+class ThemeState {
+public:
+    int mode;          // what the application chose: 0 follow the system, 1 light, 2 dark
+    int system;        // the system's scheme as last reported (0 light, 1 dark, -1 not known yet)
+    bool active;       // a choice was made (setTheme): the windows were told, and say when the system's scheme changes
+    WindowBook book;   // the application's windows
+    ThemeState(WindowBook windows) {
+        book = windows;
+        mode = 0;
+        system = -1;
+        active = false;
+    }
+
+    // {mode, system}: the application's choice and the system's scheme right now
+    Item stateItem() {
+        Item e = createObject();
+        addStringToObject(e, "mode", themeModeName(mode));
+        addStringToObject(e, "system", themeSchemeName(app_theme_system()));
+        return e;
+    }
+
+    // Chooses how every window looks, now and for windows opened later. false for a word that is not "system", "light" or "dark" (nothing changes).
+    bool apply(string name) {
+        int code = themeModeCode(name);
+        if (code < 0) {
+            return false;
+        }
+        mode = code;
+        active = true;
+        system = app_theme_system();
+        int i = 0;
+        while (i < book.items.size()) {
+            Window w = book.items[i];
+            app_window_theme(w.handle, code);
+            i = i + 1;
+        }
+        book.emitAll("theme.changed", printUnformatted(stateItem()));
+        return true;
+    }
+
+    // A window opened after a choice was made looks as chosen. (Before one was made a window is left alone.)
+    void windowOpened(int handle) {
+        if (active) {
+            app_window_theme(handle, mode);
+        }
+    }
+
+    // The native layer reports the system's scheme (each window says so; the first report of a change is the one that counts). Not before a choice was made.
+    void systemChanged(string scheme) {
+        int now = -1;
+        if (scheme == "0") {
+            now = 0;
+        } else if (scheme == "1") {
+            now = 1;
+        }
+        if (!active || now < 0 || now == system) {
+            return;
+        }
+        system = now;
+        book.emitAll("theme.changed", printUnformatted(stateItem()));
+    }
+};

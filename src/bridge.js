@@ -71,6 +71,50 @@
     return window.cling.invoke('notification.show', { title: title, text: text === undefined ? '' : text, kind: o.kind || 'info', id: o.id || '' });
   };
   window.cling.onNotificationClick = function (fn) { return window.cling.on('notification.click', function (e) { fn(e.id); }); };
+  // theme: get() -> {mode: 'system' | 'light' | 'dark', system: 'light' | 'dark' | 'unknown'}, set(mode) if the application allowed it; onChange(fn) hears {mode, system} when the
+  // choice or the system's colour scheme changes (the CSS media query prefers-color-scheme follows the engine by itself)
+  window.cling.theme = {
+    get: call('theme.get'),
+    set: function (mode) { return window.cling.invoke('theme.set', { mode: mode }); },
+    onChange: function (fn) { return window.cling.on('theme.changed', fn); }
+  };
+  // files dragged from the file manager onto the window, when the application called enableFileDrop: onDrop(fn) gets {x, y, files: [{path, kind}], skipped} and the files can then be read
+  // with cling.fs under those paths. While a drag of files is over the window, onDragEnter(fn) and onDragOver(fn) (about ten a second) get {x, y} (CSS pixels) and onDragLeave(fn) hears that
+  // the drag left or ended. A page that handles drops itself (it calls preventDefault in its own dragover / drop handler) is left alone: nothing is sent for those.
+  window.cling.onDrop = function (fn) { return window.cling.on('drop.files', fn); };
+  window.cling.onDragEnter = function (fn) { return window.cling.on('drop.enter', fn); };
+  window.cling.onDragOver = function (fn) { return window.cling.on('drop.over', fn); };
+  window.cling.onDragLeave = function (fn) { return window.cling.on('drop.leave', fn); };
+  (function () {
+    var depth = 0, lastOver = 0;
+    var files = function (e) { var t = e.dataTransfer && e.dataTransfer.types; return window.__cling_drop === true && !e.defaultPrevented && !!t && Array.prototype.indexOf.call(t, 'Files') >= 0; };
+    var at = function (e) { return { x: Math.round(e.clientX), y: Math.round(e.clientY) }; };
+    var say = function (name, payload) { window.__cling_emit([name, payload]); };
+    window.addEventListener('dragenter', function (e) {
+      if (files(e) && depth++ === 0) say('drop.enter', at(e));
+    });
+    window.addEventListener('dragover', function (e) {
+      if (!files(e)) return;
+      e.preventDefault();                                     // the engine then takes the drop instead of trying to open the file in the window
+      e.dataTransfer.dropEffect = 'copy';
+      var now = Date.now();
+      if (now - lastOver >= 100) { lastOver = now; say('drop.over', at(e)); }
+    });
+    window.addEventListener('dragleave', function (e) {
+      if (files(e) && depth > 0 && --depth === 0) say('drop.leave', {});
+    });
+    window.addEventListener('drop', function (e) {
+      if (!files(e)) return;
+      e.preventDefault();
+      if (depth > 0) { depth = 0; say('drop.leave', {}); }
+      var list = e.dataTransfer.files;
+      var p = at(e);
+      // the engine turns the File objects into paths for the program (the page never sees them); the program decides what becomes of them
+      if (list && list.length && window.chrome && window.chrome.webview && window.chrome.webview.postMessageWithAdditionalObjects) {
+        window.chrome.webview.postMessageWithAdditionalObjects('cling.drop ' + p.x + ' ' + p.y, list);
+      }
+    });
+  })();
   window.cling.proc = { run: call('proc.run') };
   // shell: openUrl({url}) opens an address in the default browser, openFile({path}) a file in its default program, reveal({path}) shows a file in the file
   // manager. Only what the application allowed (schemes, file types, the folders of the file commands).
