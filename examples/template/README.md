@@ -16,4 +16,4 @@ While writing the front end, run its dev server and start the program with `APP_
 
 Add a command in `main.clg` with `app.command("name", closure Command [] (Item args) { ... });` and call it from the page with
 `cling.invoke("name", args)`. What a page may do beyond that (files, programs, dialogs, watching folders, window control) is off until
-`main.clg` turns it on; see app-cling's README.
+`main.clg` turns it on; see app-cling's user manual (`docs/manual/`).

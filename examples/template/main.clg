@@ -3,7 +3,7 @@
 //   APP_DEBUG=1                         turns the developer tools on
 #include "app.clh"
 
-// The page sends {name: "...", times: 2}; the compiler writes decodeGreetArgs because this is a struct (see the README, "Arguments into a struct").
+// The page sends {name: "...", times: 2}; the compiler writes decodeGreetArgs because this is a struct (see docs/manual/02-how-it-works.md, "Reading a command's arguments into a struct").
 struct GreetArgs {
 public:
     string name;

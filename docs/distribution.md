@@ -28,10 +28,10 @@ RELEASE=1 ICON=app.ico APP_VERSION=1.4.0 APP_NAME="My app" APP_COMPANY="Example 
 - **`RELEASE=1`** compiles out the developer tools and the development-server switch, strips the symbols, and links the exe as a **Windows program** (no black console
   window when it is double-clicked). `GUI=0` keeps the console; the tests keep it because they read what the program prints. In a windowed program `std::cout` goes nowhere:
   use `app.showMessage(title, text)` for what the user must be told.
-- **`ICON=app.ico`** is the icon in Explorer, the title bar and the taskbar (see the README). `scripts/make_icon.py` makes a placeholder.
+- **`ICON=app.ico`** is the icon in Explorer, the title bar and the taskbar (see [windows](manual/05-windows.md#the-programs-icon)). `scripts/make_icon.py` makes a placeholder.
 - **`APP_VERSION`** (numbers and dots, like `1.4.0`) and **`APP_NAME`, `APP_COMPANY`, `APP_DESCRIPTION`, `APP_COPYRIGHT`** become the version resource that Explorer shows under
   Properties > Details. An exe with no version information and no signature is what virus scanners and SmartScreen are most suspicious of; fill them in. Letters, digits, spaces and `. , _ - ( )` only.
-- Size: about 1.6 MB for a small program with `RELEASE=1` (the README has the numbers).
+- Size: about 1.6 MB for a small program with `RELEASE=1` ([getting started](manual/01-getting-started.md) has the numbers).
 
 ## Signing the exe
 
@@ -63,7 +63,7 @@ signtool verify /pa /v out\my-app.exe
 
 A new, unsigned exe from an unknown publisher is sometimes flagged by heuristics. What helps, in order: sign it; keep the version resource filled in; never pack or compress the exe;
 send the exe to the scanner's vendor as a false positive (all the large ones have a form for it). The program starts other programs only through `proc.run`, from a list the application
-wrote (see the README), and a scanner that is told that can be told what it does.
+wrote (see [programs and links](manual/04-programs-and-links.md)), and a scanner that is told that can be told what it does.
 
 ## A checklist before sending it
 
