@@ -13,6 +13,9 @@ Each chapter says what the application writes in CeeLing, what the page calls in
 | 7 | [Background work](07-background-work.md) | async commands, cancelling, deadlines, workers and the main thread |
 | 8 | [What a page may do, and what is checked](08-security.md) | the limits on a page; what CeeLing checks and what it trusts |
 | 9 | [The web UI and giving the program away](09-web-ui-and-shipping.md) | a front end of many files, the development server, release builds |
+| 10 | [Giving a program to someone else](10-distribution.md) | the runtime check, the release build, signing, a checklist |
+| A | [One command, from the page to the reply](appendix-command-journey.md) | `fs.read` with the generated C++ beside the CeeLing |
+| B | [Compile errors you will meet](appendix-compile-errors.md) | what each CeeLing message meant and the fix |
 | | [Source map](source-map.md) | where things are in the repository |
 
-More in `docs/`: [giving a program to someone else](../distribution.md), [one command from page to reply](../command-journey.md), [CeeLing in app-cling](../ceeling-in-app-cling.md), [compile errors](../compile-errors.md).
+What the language did to this program, with counts: [chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-app-cling.md).

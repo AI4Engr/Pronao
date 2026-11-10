@@ -1,6 +1,6 @@
-# One command, from the page to the reply
+# Appendix A. One command, from the page to the reply
 
-First version, 2026-10-29. The command is `fs.read`; the page asks for a file, and the answer comes back. Every piece of code below is quoted from the repository
+The command is `fs.read`; the page asks for a file, and the answer comes back. Every piece of code below is quoted from the repository
 (or from the C++ the compiler wrote from it, in `$TMPDIR/app-cling-headless/work_headless_main/` after `tests/run_headless.sh`). Line numbers in the generated code
 are `.clg` lines: that is what a failed bounds or null check would print.
 
@@ -42,7 +42,7 @@ at the command name or the path. This runs on the window's thread; the program's
 `App.serveOne` in `src/app.clg` waits on every window at once and hands a request to the dispatcher:
 
 ```
-int ready = app_wait_any(windows.handles, wait, from);
+int ready = app_wait_any(waitOn, wait, from);
 ...
 int r = app_next_call(from, 0, id, request);
 ...
@@ -78,18 +78,18 @@ rejects with.
 
 | CeeLing | generated C++ |
 |---|---|
-| `command("fs.read", closure Command [files, maxReadBytes] (Item args) {` | `class __closure_app_1 : public Command { std::shared_ptr<FileGate> files; int maxReadBytes; ... }` |
+| `command("fs.read", closure Command [files, maxReadBytes] (Item args) {` | `class __closure_app_8 : public Command { std::shared_ptr<FileGate> files; int maxReadBytes; ... }` |
 | `string path = requiredString(args, "path");` | `std::string path = requiredString(args, "path");` |
-| `FsResult r = files.read(path, maxReadBytes);` | `std::unique_ptr<FsResult> r = cling::nn(this->files, "line 1866")->read(path, this->maxReadBytes);` |
-| `fsCheck(r.status, "cannot read " + path);` | `fsCheck(cling::nn(r, "line 1867")->status, ("cannot read " + path));` |
-| `if (!isUtf8(r.text)) { throw "not_text: ..."; }` | `if (!isUtf8(cling::nn(r, "line 1868")->text)) { throw std::string("not_text: ..."); }` |
+| `FsResult r = files.read(path, maxReadBytes);` | `std::unique_ptr<FsResult> r = cling::nn(this->files, "line 404")->read(path, this->maxReadBytes);` |
+| `fsCheck(r.status, "cannot read " + path);` | `fsCheck(cling::nn(r, "line 405")->status, ("cannot read " + path));` |
+| `if (!isUtf8(r.text)) { throw "not_text: ..."; }` | `if (!isUtf8(cling::nn(r, "line 406")->text)) { throw std::string("not_text: ..."); }` |
 | `Item result = createObject();` | `std::shared_ptr<Item> result = createObject();` |
-| `addStringToObject(result, "text", r.text);` | `addStringToObject(result, "text", cling::nn(r, "line 1872")->text);` |
+| `addStringToObject(result, "text", r.text);` | `addStringToObject(result, "text", cling::nn(r, "line 410")->text);` |
 
 Things the source never says and the compiler decided:
 - The closure lists what it captures, `[files, maxReadBytes]`, by value; there is no way to write "capture everything by reference". The closure became a class with those as fields.
 - `files` is a `shared_ptr`, because the app and every command that uses the file policy hold it. `r` is a `unique_ptr`, because only this function owns that result.
-- Each `.` on an object became `cling::nn(x, "line N")->`: if `r` were empty the program would print `null dereference at line 1867` and stop, instead of reading address 0.
+- Each `.` on an object became `cling::nn(x, "line N")->`: if `r` were empty the program would print `null dereference at line 405` and stop, instead of reading address 0.
 - A failed `requiredString` throws `invalid_argument: \`path\` must be a string`; nothing else in this function can reach a missing field.
 
 ## 6. The file policy decides (CeeLing again)
@@ -114,12 +114,12 @@ The generated version:
 ```cpp
 std::unique_ptr<FsResult> FileGate::read(const std::string& path, int maxBytes) {
     std::unique_ptr<FsResult> n = normalize(path, true, true);
-    if ((cling::nn(n, "line 597")->status != 0)) {
+    if ((cling::nn(n, "line 598")->status != 0)) {
         return std::move(n);                       // the compiler saw this was the last use of n
     }
     ...
-    int st = app_fs_read(cling::nn(o, "line 612")->h, maxBytes, data);
-    app_fs_close(cling::nn(o, "line 613")->h);
+    int st = app_fs_read(cling::nn(o, "line 613")->h, maxBytes, data);
+    app_fs_close(cling::nn(o, "line 614")->h);
     return std::make_unique<FsResult>(st, data);
 }
 ```
@@ -155,4 +155,4 @@ For a refused read the same line carries `Reply(1, "{\"code\":\"forbidden\",\"me
 - **What the page can influence:** the command name, the arguments, and nothing else. The window list, the allowed folders, the size limit are chosen by the program.
 - **What the compiler contributed that is not visible in the source:** the pointer kinds, one `std::move`, and the `cling::nn` on each dereference.
 - **What is outside the checking:** `app_fs_read` (the shim and the operating system), WebView2, and the correctness of the policy itself: the compiler can say that the code
-  has no dangling reference, not that `allowedFinal` compares the right strings. That is what `tests/files_main.clg` (139 checks) and `tests/negative_controls.sh` are for.
+  has no dangling reference, not that `allowedFinal` compares the right strings. That is what `tests/files_main.clg` (147 checks) and `tests/negative_controls.sh` are for.

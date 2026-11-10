@@ -3,7 +3,7 @@
 #   powershell ... -File scripts\sign.ps1 -File out\my-app.exe -Thumbprint 0123ABCD...       (a certificate that is already in the user's or the machine's store)
 # The password is read from an environment variable, never from the command line (a command line is visible to other programs and ends up in logs).
 # Sign LAST: any change to the exe afterwards (strip, a packer, editing resources) breaks the signature. Use -Timestamp so it stays valid after the certificate expires.
-# Exit code 0 when the file now carries a signature that hashes right (whether Windows TRUSTS the certificate is another question: see docs/distribution.md).
+# Exit code 0 when the file now carries a signature that hashes right (whether Windows TRUSTS the certificate is another question: see docs/manual/10-distribution.md).
 param(
     [Parameter(Mandatory = $true)][string]$File,
     [string]$Pfx = '',

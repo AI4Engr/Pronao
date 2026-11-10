@@ -28,7 +28,7 @@ because its server's CORS list already contains it.
 
 ## Giving the program to someone else
 
-[docs/distribution.md](../distribution.md) has the whole page; the short version for a portable exe:
+[chapter 10](10-distribution.md) has the whole page; the short version for a portable exe:
 
 ```
 RELEASE=1 ICON=app.ico APP_VERSION=1.4.0 APP_NAME="My app" APP_COMPANY="Example Co" bash scripts/build.sh main.clg out/my-app.exe     # or: bash build.sh --release in a new project

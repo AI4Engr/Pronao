@@ -73,11 +73,10 @@ Behaviour that needs a real screen (how a menu is drawn, a toast, a real mouse d
 
 ## Documentation
 
-* **[User manual](docs/manual/README.md)**: nine chapters, from getting started to shipping.
-* [Giving a program to someone else](docs/distribution.md): the runtime check, the release build, signing, a checklist.
-* [One command, from the page to the reply](docs/command-journey.md): `fs.read` with the generated C++ beside the CeeLing.
-* [CeeLing in app-cling](docs/ceeling-in-app-cling.md): what the language and its compiler do here, with numbers.
-* [Compile errors you will meet](docs/compile-errors.md) and the fix for each.
+* **[User manual](docs/manual/README.md)**: ten chapters and two appendices, from getting started to shipping.
+* [Giving a program to someone else](docs/manual/10-distribution.md): the runtime check, the release build, signing, a checklist.
+* [One command, from the page to the reply](docs/manual/appendix-command-journey.md): `fs.read` with the generated C++ beside the CeeLing.
+* [Compile errors you will meet](docs/manual/appendix-compile-errors.md) and the fix for each.
 * [Source map](docs/manual/source-map.md): where things are in the repository.
 * [Chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-app-cling.md): what the language did to this program, with counts of the checks it inserted and what they cost.
 

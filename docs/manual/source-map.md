@@ -10,7 +10,7 @@ Where things are in the repository.
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
 | `src/menu.clg` | menus: `Menu` (the rules for ids, labels, shortcuts) and the flat spec the native layer builds a menu from |
 | `scripts/sign.ps1`, `scripts/check_signature.ps1` | sign an exe with a certificate file or a certificate in the store; say what the signature of an exe is |
-| `docs/distribution.md` (and `docs/manual/`, the user manual) | giving the program to someone else: the runtime check, the release build, signing, a checklist |
+| `docs/manual/` | the user manual: ten chapters, the command journey and the compile errors |
 | `scripts/make_icon.py` | a placeholder `.ico` (the build option `ICON=`) |
 | `src/theme.clg` | the colour scheme: `ThemeState` (system / light / dark), its event and commands |
 | `src/drops.clg` | files dragged onto a window: `DropRules` (the grants, the limit) |
@@ -28,12 +28,9 @@ Where things are in the repository.
 | `src/watches.clg` | `Watches`: folder watches, event merging and the permission re-check before delivery |
 | `src/windows.clg` | `Window`, `WindowBook`, `PopupBook`, `OpenWindowArgs`; `readOpenWindowArgs` |
 | `scripts/modules.sh` | the list of these modules, in one place for the build, the sanitizers, WSL runs and the statistics |
-| `scripts/pointer_demands.sh` | what the modules need from each other's classes (see "One program, several files" in `docs/ceeling-in-app-cling.md`) |
+| `scripts/pointer_demands.sh` | what the modules need from each other's classes (see "One program, many files" in chapter 16 of the CeeLing guide) |
 | `scripts/ptr_table.py` | compares the pointer kinds and function bodies of two builds (used to check that a refactor did not change what the compiler inferred) |
 | `src/bridge.js` | defines `window.cling.*`; embedded into the program at build time |
 | `shim/` | the native layer: `app_native.h` lists every primitive; `app_shim.cpp` window and queue; `win/` and `posix/` the OS parts |
-| `docs/ceeling-in-app-cling.md` | what the language and its compiler do in this program, with numbers (`scripts/ceeling_stats.sh`, `scripts/bench_checks.sh` for the cost of the run-time checks), what they found and where they got in the way |
-| `docs/command-journey.md` | one command (`fs.read`) from the page to the reply, with the generated C++ beside the CeeLing |
-| `docs/compile-errors.md` | the compile errors you will meet, what each meant, and the fix |
 | `examples/hello/` | window with three buttons |
 | `tests/` | headless suites, real-window self-test, queue stress test, sanitizer and negative-control scripts; `tests/doubles/` stands in for the window and the dialogs |

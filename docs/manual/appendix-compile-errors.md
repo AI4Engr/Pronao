@@ -1,7 +1,7 @@
-# Compile errors you will meet in CeeLing, and what to do
+# Appendix B. Compile errors you will meet, and what to do
 
-First version, 2026-10-29. Every message below was produced by `build/cling.exe` on the day (the fixtures are under `CeeLing/tests/safety/`, the small
-programs for the "language limits" are in the text); long help texts are shortened with `...`. A CeeLing error is a refusal, not a warning: the program is
+The messages below are the CeeLing compiler's (the fixtures are under `tests/safety/` in the [CeeLing repository](https://github.com/AI4Engr/CeeLing); the small
+programs for the "language limits" are in the text); long help texts are shortened with `...`. Last checked against the compiler on 2026-11-09. A CeeLing error is a refusal, not a warning: the program is
 outside the language until it is rewritten. The ones that came from building app-cling say so.
 
 How to read one:
@@ -61,7 +61,6 @@ These are limits of today's language. The first two are plain messages; the othe
 | What you wrote | What you get | Instead |
 |---|---|---|
 | `name().length()` (a method on a call's result) | ``call to unknown function/method `length` `` | `string n = name(); int k = n.length();` |
-| `v.clear()` | ``call to unknown function/method `clear` `` | Build a new vector; there is no `clear`. |
 | `use(std::vector<string>())` (an empty vector as an expression) | `Syntax error ... node type 'this_expression'` | `std::vector<string> none; use(none);` or a small helper that returns one. |
 | `x = a > b ? 1 : 0;` | `Syntax error ... near: ? 1 : 0` | An `if`/`else`. |
 | `return x` (missing `;`) | `Syntax error ... node type ';'` | Add the `;`. Syntax errors give the line and column of the parser, not a fix. |
