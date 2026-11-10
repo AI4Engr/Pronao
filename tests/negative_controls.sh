@@ -27,7 +27,6 @@ control_run() { # name  file (relative to src/, or shim/...)  old  new  program 
     local dir="$W/${1// /_}"
     mkdir -p "$dir/src" "$dir/work" "$dir/shim"
     cp "$HERE"/src/* "$dir/src/"
-    cp "$HERE/examples/tauriport/tauriport.clg" "$dir/src/"      # (only compiled by the tauriport controls)
     cp -r "$HERE"/shim/. "$dir/shim/"
     mkdir -p "$dir/tests/doubles" && cp "$HERE"/tests/doubles/* "$dir/tests/doubles/"     # (the doubles include ../../shim/queue.h)
     local target="$dir/src/$2"
@@ -43,7 +42,7 @@ s = s.replace(old, new)
 open(p, 'w', encoding='utf-8', newline='').write(s.replace('\n', '\r\n') if crlf else s)
 PYEOF
     local extra=""
-    [ "$5" = "tauriport_main" ] && extra="$HERE/tests/support.clg $dir/src/tauriport.clg"
+    [ "$5" = "file_extras_main" ] && extra="$HERE/tests/support.clg"
     local assets="-"
     [ "$5" = "site_main" ] && assets="$HERE/tests/site"
     ASSETS="$assets" EXTRA="$extra" SRC="$dir/src" SHIM="$dir/shim" DOUBLES="$dir/tests/doubles" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
@@ -129,10 +128,7 @@ control "a setting is checked against its range" settings.clg '        if (v < l
 control "a setting string has a limit" settings.clg '            if (s.length() > limits[i]) {' '            if (false) {' store_main "a string over its limit is refused"
 control "a setting is saved by swapping the file in" settings.clg '        return gate.replace(tmp, filePath());' '        return 0;' store_main "another run reads what was saved"
 control "replace stays inside one folder" files.clg '        if (folder != parentOf(b.text)) {' '        if (false) {' files_main "replace into another folder is refused"
-if command -v lore > /dev/null 2>&1 || [ -n "${LORE_CLI_PATH:-}" ]; then
-    control "recursive remove checks the folder first" files.clg '            if (isRootItself(here.text)) {' '            if (false) {' tauriport_main "the opened folder itself is never removed"
-    control "paths that could be options are refused" tauriport.clg '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000) || path[0] == '"'"'-'"'"'' '    if (path.length() == 0 || path.length() > 1000 || !plainText(path, 1000)' tauriport_main "a path that could be read as an option is refused"
-fi
+control "recursive remove checks the folder first" files.clg '            if (isRootItself(here.text)) {' '            if (false) {' file_extras_main "the allowed folder itself is never removed"
 control "a dropped file is granted to the policy" drops.clg '                g = gate.grantFile(path);' '                g = new FsResult(0, path);' system_main "and the page can read it"
 control "a dropped folder needs the application yes" drops.clg '                if (folders) {' '                if (true) {' system_main "only what exists"
 control "a drop takes at most the number set" drops.clg 'if (taken >= maxFiles || !plainText(path, 32000)) {' 'if (!plainText(path, 32000)) {' system_main "at most the number"

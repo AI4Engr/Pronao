@@ -4,3 +4,5 @@ third_party/
 *.obj
 /build/
 __pycache__/
+/TODO.md
+/CLAUDE.md

@@ -8,23 +8,21 @@ language and its compiler give a real program of about 6,000 lines, and where th
 
 ## In numbers
 
-Measured on 2026-10-31 (the app in 17 modules, since the split of `app.clg`; tauriport's column is from 2026-10-29, its file did not change) with `scripts/ceeling_stats.sh` after `tests/run_headless.sh`:
+Measured on 2026-10-31 (the app in 17 modules, since the split of `app.clg`) with `scripts/ceeling_stats.sh` after `tests/run_headless.sh`:
 
-| | app-cling `src/` | tauriport (`examples/tauriport/tauriport.clg`) |
-|---|---|---|
-| CeeLing source (comments and blank lines left out) | 6,115 lines | 771 lines |
-| Memory-management words in that source (`delete`, `.get()`, `reinterpret`, `std::move`, `unique_ptr`, `shared_ptr`, `weak_ptr`) | **0** | **0** |
-| Smart pointers the compiler chose and wrote in the generated C++ | 79 `unique_ptr`, 559 `shared_ptr`, 0 `weak_ptr` | 3 `unique_ptr`, 143 `shared_ptr`, 0 `weak_ptr` |
-| `std::move` the compiler inserted | 59 | 28 |
-| Bounds checks the compiler inserted (`cling::at`) | 508 | 62 |
-| Null checks the compiler inserted (`cling::nn`) | 586 | 79 |
-| Closures, of which thread jobs (`spawn`) | 47, of which 7 | 23, of which 9 |
-| `ext_fn` functions: the native surface the checked code can call (different names; a function several files use is declared in each, 88 lines in all) | 69 | 1 |
+| | app-cling `src/` |
+|---|---|
+| CeeLing source (comments and blank lines left out) | 6,115 lines |
+| Memory-management words in that source (`delete`, `.get()`, `reinterpret`, `std::move`, `unique_ptr`, `shared_ptr`, `weak_ptr`) | **0** |
+| Smart pointers the compiler chose and wrote in the generated C++ | 79 `unique_ptr`, 559 `shared_ptr`, 0 `weak_ptr` |
+| `std::move` the compiler inserted | 59 |
+| Bounds checks the compiler inserted (`cling::at`) | 508 |
+| Null checks the compiler inserted (`cling::nn`) | 586 |
+| Closures, of which thread jobs (`spawn`) | 47, of which 7 |
+| `ext_fn` functions: the native surface the checked code can call (different names; a function several files use is declared in each, 88 lines in all) | 69 |
 
-tauriport is a port of a Tauri application's backend (a folder under version control with the `lore` tool, shown by a web UI) written on top of app-cling; its column
-counts its own file only, not the app-cling modules it uses. Its single `ext_fn` is an environment-variable lookup. The count of `shared_ptr` is high relative to its size;
-I have not looked at why for each one, and the compiler's reasons are not printed.
-The numbers come from `scripts/ceeling_stats.sh` (for the second column: `SRC=examples/tauriport/tauriport.clg GEN=tauriport.cpp scripts/ceeling_stats.sh <work dir>`).
+The count of `shared_ptr` is high relative to the size; I have not looked at why for each one, and the compiler's reasons are not printed.
+The numbers come from `scripts/ceeling_stats.sh`; `SRC` and `GEN` count other files.
 
 (An earlier version of this page counted declaration lines, 48, as if they were functions; the count by name was 47.)
 

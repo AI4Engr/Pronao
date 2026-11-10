@@ -1,0 +1,74 @@
+// fs.writeBytes, fs.readBytes and fs.remove {recursive} through the whole pipeline (the page's queue, the dispatcher, the file gate),
+// in a scratch folder, with the headless window double. The folder is allowed by the application, as a real program would.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_exists(string path);
+
+Item fieldItem(string json, string name) {
+    return getObjectItem(parse(json), name);
+}
+
+int main() {
+    App app = new App();
+    app.open("extras", 100, 100, "<html></html>", "", false);
+    app.enableFileCommands(16777216);
+
+    string base = "";
+    app_test_make_temp_dir(base);
+    string root = base + "/project";
+    app_test_write_raw(base + "/seed", "x");
+    FileGate seedGate = new FileGate();
+    seedGate.allow(base);
+    seedGate.mkdir(root, false);
+    seedGate.clear();
+    check("the folder is allowed", app.allowFolder(root));
+
+    // text, then bytes (a byte string with a NUL, a high byte and a newline)
+    Item writeText = pathArgs(root + "/a.txt");
+    addStringToObject(writeText, "text", "hello\n");
+    check("a text file", roundTrip(app, "f1", requestText("fs.write", writeText)) == "0 null");
+    string binary = "P";
+    binary.push_back(char(0));
+    binary.push_back(char(255));
+    binary.push_back('D');
+    binary.push_back(char(10));
+    Item writeBin = pathArgs(root + "/docs/deep/c.bin");
+    addStringToObject(writeBin, "base64", base64Encode(binary));
+    addBoolToObject(writeBin, "parents", true);
+    check("bytes into a folder that does not exist yet", roundTrip(app, "f2", requestText("fs.writeBytes", writeBin)) == "0 null");
+    string onDisk = "";
+    app_test_read_raw(root + "/docs/deep/c.bin", onDisk);
+    check("the bytes arrived exactly", onDisk == binary);
+    Item badBase64 = pathArgs(root + "/bad.bin");
+    addStringToObject(badBase64, "base64", "not base64!");
+    check("bad base64 is refused and writes nothing", failedWith(roundTrip(app, "f3", requestText("fs.writeBytes", badBase64)), "invalid_argument") && app_test_exists(root + "/bad.bin") == 0);
+    Item noParents = pathArgs(root + "/missing/x.txt");
+    addStringToObject(noParents, "text", "x");
+    check("without parents a missing folder is an error", failedWith(roundTrip(app, "f4", requestText("fs.write", noParents)), "not_found"));
+    string readBack = roundTrip(app, "f5", requestText("fs.readBytes", pathArgs(root + "/docs/deep/c.bin")));
+    check("readBytes returns base64", ok(readBack) && base64Decode(fieldItem(bodyOf(readBack), "base64").valuestring) == binary);
+    Item outside = pathArgs(base + "/seed");
+    addStringToObject(outside, "base64", base64Encode("y"));
+    check("bytes outside the allowed folder are refused", failedWith(roundTrip(app, "f6", requestText("fs.writeBytes", outside)), "forbidden"));
+
+    // recursive remove
+    Item rm = pathArgs(root + "/docs");
+    check("a folder with things in it is not removed by default", failedWith(roundTrip(app, "x1", requestText("fs.remove", rm)), "not_empty"));
+    addBoolToObject(rm, "recursive", true);
+    check("fs.remove recursive", roundTrip(app, "x2", requestText("fs.remove", rm)) == "0 null" && app_test_exists(root + "/docs") == 0);
+    Item rmRoot = pathArgs(root);
+    addBoolToObject(rmRoot, "recursive", true);
+    check("the allowed folder itself is never removed", failedWith(roundTrip(app, "x3", requestText("fs.remove", rmRoot)), "forbidden") && app_test_exists(root + "/a.txt") == 1);
+
+    app.gate.clear();
+    app_test_remove_tree(base);
+    return 0;
+}

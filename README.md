@@ -42,7 +42,7 @@ PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hel
 ./hello.exe                      # a window with three buttons
 
 bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh      # a project of your own: a page, a main.clg, a build script
-bash tests/run_headless.sh       # ~20 s, 17 programs, 1,021 checks, no window needed
+bash tests/run_headless.sh       # ~20 s, 17 programs, 982 checks, no window needed
 ```
 
 [Getting started](docs/manual/01-getting-started.md) lists every test script and what each one proves.
@@ -71,18 +71,15 @@ CeeLing checks the command table and everything the commands do with their own d
 
 Behaviour that needs a real screen (how a menu is drawn, a toast, a real mouse drag) cannot be seen by the automated tests. Each manual chapter says what its tests do see and what they do not.
 
-## Evidence: porting a real backend
-
-`examples/tauriport/` is the Tauri backend of tauriport (17 commands: version control with the `lore` tool, a watcher, dialogs) rewritten as CeeLing, with 50 checks against the real tool and a run in a real window. The Tauri original enforced no file policy at all; here every path the page names goes through the file gate. [The case study](docs/manual/10-porting-tauriport.md) lists what it took and what it showed. The CeeLing guide has [chapter 16](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-app-cling.md): what the language did to this program, with counts of the checks inserted and the cost.
-
 ## Documentation
 
-* **[User manual](docs/manual/README.md)**: ten chapters, from getting started to shipping.
+* **[User manual](docs/manual/README.md)**: nine chapters, from getting started to shipping.
 * [Giving a program to someone else](docs/distribution.md): the runtime check, the release build, signing, a checklist.
 * [One command, from the page to the reply](docs/command-journey.md): `fs.read` with the generated C++ beside the CeeLing.
 * [CeeLing in app-cling](docs/ceeling-in-app-cling.md): what the language and its compiler do here, with numbers.
 * [Compile errors you will meet](docs/compile-errors.md) and the fix for each.
 * [Source map](docs/manual/source-map.md): where things are in the repository.
+* [Chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-app-cling.md): what the language did to this program, with counts of the checks it inserted and what they cost.
 
 ## License
 

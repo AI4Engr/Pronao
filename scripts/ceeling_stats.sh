@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # What CeeLing did for app-cling, in numbers: counts in src/*.clg and in the C++ the compiler generated from it.
 #   scripts/ceeling_stats.sh [work dir of a build]       (default: the one tests/run_headless.sh leaves behind)
-#   SRC="examples/tauriport/tauriport.clg" GEN="tauriport.cpp" scripts/ceeling_stats.sh $TMPDIR/app-cling-headless/work_tauriport_main
+#   SRC="src/files.clg" GEN="files.cpp" scripts/ceeling_stats.sh $TMPDIR/app-cling-headless/work_headless_main
 #       (SRC: the .clg files to count, relative to the repository; GEN: the generated files in the work dir to count)
 # Used for docs/ceeling-in-app-cling.md; run it again to refresh the numbers there.
 set -uo pipefail

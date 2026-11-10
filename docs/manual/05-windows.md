@@ -77,7 +77,7 @@ app.run();                                                              // serve
   one), the watches (32 each; one window cannot stop another's), the close button's state (`window.setDirty`, `confirmClose`), the events (`Window.emit`;
   `App.emit` reaches all). `window.*` commands act on the window that called them.
 - **A call id is only unique within its window.** Two pages may have a call "1" in flight at the same time, so everything keyed by a call id is
-  keyed by window as well: `app.later(handle, id, l)` (tauriport passes the `handle` its async command was given), cancel tags, deadlines.
+  keyed by window as well: `app.later(handle, id, l)` (an async command is given its `handle`), cancel tags, deadlines.
   A synchronous command that needs to know its window reads `app.dispatcher.callerHandle`; an async command is given `handle`.
 - **Closing.** Closing one window cancels the work it started (programs killed, `callCancelled` true), forgets its pending calls and, if it was the
   primary, the oldest remaining window becomes the primary (`app.handle`). The program ends when the last window closes (`app.quit()` closes

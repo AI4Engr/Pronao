@@ -13,7 +13,6 @@ Each chapter says what the application writes in CeeLing, what the page calls in
 | 7 | [Background work](07-background-work.md) | async commands, cancelling, deadlines, workers and the main thread |
 | 8 | [What a page may do, and what is checked](08-security.md) | the limits on a page; what CeeLing checks and what it trusts |
 | 9 | [The web UI and giving the program away](09-web-ui-and-shipping.md) | a front end of many files, the development server, release builds |
-| 10 | [Case study: porting tauriport](10-porting-tauriport.md) | a real Tauri backend rewritten as CeeLing |
 | | [Source map](source-map.md) | where things are in the repository |
 
 More in `docs/`: [giving a program to someone else](../distribution.md), [one command from page to reply](../command-journey.md), [CeeLing in app-cling](../ceeling-in-app-cling.md), [compile errors](../compile-errors.md).

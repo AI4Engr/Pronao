@@ -8,7 +8,7 @@ Fetch the dependencies, build the example, make a project of your own, run the t
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s, 17 programs, about 1,000 checks (1,021 on 2026-11-09); each prints "N passed, 0 failed"; the tauriport suite needs the `lore` tool (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s, 17 programs, about 1,000 checks (982 on 2026-11-09); each prints "N passed, 0 failed" (SLOW=1: build at -O1)
 bash tests/run_distribution.sh       # release build: windowed program, version and icon in the exe, the runtime check with a box, bad version values refused
 bash tests/run_signing.sh            # signing with a throwaway certificate: signed, runs, a changed file is caught, refusals
 bash tests/run_layout_window.sh       # a real window: full screen, always on top, no title bar, fixed size, a place fitted to the monitors, a modal window; two controls that must fail
@@ -22,8 +22,6 @@ bash tests/run_instance_window.sh     # two real processes, one window: the seco
 bash tests/run_window_selftest.sh     # real WebView2 window, page -> commands -> checks -> exit 0
 bash tests/run_sanitizers.sh          # ~80 s, WSL: ASan+UBSan, TSan on the queue, the watcher and the CeeLing tests, lock-removal controls
 bash tests/negative_controls.sh       # ~65 s: removes one check at a time from src/ and shows the tests fail
-bash tests/run_tauriport_window.sh     # the tauriport port in a real window, against the real lore tool
-bash tests/run_tauriport_frontend.sh   # tauriport's own compiled front end, served from memory, in a real window
 ```
 
 Requirements: the CeeLing compiler, cJSON-cling, a C++ compiler (MinGW-w64 on Windows), the WebView2 runtime for window runs, WSL with

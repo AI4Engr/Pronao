@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXPECTED_HEADLESS=295
 EXPECTED_FILES=147
 EXPECTED_PROGRAMS=18
-EXPECTED_TAURIPORT=50
+EXPECTED_EXTRAS=11
 EXPECTED_SITE=38
 EXPECTED_STORE=54
 EXPECTED_LINKS=57
@@ -104,15 +104,11 @@ buildProgram layout_main &
 B9=$!
 buildProgram system_main &
 B10=$!
-BS=("$B1" "$B2" "$B3" "$B4" "$B5" "$B6" "$B7" "$B8" "$B9" "$B10")
+( EXTRA="$HERE/tests/support.clg" WORK="$W/work_file_extras_main" bash "$HERE/scripts/build.sh" "$HERE/tests/file_extras_main.clg" "$W/file_extras_main.exe" --headless > "$W/file_extras_main.build" 2>&1 ) &
+B11=$!
+BS=("$B1" "$B2" "$B3" "$B4" "$B5" "$B6" "$B7" "$B8" "$B9" "$B10" "$B11")
 ( ASSETS="$HERE/tests/site" WORK="$W/work_site_main" bash "$HERE/scripts/build.sh" "$HERE/tests/site_main.clg" "$W/site_main.exe" --headless > "$W/site_main.build" 2>&1 ) &
 BS+=($!)
-HAVE_LORE=0
-if command -v lore > /dev/null 2>&1 || [ -n "${LORE_CLI_PATH:-}" ]; then
-    HAVE_LORE=1
-    ( EXTRA="$HERE/tests/support.clg $HERE/examples/tauriport/tauriport.clg" WORK="$W/work_tauriport_main" bash "$HERE/scripts/build.sh" "$HERE/tests/tauriport_main.clg" "$W/tauriport_main.exe" --headless > "$W/tauriport_main.build" 2>&1 ) &
-    BS+=($!)
-fi
 
 for p in "${BS[@]}"; do wait "$p"; done
 runProgram files_main "$EXPECTED_FILES" &
@@ -138,16 +134,12 @@ PIDS+=($!)
 APP_SITE_DIR="$(cd "$HERE/tests/site" && (cygpath -m "$PWD" 2>/dev/null || pwd))" runProgram site_main "$EXPECTED_SITE" &
 PIDS+=($!)
 NAMES="$NAMES files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main site_main"
-if [ "$HAVE_LORE" -eq 1 ]; then
-    runProgram tauriport_main "$EXPECTED_TAURIPORT" &
-    PIDS+=($!)
-    NAMES="$NAMES tauriport_main"
-else
-    echo "tauriport_main: SKIPPED (lore is not installed)"
-fi
+runProgram file_extras_main "$EXPECTED_EXTRAS" &
+PIDS+=($!)
+NAMES="$NAMES file_extras_main"
 for p in "${PIDS[@]}" "${TPIDS[@]}"; do wait "$p"; done
 
-for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main tauriport_main site_main; do
+for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main file_extras_main site_main; do
     [ -f "$W/$n.log" ] || continue
     cat "$W/$n.log"
     [ "$(cat "$W/$n.verdict" 2> /dev/null)" = ok ] || OK=0
