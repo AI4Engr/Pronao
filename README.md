@@ -46,7 +46,14 @@ The program above, built with `RELEASE=1`, is **one 1.2 MB `.exe`**: no installe
 | a build from nothing: CeeLing to C++ to `g++`, all 20 modules and the native layer | **about 14 s** (three runs: 13.8, 14.0, 13.8) on a 32-core machine |
 | the same with a warm object cache | 11.7 s (the CeeLing step and the link are not cached) |
 
-For scale, from memory and **not measured here**: an Electron app ships a copy of Chromium and Node (tens to a few hundred MB on disk), and the Tauri and Wails hello-world programs are a few MB. The 14 s is on this machine; with fewer cores the g++ step takes proportionally longer, and I have not timed one.
+Against Tauri 2.12.5 (Rust 1.98, MSVC), the same two commands and the same page, same machine, built from an empty target folder, dependencies already downloaded (420 crates compiled):
+
+| | Pronao | Tauri, default `--release` | Tauri, size-tuned (`opt-level = "s"`, `lto`, `codegen-units = 1`, `panic = "abort"`, `strip`) |
+|---|---|---|---|
+| executable | **1.2 MB** | 8.6 MB | 3.1 MB |
+| build from nothing | **14 s** | 56 s | 85 s |
+
+All three were launched and stayed running for five seconds. Read the comparison for what it is: one trivial program, one machine (32 cores), one build of each; start-up time and memory were not measured. The Pronao program is smaller partly because it has less in it: Tauri's runtime brings a plugin system, a permission system and its own event and asset machinery. Electron ships a copy of Chromium and Node and is far larger; I did not build one.
 
 > **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
 
