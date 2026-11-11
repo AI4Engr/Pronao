@@ -595,10 +595,10 @@ int main() {
     check("control: default limit lets more than 2 overlap", app_test_gauge_peak() > 2);
     // ---- events: CeeLing -> page ---------------------------------------------------------------
     string js = "";
-    check("emit builds the call", app.emit("tick", "{\"n\":1}") && app_test_take_eval(app.handle, js) == 1 && js == "window.__cling_emit([\"tick\",{\"n\":1}]);");
-    check("emit re-prints the payload", app.emit("t", "{ \"a\" : [ 1 , 2 ] }") && app_test_take_eval(app.handle, js) == 1 && js == "window.__cling_emit([\"t\",{\"a\":[1,2]}]);");
+    check("emit builds the call", app.emit("tick", "{\"n\":1}") && app_test_take_eval(app.handle, js) == 1 && js == "window.__pronao_emit([\"tick\",{\"n\":1}]);");
+    check("emit re-prints the payload", app.emit("t", "{ \"a\" : [ 1 , 2 ] }") && app_test_take_eval(app.handle, js) == 1 && js == "window.__pronao_emit([\"t\",{\"a\":[1,2]}]);");
     // a name and a payload that try to break out of the script stay string literals
-    check("emit cannot inject script", app.emit("a\"b", "\"x\\\");alert(1);(\\\"\"") && app_test_take_eval(app.handle, js) == 1 && js == "window.__cling_emit([\"a\\\"b\",\"x\\\");alert(1);(\\\"\"]);");
+    check("emit cannot inject script", app.emit("a\"b", "\"x\\\");alert(1);(\\\"\"") && app_test_take_eval(app.handle, js) == 1 && js == "window.__pronao_emit([\"a\\\"b\",\"x\\\");alert(1);(\\\"\"]);");
     check("emit rejects invalid JSON", !app.emit("bad", "{oops") && app_test_take_eval(app.handle, js) == 0);
     check("emit rejects a payload with trailing script", !app.emit("bad", "1);alert(1") && app_test_take_eval(app.handle, js) == 0);
     app.emit("one", "1");
@@ -607,7 +607,7 @@ int main() {
     string secondJs = "";
     app_test_take_eval(app.handle, firstJs);
     app_test_take_eval(app.handle, secondJs);
-    check("events keep their order", firstJs == "window.__cling_emit([\"one\",1]);" && secondJs == "window.__cling_emit([\"two\",2]);");
+    check("events keep their order", firstJs == "window.__pronao_emit([\"one\",1]);" && secondJs == "window.__pronao_emit([\"two\",2]);");
 
     // a worker job can emit: the event arrives while the job runs, then it answers
     int waited = 0;
@@ -617,7 +617,7 @@ int main() {
         app_test_sleep_ms(20);
         waited = waited + 1;
     }
-    check("worker's event arrived", workerJs == "window.__cling_emit([\"fromWorker\",{\"ok\":true}]);");
+    check("worker's event arrived", workerJs == "window.__pronao_emit([\"fromWorker\",{\"ok\":true}]);");
 
     // ---- file commands ----------------------------------------------------------------------------
     app.enableFileCommands(16);
@@ -1107,7 +1107,7 @@ int main() {
     check("a file is not a working folder", startsWith(roundTrip(app, "p25", requestText("proc.run", cwReq3)), "1 {\"code\":\"not_directory\""));
     Item whereReq = createObject();
     addStringToObject(whereReq, "program", "where");
-    check("without a working folder it is the first allowed folder", containsText(roundTrip(app, "p26", requestText("proc.run", whereReq)), "app-cling-"));
+    check("without a working folder it is the first allowed folder", containsText(roundTrip(app, "p26", requestText("proc.run", whereReq)), "pronao-"));
 
     // many at once: the pool serves them, every one is answered with its own result
     int pn = 0;
@@ -1149,9 +1149,9 @@ int main() {
     pEnv.push_back("{name:token}");
     pEnv.push_back("@cwd={dir:folder}");
     app.allowProgram("envp", helper, pEnv, 5000, 1000);
-    app_test_setenv("APP_CLING_SECRET", "hunter2");
+    app_test_setenv("PRONAO_SECRET", "hunter2");
     Item envArgs = createObject();
-    addStringToObject(envArgs, "name", "APP_CLING_SECRET");
+    addStringToObject(envArgs, "name", "PRONAO_SECRET");
     addStringToObject(envArgs, "dir", pbase);
     Item envReq = createObject();
     addStringToObject(envReq, "program", "envp");
@@ -1159,7 +1159,7 @@ int main() {
     string hidden = roundTrip(app, "e1", requestText("proc.run", envReq));
     check("a variable of this process is not passed to a program", containsText(hidden, "(unset)") && !containsText(hidden, "hunter2"));
     check("a name with = cannot be passed on", !app.passEnvironment("A=B") && !app.passEnvironment(""));
-    check("passEnvironment names a variable to pass", app.passEnvironment("APP_CLING_SECRET"));
+    check("passEnvironment names a variable to pass", app.passEnvironment("PRONAO_SECRET"));
     string shown = roundTrip(app, "e2", requestText("proc.run", envReq));
     check("then it arrives", containsText(shown, "hunter2") && !containsText(shown, "(unset)"));
     Item pathArgs2 = createObject();
@@ -1195,14 +1195,14 @@ int main() {
     app_test_write_raw(wbase + "/outside/watched/made.txt", "hi");
     string allEvals = awaitEvals(app, "\"kind\":\"created\",\"path\":\"made.txt\"", 10000);
     string oneEval = "";
-    check("a new file reaches the page as an event", containsText(allEvals, "window.__cling_emit([\"fs.change\",{\"watch\":") &&
+    check("a new file reaches the page as an event", containsText(allEvals, "window.__pronao_emit([\"fs.change\",{\"watch\":") &&
           containsText(allEvals, "\"kind\":\"created\",\"path\":\"made.txt\""));
-    check("the event carries a relative path only", !containsText(allEvals, wbase) && !containsText(allEvals, "app-cling-"));
+    check("the event carries a relative path only", !containsText(allEvals, wbase) && !containsText(allEvals, "pronao-"));
 
     // a name that tries to break out of the script stays a string
     app_test_write_raw(wbase + "/outside/watched/a'b);alert(1);(.txt", "x");
     allEvals = awaitEvals(app, "alert(1)", 10000);
-    check("a hostile file name stays inside a string literal", containsText(allEvals, "\"kind\":\"created\"") && containsText(allEvals, "alert(1)") && startsWith(allEvals, "window.__cling_emit([\"fs.change\",{"));
+    check("a hostile file name stays inside a string literal", containsText(allEvals, "\"kind\":\"created\"") && containsText(allEvals, "alert(1)") && startsWith(allEvals, "window.__pronao_emit([\"fs.change\",{"));
 
     check("unwatch with an unknown id is not_found", startsWith(roundTrip(app, "w5", requestText("fs.unwatch", watchIdArgs(999999))), "1 {\"code\":\"not_found\""));
     Item badUnwatch = createObject();
@@ -1368,7 +1368,7 @@ int main() {
     drain(app, 100);
     string blockedEvent = "";
     app_test_take_eval(app.handle, blockedEvent);
-    check("a refused navigation reaches the application as an event", startsWith(blockedEvent, "window.__cling_emit([\"window.navigationBlocked\",{\"url\":\"https://evil.example/") &&
+    check("a refused navigation reaches the application as an event", startsWith(blockedEvent, "window.__pronao_emit([\"window.navigationBlocked\",{\"url\":\"https://evil.example/") &&
           containsText(blockedEvent, "\\\"><script>"));
 
     // ---- one answer per call, cancelling, timeouts, shutdown ---------------------------------------------

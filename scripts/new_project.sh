@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates a new app-cling project from examples/template:
+# Creates a new pronao project from examples/template:
 #   bash scripts/new_project.sh <folder> [name]
 # The folder must not exist or must be empty. Then:  cd <folder> && bash build.sh
 set -euo pipefail
@@ -17,7 +17,7 @@ esac
 if [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then echo "$DIR exists and is not empty" >&2; exit 1; fi
 mkdir -p "$DIR"
 for f in main.clg index.html build.sh README.md; do
-    sed -e "s|__NAME__|$NAME|g" -e "s|__APP_CLING__|$ROOT|g" "$ROOT/examples/template/$f" > "$DIR/$f"
+    sed -e "s|__NAME__|$NAME|g" -e "s|__PRONAO__|$ROOT|g" "$ROOT/examples/template/$f" > "$DIR/$f"
 done
 cp "$ROOT/examples/template/gitignore.txt" "$DIR/.gitignore"
 python3 "$ROOT/scripts/make_icon.py" "$DIR/icon.ico" "$NAME" || echo "(no placeholder icon: python3 was not found; the program will show the system's default icon)" >&2

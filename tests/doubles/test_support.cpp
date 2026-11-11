@@ -36,7 +36,7 @@ int app_test_make_temp_dir(std::string& out) {
 #else
         const long pid = static_cast<long>(getpid());
 #endif
-        const auto dir = base / ("app-cling-" + std::to_string(pid) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(counter++));
+        const auto dir = base / ("pronao-" + std::to_string(pid) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(counter++));
         if (std::filesystem::create_directory(dir, ec)) {
             // the OS's own spelling (symlinks in /tmp, 8.3 names in %TEMP%), which is what the policy compares against
             out = std::filesystem::canonical(dir, ec).u8string();

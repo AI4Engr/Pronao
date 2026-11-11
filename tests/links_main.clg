@@ -218,7 +218,7 @@ int main() {
     app_test_sleep_ms(350);
     app_test_push_internal(app.handle, blockedRecord("https://example.com/click", "1"));
     app.serveOne(100);
-    check("by default a click on a link only reports the blocked navigation", lastAsked() == "" && app_test_take_eval(app.handle, ev) == 1 && startsWith(ev, "window.__cling_emit([\"window.navigationBlocked\""));
+    check("by default a click on a link only reports the blocked navigation", lastAsked() == "" && app_test_take_eval(app.handle, ev) == 1 && startsWith(ev, "window.__pronao_emit([\"window.navigationBlocked\""));
     app.openLinksInBrowser(true);
     app_test_push_internal(app.handle, blockedRecord("https://example.com/click", "1"));
     app.serveOne(100);

@@ -224,7 +224,7 @@ int main() {
     Item setArgs = keyArgs("theme");
     addStringToObject(setArgs, "value", "dark");
     check("settings.set", roundTrip(app, "s4", requestText("settings.set", setArgs)) == "0 null" && live.getString("theme") == "dark");
-    check("settings.set tells every window", app_test_take_eval(app.handle, ev) == 1 && ev == "window.__cling_emit([\"settings.changed\",{\"key\":\"theme\",\"value\":\"dark\"}]);");
+    check("settings.set tells every window", app_test_take_eval(app.handle, ev) == 1 && ev == "window.__pronao_emit([\"settings.changed\",{\"key\":\"theme\",\"value\":\"dark\"}]);");
     Item badSet = keyArgs("fontSize");
     addStringToObject(badSet, "value", "huge");
     check("settings.set with the wrong type", startsWith(roundTrip(app, "s5", requestText("settings.set", badSet)), "1 {\"code\":\"invalid_argument\"") && live.getInt("fontSize") == 12);

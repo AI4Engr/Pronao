@@ -22,7 +22,7 @@ const UINT kUpdate = WM_APP + 2;           // the application changed the toolti
 const UINT kArm = WM_APP + 3;              // a notification was shown by a notification-only icon: start the timer that takes the icon away (a timer belongs to the thread of its window)
 const UINT_PTR kHideTimer = 1;             // a notification-only icon goes away this long after its notification was shown
 const UINT kHideAfterMs = 15000;
-const wchar_t* kClass = L"app-cling-tray";
+const wchar_t* kClass = L"pronao-tray";
 
 struct Tray {
     int handle = 0;
@@ -158,7 +158,7 @@ void run(Tray* t) {
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = kClass;
     RegisterClassW(&wc);                                                // (already registered by an earlier tray: fine)
-    t->hwnd = CreateWindowExW(0, kClass, L"app-cling tray", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, wc.hInstance, nullptr);
+    t->hwnd = CreateWindowExW(0, kClass, L"pronao tray", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, wc.hInstance, nullptr);
     bool ok = false;
     if (t->hwnd) {
         SetWindowLongPtrW(t->hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(t));

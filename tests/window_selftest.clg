@@ -39,7 +39,7 @@ int main() {
     app.enableDialogCommands();
     app.enableWatchCommands();
     app.enableWindowCommands();
-    app.confirmClose("app-cling selftest close", "Close without saving?");
+    app.confirmClose("pronao selftest close", "Close without saving?");
     std::vector<string> hostArgs;
     if (!app.allowProgram("host", "hostname", hostArgs, 5000, 10000)) {
         std::cout << "selftest FAILED: hostname not found" << std::endl;
@@ -55,7 +55,7 @@ int main() {
     }
     app.setAsyncTimeout("aforever", 1000);
     app.enableProcessCommands();
-    if (!app.openPage("app-cling selftest", 480, 320, false)) {
+    if (!app.openPage("pronao selftest", 480, 320, false)) {
         std::cout << "selftest FAILED: no window" << std::endl;
         return 2;
     }

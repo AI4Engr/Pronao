@@ -1,4 +1,4 @@
-// app-cling -- Watching folders for a window: the watches a page started, merging of bursts of changes, and the events that go to the page.
+// pronao -- Watching folders for a window: the watches a page started, merging of bursts of changes, and the events that go to the page.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"

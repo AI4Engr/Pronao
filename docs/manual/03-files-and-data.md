@@ -9,13 +9,13 @@ app.allowFolder("C:/Users/me/Documents/notes");   // nothing is reachable until 
 app.enableFileCommands(16 * 1024 * 1024);          // fs.read refuses files larger than this
 ```
 ```js
-await cling.invoke('fs.write', { path: 'todo.txt', text: 'buy milk', mode: 'append' });   // mode: replace | append | create
-const { text } = await cling.invoke('fs.read', { path: 'todo.txt' });
-const entries = await cling.invoke('fs.list', { path: '.' });     // [{name, kind: 'file'|'dir'|'link', size, modified}]
-await cling.invoke('fs.stat', { path: 'todo.txt' });
-await cling.invoke('fs.exists', { path: 'todo.txt' });            // true / false
-await cling.invoke('fs.mkdir', { path: 'a/b/c', parents: true });
-await cling.invoke('fs.remove', { path: 'a/b/c' });               // a file, a link, or an EMPTY folder
+await pronao.invoke('fs.write', { path: 'todo.txt', text: 'buy milk', mode: 'append' });   // mode: replace | append | create
+const { text } = await pronao.invoke('fs.read', { path: 'todo.txt' });
+const entries = await pronao.invoke('fs.list', { path: '.' });     // [{name, kind: 'file'|'dir'|'link', size, modified}]
+await pronao.invoke('fs.stat', { path: 'todo.txt' });
+await pronao.invoke('fs.exists', { path: 'todo.txt' });            // true / false
+await pronao.invoke('fs.mkdir', { path: 'a/b/c', parents: true });
+await pronao.invoke('fs.remove', { path: 'a/b/c' });               // a file, a link, or an EMPTY folder
 ```
 A relative path means "inside the first allowed folder". Errors reject with a code the page can switch on:
 `forbidden`, `not_found`, `too_large`, `not_text`, `invalid_path`, `invalid_argument`, `already_exists`, `not_empty`,
@@ -53,9 +53,9 @@ int size = settings.getInt("fontSize");          // the program reads and writes
 ```
 
 ```js
-await cling.settings.get('theme');               // "light"
-await cling.settings.set('fontSize', 14);        // saved at once; every window gets the event settings.changed {key, value}
-await cling.settings.getAll();                   // {theme, fontSize, compact}
+await pronao.settings.get('theme');               // "light"
+await pronao.settings.set('fontSize', 14);        // saved at once; every window gets the event settings.changed {key, value}
+await pronao.settings.getAll();                   // {theme, fontSize, compact}
 ```
 
 - **Kinds of folder:** `"data"` and `"cache"` can be allowed to the page; `"config"` cannot, because it holds `settings.json`, which a page may change only through the settings commands. There is no
@@ -74,9 +74,9 @@ await cling.settings.getAll();                   // {theme, fontSize, compact}
 app.enableWatchCommands();
 ```
 ```js
-const { id } = await cling.fs.watch({ path: 'notes', recursive: true });
-const off = cling.fs.onChange(e => { /* {watch, kind, path, from?} */ });
-await cling.fs.unwatch({ id });
+const { id } = await pronao.fs.watch({ path: 'notes', recursive: true });
+const off = pronao.fs.onChange(e => { /* {watch, kind, path, from?} */ });
+await pronao.fs.unwatch({ id });
 ```
 `kind` is `created`, `modified`, `removed`, `renamed` (`path` is the new name, `from` the old), `overflow` (events were lost: read
 the folder again) or `stopped` (`reason`: `closed`, `access_revoked`, `folder_gone`, `failed`; nothing more comes from that
@@ -98,11 +98,11 @@ loop falls behind, records beyond 2000 queued are dropped and an `overflow` foll
 app.enableDialogCommands();
 ```
 ```js
-const picked = await cling.dialog.open({ title: 'Open a note', filters: [{ name: 'Text', extensions: ['txt', 'md'] }, { name: 'Everything' }] });
-if (picked) { const { text } = await cling.fs.read({ path: picked.path }); ... }        // null when the user cancels
-const saved  = await cling.dialog.save({ title: 'Export', defaultName: 'notes.txt' });  // {path} of a file that may not exist yet
-const folder = await cling.dialog.folder({ title: 'Choose a project folder' });
-const { button } = await cling.dialog.message({ title: 'Delete?', message: 'Delete the note?', kind: 'question', buttons: 'yesno' });  // 'yes' | 'no' | 'ok' | 'cancel'
+const picked = await pronao.dialog.open({ title: 'Open a note', filters: [{ name: 'Text', extensions: ['txt', 'md'] }, { name: 'Everything' }] });
+if (picked) { const { text } = await pronao.fs.read({ path: picked.path }); ... }        // null when the user cancels
+const saved  = await pronao.dialog.save({ title: 'Export', defaultName: 'notes.txt' });  // {path} of a file that may not exist yet
+const folder = await pronao.dialog.folder({ title: 'Choose a project folder' });
+const { button } = await pronao.dialog.message({ title: 'Delete?', message: 'Delete the note?', kind: 'question', buttons: 'yesno' });  // 'yes' | 'no' | 'ok' | 'cancel'
 ```
 **A pick is a grant.** What the user chooses in a native dialog becomes reachable through the file commands, exactly that
 file (or, for a folder pick, that folder), and nothing around it: the neighbour files and the parent are still refused,
@@ -120,10 +120,10 @@ app.disableFileDrop();
 ```
 
 ```js
-cling.onDrop(async ({ x, y, files, skipped }) => {      // files: [{path, kind: "file" | "folder"}], x and y in CSS pixels
-  for (const f of files) console.log(await cling.fs.read({ path: f.path }));       // each dropped file is already granted, as a dialog pick would be
+pronao.onDrop(async ({ x, y, files, skipped }) => {      // files: [{path, kind: "file" | "folder"}], x and y in CSS pixels
+  for (const f of files) console.log(await pronao.fs.read({ path: f.path }));       // each dropped file is already granted, as a dialog pick would be
 });
-cling.onDragEnter(({ x, y }) => {}); cling.onDragOver(({ x, y }) => {}); cling.onDragLeave(() => {});    // to draw a drop zone
+pronao.onDragEnter(({ x, y }) => {}); pronao.onDragOver(({ x, y }) => {}); pronao.onDragLeave(() => {});    // to draw a drop zone
 ```
 
 - **What is granted:** exactly the dropped file (or folder, if allowed), as a dialog pick is: the file next to it is not reachable; at most 256 grants exist at a time (`app.revokeGrants()` takes them back). `skipped` counts the paths

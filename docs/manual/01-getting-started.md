@@ -25,7 +25,7 @@ bash tests/negative_controls.sh       # ~65 s: removes one check at a time from 
 ```
 
 Requirements: the CeeLing compiler, cJSON-cling, a C++ compiler (MinGW-w64 on Windows), the WebView2 runtime for window runs, WSL with
-g++ for the sanitizers. Windows is the only platform tried. The scripts find the tools themselves when CeeLing, cJSON-cling and app-cling
+g++ for the sanitizers. Windows is the only platform tried. The scripts find the tools themselves when CeeLing, cJSON-cling and Pronao
 sit side by side (`../CeeLing/build/cling.exe`, `../cJSON-cling`) and `g++` is on `PATH`; otherwise set `CLING`, `CJSON`, `CXX`
 (`scripts/env.sh` says what is missing). `WSL_DISTRO` picks the WSL distribution for the sanitizer run (default: WSL's default);
 `TMPDIR` is where the test scripts work.

@@ -6,7 +6,7 @@
 # and a real timestamp server (it needs the network and a certificate that chains to a root).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-S="${TMPDIR:-/tmp}/app-cling-sign"
+S="${TMPDIR:-/tmp}/pronao-sign"
 rm -rf "$S" 2>/dev/null || true; mkdir -p "$S/run"
 W() { cygpath -w "$1"; }
 ps() { env -u PSModulePath powershell -NoProfile -ExecutionPolicy Bypass -File "$(W "$HERE/scripts/$1")" "${@:2}" 2>&1 | tr -d '\r'; }
@@ -19,7 +19,7 @@ cp "$S/app.exe" "$S/unsigned.exe"
 export SIGN_TEST_PASSWORD="correct horse battery"
 env -u PSModulePath powershell -NoProfile -Command "
 \$rsa = [System.Security.Cryptography.RSA]::Create(2048)
-\$req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest('CN=app-cling signing test', \$rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+\$req = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest('CN=pronao signing test', \$rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
 \$oids = New-Object System.Security.Cryptography.OidCollection
 [void]\$oids.Add((New-Object System.Security.Cryptography.Oid('1.3.6.1.5.5.7.3.3')))
 \$req.CertificateExtensions.Add((New-Object System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension(\$oids, \$false)))
@@ -36,9 +36,9 @@ r="$(ps check_signature.ps1 -File "$(W "$S/unsigned.exe")")"; echo "unsigned: $r
 out="$(ps sign.ps1 -File "$(W "$S/app.exe")" -Pfx "$(W "$S/test.pfx")" -PasswordEnv SIGN_TEST_PASSWORD)"; rc=$?
 echo "$out"
 r="$(ps check_signature.ps1 -File "$(W "$S/app.exe")")"; echo "signed: $r"
-case "$r" in *"|CN=app-cling signing test|"*) ;; *) echo "the signature does not name the certificate"; exit 1 ;; esac
+case "$r" in *"|CN=pronao signing test|"*) ;; *) echo "the signature does not name the certificate"; exit 1 ;; esac
 case "${r%%|*}" in Valid|UnknownError|NotTrusted) ;; *) echo "unexpected status ${r%%|*}"; exit 1 ;; esac
-echo "$out" | grep -q "^signed by: CN=app-cling signing test" || { echo "sign.ps1 did not say who signed"; exit 1; }
+echo "$out" | grep -q "^signed by: CN=pronao signing test" || { echo "sign.ps1 did not say who signed"; exit 1; }
 
 # 3: a signed program still runs
 export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$S/profile-$$")"

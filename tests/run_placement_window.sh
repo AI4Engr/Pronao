@@ -15,7 +15,7 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     SHIM="${SHIMDIR:-$HERE/shim}" ASSETS="$HERE/tests/site_placement" WORK="$S/work" bash "$HERE/scripts/build.sh" "$HERE/tests/placement_window.clg" "$S/t.exe" > "$S/build.log" 2>&1 || { cat "$S/build.log"; echo "BUILD FAILED"; return 2; }
     export APPDATA="$(cygpath -w "$S/roaming")" HOME="$S/home" XDG_CONFIG_HOME="$S/home/.config"
     export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$S/profile-$$")"
-    local FILE="$S/roaming/app-cling-placement-test/windows.json"
+    local FILE="$S/roaming/pronao-placement-test/windows.json"
     local P="$S/poke.exe"
 
     session() { # label  command...   runs the program, waits for its page, runs the commands with the window up, closes it, waits for the end
@@ -70,10 +70,10 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     return 0
 }
 
-story "${TMPDIR:-/tmp}/app-cling-placement" "" || { echo "placement test: FAILED"; exit 1; }
+story "${TMPDIR:-/tmp}/pronao-placement" "" || { echo "placement test: FAILED"; exit 1; }
 echo "placement test: ok"
 
-C="${TMPDIR:-/tmp}/app-cling-placement-control"
+C="${TMPDIR:-/tmp}/pronao-placement-control"
 rm -rf "$C" 2>/dev/null || true; mkdir -p "$C"; cp -r "$HERE/shim" "$C/shim"
 python3 - "$C/shim/app_shim.cpp" <<'PYEOF' || { echo "CONTROL SETUP FAILED"; exit 1; }
 import sys

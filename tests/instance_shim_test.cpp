@@ -56,7 +56,7 @@ static bool sendRaw(const std::string& name, const std::string& bytes) {
                     ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid, &sid);
     CloseHandle(token);
     if (!ok) return false;
-    std::wstring pipe = L"\\\\.\\pipe\\app-cling-" + std::wstring(sid) + L"-" + std::wstring(name.begin(), name.end());
+    std::wstring pipe = L"\\\\.\\pipe\\pronao-" + std::wstring(sid) + L"-" + std::wstring(name.begin(), name.end());
     LocalFree(sid);
     HANDLE h = INVALID_HANDLE_VALUE;
     for (int attempt = 0; attempt < 20 && h == INVALID_HANDLE_VALUE; attempt++) {

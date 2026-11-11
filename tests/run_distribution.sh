@@ -9,7 +9,7 @@
 # Not tested: a computer that really has no runtime, and what the message box looks like (this one has the runtime, and the test answers the box from outside).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-S="${TMPDIR:-/tmp}/app-cling-dist"
+S="${TMPDIR:-/tmp}/pronao-dist"
 rm -rf "$S" 2>/dev/null || true; mkdir -p "$S/run"
 g++ --std=c++17 -O1 "$HERE/tests/window_poke.cpp" -o "$S/poke.exe" -luser32 -lgdi32 -lshell32 -lole32 -luuid -ladvapi32 > "$S/poke.log" 2>&1 || { cat "$S/poke.log"; echo "POKE BUILD FAILED"; exit 1; }
 P="$S/poke.exe"

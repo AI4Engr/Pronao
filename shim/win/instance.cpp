@@ -1,5 +1,5 @@
 // Windows: one running copy of a program per user session (see app_native.h).
-//   claim   a named mutex in the session's namespace ("Local\app-cling-<name>"): the first process to create it is the instance.
+//   claim   a named mutex in the session's namespace ("Local\pronao-<name>"): the first process to create it is the instance.
 //   handoff a later process connects to the instance's named pipe, writes its working folder and arguments, and closes it. The pipe is created with a
 //           DACL that grants access to this user and to SYSTEM only, refuses remote clients, and a message is at most 64 KiB.
 //   serve   one thread in the instance accepts those messages for as long as the process lives and queues each as an "instance" record on the window
@@ -136,8 +136,8 @@ int app_instance_claim(std::string name, int& first) {
     std::wstring sid;
     const std::wstring sddl = userOnlySddl(sid);
     if (sddl.empty()) return 4;
-    const std::wstring pipeName = L"\\\\.\\pipe\\app-cling-" + sid + L"-" + w;      // (the user's SID is in the name: two users on one machine do not meet)
-    HANDLE mutex = CreateMutexW(nullptr, FALSE, (L"Local\\app-cling-" + w).c_str());
+    const std::wstring pipeName = L"\\\\.\\pipe\\pronao-" + sid + L"-" + w;      // (the user's SID is in the name: two users on one machine do not meet)
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, (L"Local\\pronao-" + w).c_str());
     if (mutex == nullptr) return 4;
     if (GetLastError() != ERROR_ALREADY_EXISTS) {
         auto* in = new Instance();

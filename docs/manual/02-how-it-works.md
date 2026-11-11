@@ -29,8 +29,8 @@ app.emit("progress", "{\"done\":3}");            // main thread
 emitEvent(handle, "progress", text);              // any thread, e.g. a worker job (capture the int handle)
 ```
 ```js
-const off = cling.on('progress', p => bar.value = p.done);   // off() removes it
-const next = await cling.once('finished');                   // Promise for the next one
+const off = pronao.on('progress', p => bar.value = p.done);   // off() removes it
+const next = await pronao.once('finished');                   // Promise for the next one
 ```
 The payload must be valid JSON text. The script sent to the page is built only with the JSON printer, so a name or a
 string containing quotes, backslashes or script text stays a string literal; an invalid payload, or one with trailing

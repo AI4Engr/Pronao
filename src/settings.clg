@@ -1,4 +1,4 @@
-// app-cling -- where an application keeps its own data, and the settings it saves there.
+// pronao -- where an application keeps its own data, and the settings it saves there.
 //
 // Two things, both policy and so both here in checked CeeLing (the native layer only makes a folder and renames a file):
 //

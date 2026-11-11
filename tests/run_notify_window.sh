@@ -58,11 +58,11 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     return 0
 }
 
-story "${TMPDIR:-/tmp}/app-cling-notify" "" || { echo "notify test: FAILED"; exit 1; }
+story "${TMPDIR:-/tmp}/pronao-notify" "" || { echo "notify test: FAILED"; exit 1; }
 echo "notify test: ok"
 
 control() { # name  file  old  new
-    local C="${TMPDIR:-/tmp}/app-cling-notify-control-$1"
+    local C="${TMPDIR:-/tmp}/pronao-notify-control-$1"
     rm -rf "$C" 2>/dev/null || true; mkdir -p "$C"; cp -r "$HERE/shim" "$C/shim"
     python3 - "$C/shim/$2" "$3" "$4" <<'PYEOF' || { echo "CONTROL SETUP FAILED: $1"; exit 1; }
 import sys

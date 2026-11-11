@@ -1,4 +1,4 @@
-// app-cling -- what every other module uses: replies and structured errors, events to the page, argument helpers, and the
+// pronao -- what every other module uses: replies and structured errors, events to the page, argument helpers, and the
 // classes a command is built from. The native calls (the `ext_fn`s below) are trusted C++, not checked.
 //
 // A request arrives as the JSON array ["command", args]; the reply is a status (0 = resolve, 1 = reject) and a JSON text. Reply
@@ -205,7 +205,7 @@ bool callCancelled(int handle, string id) {
 }
 
 // ---- events: CeeLing -> page -------------------------------------------------------------------
-// emitEvent(handle, "progress", "{\"done\":3}") runs `cling.on("progress", fn)` listeners on the page with the payload
+// emitEvent(handle, "progress", "{\"done\":3}") runs `pronao.on("progress", fn)` listeners on the page with the payload
 // {done: 3}. It takes only an int and strings, so a worker job can call it (capture the handle):
 //
 //     spawn(closure Job [handle, payload] () { ... emitEvent(handle, "progress", text); ... });
@@ -226,7 +226,7 @@ bool emitEvent(int handle, string name, string payloadJson) {
     if (text.length() == 0) {
         return false;
     }
-    return app_eval(handle, "window.__cling_emit(" + text + ");") == 1;
+    return app_eval(handle, "window.__pronao_emit(" + text + ");") == 1;
 }
 
 Item objectArg(Item args) {

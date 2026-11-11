@@ -100,8 +100,8 @@ int main() {
         check("the working folder is the one given", r.status == 0 && r.out.find(leaf) != std::string::npos);
     }
     {
-        app_test_setenv("APP_CLING_SECRET", "hunter2");
-        Result secret = run(exe, {"--env", "APP_CLING_SECRET"}, cwd);
+        app_test_setenv("PRONAO_SECRET", "hunter2");
+        Result secret = run(exe, {"--env", "PRONAO_SECRET"}, cwd);
         check("a variable of the parent is NOT inherited", secret.status == 0 && secret.out.find("hunter2") == std::string::npos && secret.out.find("(unset)") != std::string::npos);
         Result path = run(exe, {"--env", "PATH"}, cwd);
         check("a variable that was passed arrives", path.status == 0 && path.out.size() > 3 && path.out.find("(unset)") == std::string::npos);
@@ -169,7 +169,7 @@ int main() {
     {
         std::string value;
         check("an environment variable is readable", app_os_env("PATH", value) == 1 && !value.empty());
-        check("an unset one is reported", app_os_env("APP_CLING_SURELY_UNSET_VARIABLE", value) == 0);
+        check("an unset one is reported", app_os_env("PRONAO_SURELY_UNSET_VARIABLE", value) == 0);
         check("a folder is a folder", app_os_path_kind(cwd) == 2);
         check("the helper is a runnable file", (app_os_path_kind(exe) & 1) == 1);
         check("a missing path is nothing", app_os_path_kind(cwd + "/nothing-here") == 0);

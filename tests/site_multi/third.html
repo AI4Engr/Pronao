@@ -3,7 +3,7 @@
 <body><h1>third window (opened by the first page)</h1>
 <script>
   (async () => {
-    const me = await cling.invoke('whoami');
-    await cling.invoke('report', { who: 'third', handle: me, path: location.pathname });
-  })().catch(function (e) { cling.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
+    const me = await pronao.invoke('whoami');
+    await pronao.invoke('report', { who: 'third', handle: me, path: location.pathname });
+  })().catch(function (e) { pronao.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
 </script></body></html>

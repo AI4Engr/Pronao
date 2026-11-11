@@ -154,9 +154,9 @@ bool describe(HWND h, RECT& r, bool& maximized) {
 }
 }  // namespace
 
-// the program's hidden tray window (class app-cling-tray), shown or not
+// the program's hidden tray window (class pronao-tray), shown or not
 HWND findTray() {
-    return FindWindowW(L"app-cling-tray", nullptr);
+    return FindWindowW(L"pronao-tray", nullptr);
 }
 
 struct Any {

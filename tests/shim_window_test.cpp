@@ -14,10 +14,10 @@ int main(int, char** argv) {
     std::string bridge = slurp(argv[1]);
     std::string html = R"(<html><body><script>
       (async () => {
-        const sum = await cling.invoke('add', [2, 3]);
+        const sum = await pronao.invoke('add', [2, 3]);
         let rejected = null;
-        try { await cling.invoke('fail', null); } catch (e) { rejected = e; }
-        await cling.invoke('report', { sum: sum, rejected: rejected });
+        try { await pronao.invoke('fail', null); } catch (e) { rejected = e; }
+        await pronao.invoke('report', { sum: sum, rejected: rejected });
       })();
     </script></body></html>)";
     int h = app_open("shim test", 400, 300, html, "", bridge, 0);

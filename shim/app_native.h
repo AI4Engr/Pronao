@@ -1,4 +1,4 @@
-// app-cling -- everything CeeLing calls in the native layer. Trusted C++ with no policy and no formats of its own: it opens, reads,
+// pronao -- everything CeeLing calls in the native layer. Trusted C++ with no policy and no formats of its own: it opens, reads,
 // runs, shows and waits; deciding what is allowed, parsing, validating and bookkeeping are in src/. Everything crossing is an int or a
 // copied string (or a vector of them); every function is safe to call from any thread. Status codes: 0 ok, 1 forbidden, 2 not found, 3 too large, 4 io error, 5 invalid, 6 exists, 7 not empty, 8 is a folder,
 // 9 not a folder, 10 permission denied, 11 too many.
@@ -74,7 +74,7 @@ int app_menu_item(int handle, std::string id, int enabled, int checked);
 // set the page's scheme (the title bar was set), 5 not a mode, -1 not supported.
 int app_theme_system();
 int app_window_theme(int handle, int mode);
-// Files dragged from the shell onto the window (Windows; -1 elsewhere). app_drop_accept(handle, 1): the window's page is told that dropped files matter (window.__cling_drop, which
+// Files dragged from the shell onto the window (Windows; -1 elsewhere). app_drop_accept(handle, 1): the window's page is told that dropped files matter (window.__pronao_drop, which
 // src/bridge.js looks at), and the paths of the files it hands the browser engine are queued as the record "drop" "files" x y path... (x and y are the pointer in the page's CSS
 // pixels; at most 512 paths, vetted by the application, not here). app_drop_accept(handle, 0) turns it off. 0 ok, 4 could not (no such window, or the runtime lacks the interface), 5 not 0 / 1.
 int app_drop_accept(int handle, int on);

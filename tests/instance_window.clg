@@ -23,7 +23,7 @@ public:
 
 int main() {
     App app = new App();
-    if (!app.singleInstance("app-cling-instance-window-test")) {
+    if (!app.singleInstance("pronao-instance-window-test")) {
         std::cout << "second launch handed over" << std::endl;
         return 0;
     }

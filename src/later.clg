@@ -1,4 +1,4 @@
-// app-cling -- Answers that come later: a worker hands a result to the main thread (Later, LaterBook, finishLater) or asks it to do something only it may (Pump, PumpBook, wakeMain).
+// pronao -- Answers that come later: a worker hands a result to the main thread (Later, LaterBook, finishLater) or asks it to do something only it may (Pump, PumpBook, wakeMain).
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"

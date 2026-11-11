@@ -1,4 +1,4 @@
-// app-cling -- Files dragged from the file manager onto a window. The page (src/bridge.js) sees the drag, hands the engine the files that were dropped, and the native layer
+// pronao -- Files dragged from the file manager onto a window. The page (src/bridge.js) sees the drag, hands the engine the files that were dropped, and the native layer
 // (app_drop_accept) queues the paths the engine names for them. WHAT becomes of the paths is decided here:
 //
 //  * Nothing happens until the application asks (`App.enableFileDrop`). Until then the engine's default stays: a drop on the page does not reach the application, and the

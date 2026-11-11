@@ -27,10 +27,10 @@ run_case() { # dir  shim-dir-or-empty  -> 0 if the whole story worked
     [ "$src" -eq 0 ] && printf '%s\n' "$second" | grep -q 'second launch handed over' && [ "$frc" = 0 ] && grep -q '^selftest ok' "$S/first.out"
 }
 
-run_case "${TMPDIR:-/tmp}/app-cling-instance" "" || { echo "instance test: FAILED"; exit 1; }
+run_case "${TMPDIR:-/tmp}/pronao-instance" "" || { echo "instance test: FAILED"; exit 1; }
 echo "instance test: ok"
 
-C="${TMPDIR:-/tmp}/app-cling-instance-control"
+C="${TMPDIR:-/tmp}/pronao-instance-control"
 rm -rf "$C" 2>/dev/null || true; mkdir -p "$C"; cp -r "$HERE/shim" "$C/shim"
 python3 - "$C/shim/win/instance.cpp" <<'PYEOF' || { echo "CONTROL SETUP FAILED"; exit 1; }
 import sys

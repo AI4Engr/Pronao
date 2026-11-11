@@ -22,7 +22,7 @@ KEY='HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
 appsvalue() { MSYS_NO_PATHCONV=1 reg query "$KEY" /v AppsUseLightTheme 2> /dev/null | tr -d '\r' | awk '/AppsUseLightTheme/ { print $NF }'; }       # 0x0 or 0x1, or nothing
 setapps() { MSYS_NO_PATHCONV=1 reg add "$KEY" /v AppsUseLightTheme /t REG_DWORD /d "$1" /f > /dev/null 2>&1; }
 # the user's setting is written down before the test touches it, and put back at the end -- and, if an earlier run was cut short (the file is still there), first thing
-SAVED="${TMPDIR:-/tmp}/app-cling-apps-theme.original"
+SAVED="${TMPDIR:-/tmp}/pronao-apps-theme.original"
 if [ -f "$SAVED" ]; then setapps $(( $(cat "$SAVED") )); rm -f "$SAVED"; fi
 ORIGINAL="$(appsvalue)"
 [ -z "$ORIGINAL" ] || echo "$ORIGINAL" > "$SAVED"
@@ -103,7 +103,7 @@ story() { # kind(theme|drop) dir shim-dir-or-empty -> 0 if the whole story worke
         printf 'alpha' > "$S/dropped/a.txt"; printf 'bravo' > "$S/dropped/b.txt"; printf 'charlie' > "$S/dropped/c.txt"; printf 'delta' > "$S/dropped/d.txt"; printf 'echo' > "$S/dropped/e.txt"
         mkdir -p "$S/dropped/sub"; printf 'inside' > "$S/dropped/sub/inner.txt"
         local A="$D\\a.txt" B="$D\\b.txt" C="$D\\c.txt" DD="$D\\d.txt" E="$D\\e.txt" SUB="$D\\sub"
-        [ "$(lastseen flag)" = true ] || waitfor '^seen flag true$' 10 || fail "the page was not told that drops are on (window.__cling_drop)" || return 1
+        [ "$(lastseen flag)" = true ] || waitfor '^seen flag true$' 10 || fail "the page was not told that drops are on (window.__pronao_drop)" || return 1
 
         said="$(drag "$A")"; [ "$said" != none ] && [ "$said" != cancel ] || fail "the window did not accept a dropped file (the drag said: $said)" || return 1
         waitfor '^seen drop ' 10 || fail "the page never heard of the drop" || return 1
@@ -149,16 +149,16 @@ story() { # kind(theme|drop) dir shim-dir-or-empty -> 0 if the whole story worke
     return 0
 }
 
-kind_of_story() { story "$1" "${TMPDIR:-/tmp}/app-cling-system-$1" ""; }
+kind_of_story() { story "$1" "${TMPDIR:-/tmp}/pronao-system-$1" ""; }
 for kind in ${ONLY:-theme drop}; do                       # (ONLY=drop or ONLY=theme runs one story, without the controls)
-    kind_of_story "$kind" || { echo "$kind test: FAILED"; stop_program "${TMPDIR:-/tmp}/app-cling-system-$kind/t.exe"; restore; exit 1; }
+    kind_of_story "$kind" || { echo "$kind test: FAILED"; stop_program "${TMPDIR:-/tmp}/pronao-system-$kind/t.exe"; restore; exit 1; }
     echo "$kind test: ok"
 done
 restore
 [ -z "${ONLY:-}" ] || exit 0
 
 control() { # kind  name  file  old  new
-    local C="${TMPDIR:-/tmp}/app-cling-system-control-${2// /_}"
+    local C="${TMPDIR:-/tmp}/pronao-system-control-${2// /_}"
     rm -rf "$C" 2>/dev/null || true; mkdir -p "$C"; cp -r "$HERE/shim" "$C/shim"
     python3 - "$C/shim/$3" "$4" "$5" <<'PYEOF' || { echo "CONTROL SETUP FAILED: $2"; exit 1; }
 import sys

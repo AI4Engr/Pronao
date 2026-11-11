@@ -30,7 +30,7 @@ Where things are in the repository.
 | `scripts/modules.sh` | the list of these modules, in one place for the build, the sanitizers, WSL runs and the statistics |
 | `scripts/pointer_demands.sh` | what the modules need from each other's classes (see "One program, many files" in chapter 16 of the CeeLing guide) |
 | `scripts/ptr_table.py` | compares the pointer kinds and function bodies of two builds (used to check that a refactor did not change what the compiler inferred) |
-| `src/bridge.js` | defines `window.cling.*`; embedded into the program at build time |
+| `src/bridge.js` | defines `window.pronao.*`; embedded into the program at build time |
 | `shim/` | the native layer: `app_native.h` lists every primitive; `app_shim.cpp` window and queue; `win/` and `posix/` the OS parts |
 | `examples/hello/` | window with three buttons |
 | `tests/` | headless suites, real-window self-test, queue stress test, sanitizer and negative-control scripts; `tests/doubles/` stands in for the window and the dialogs |

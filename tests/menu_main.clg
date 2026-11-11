@@ -202,7 +202,7 @@ int main() {
     app.menuEventsToPage(true);
     app_test_menu_click(h, "file.save");
     app.serveOne(100);
-    check("with menuEventsToPage the page gets menu.click", seen.last == "file.save" && app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"menu.click\",{\"id\":\"file.save\"}]);");
+    check("with menuEventsToPage the page gets menu.click", seen.last == "file.save" && app_test_take_eval(h, ev) == 1 && ev == "window.__pronao_emit([\"menu.click\",{\"id\":\"file.save\"}]);");
     app_test_menu_click(h, "not.an.item");
     app.serveOne(100);
     check("an id the menu does not have does nothing", seen.count == 2 && seen.last == "file.save" && app_test_take_eval(h, ev) == 0);

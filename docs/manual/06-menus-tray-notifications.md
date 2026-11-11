@@ -72,7 +72,7 @@ app.enablePopupCommand();              // off until this is called
 ```js
 document.addEventListener('contextmenu', function (e) {
   e.preventDefault();
-  cling.menu.popup('ctx').then(function (id) { /* "ctx.copy", or null if the menu was dismissed */ });
+  pronao.menu.popup('ctx').then(function (id) { /* "ctx.copy", or null if the menu was dismissed */ });
 });
 ```
 
@@ -91,8 +91,8 @@ app.setNotificationGap(5000);                          // the least time between
 ```
 
 ```js
-await cling.notify('Saved', 'Your changes are safe', { kind: 'info', id: 'saved' });      // rejected with {code: "too_many"} if it comes too soon
-cling.onNotificationClick(function (id) { /* the user clicked a notification THIS page asked for */ });
+await pronao.notify('Saved', 'Your changes are safe', { kind: 'info', id: 'saved' });      // rejected with {code: "too_many"} if it comes too soon
+pronao.onNotificationClick(function (id) { /* the user clicked a notification THIS page asked for */ });
 ```
 
 - **What is checked:** the title is 1 to 63 bytes of text on one line, the text 1 to 255 bytes (line breaks allowed), no control characters, the kind is one of three, the id is a name (1 to 64 letters, digits, `.`, `_`, `-`).
@@ -115,9 +115,9 @@ app.enableThemeCommands(true);                         // the page may ask: them
 ```
 
 ```js
-const { mode, system } = await cling.theme.get();      // mode: "system" | "light" | "dark"; system: "light" | "dark" | "unknown"
-cling.theme.onChange(({ mode, system }) => { /* the choice or the system changed */ });
-await cling.theme.set('dark');                         // only if the application allowed it
+const { mode, system } = await pronao.theme.get();      // mode: "system" | "light" | "dark"; system: "light" | "dark" | "unknown"
+pronao.theme.onChange(({ mode, system }) => { /* the choice or the system changed */ });
+await pronao.theme.set('dark');                         // only if the application allowed it
 ```
 
 - **Without any of this** a window already follows the system: its page (the browser engine's `prefers-color-scheme`) and its title bar (the window library). What this adds is the application knowing, a **forced** light or dark

@@ -1,4 +1,4 @@
-// app-cling -- text helpers shared by the other modules: UTF-8 checking and repair, splitting, small parsers.
+// pronao -- text helpers shared by the other modules: UTF-8 checking and repair, splitting, small parsers.
 // Everything here is plain CeeLing (bounds-checked); none of it needs the operating system.
 
 // The byte at i as 0..255 (a char may be signed).

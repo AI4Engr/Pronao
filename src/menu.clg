@@ -1,4 +1,4 @@
-// app-cling -- menus: the window's menu bar, the tray icon's menu, and a menu a page may ask to have popped up. THE APPLICATION declares every menu; a page can only
+// pronao -- menus: the window's menu bar, the tray icon's menu, and a menu a page may ask to have popped up. THE APPLICATION declares every menu; a page can only
 // choose among the names of menus the application declared, and it learns the id of what was clicked. Nothing a page sends can add, change or show an item.
 //
 // A Menu is built with a flat list of calls (CeeLing has no chaining on a call's result):

@@ -6,7 +6,7 @@
   window.addEventListener('unhandledrejection', function (e) { window.__errors.push('rejection: ' + String(e.reason)); });
   window.addEventListener('load', function () {
     setTimeout(function () {
-      window.cling.invoke('report', {
+      window.pronao.invoke('report', {
         path: location.pathname, origin: location.origin, tauri: window.isTauri === true, internals: typeof window.__TAURI_INTERNALS__,
         inputs: document.querySelectorAll('input').length, buttons: document.querySelectorAll('button').length,
         text: document.body.innerText.replace(/\s+/g, ' ').slice(0, 300), errors: window.__errors.slice(0, 10), scripts: document.scripts.length

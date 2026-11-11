@@ -12,7 +12,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$HERE/scripts/env.sh"
 # the sources are copied under BASE, which WSL must see: a Windows folder is reached as /mnt/<drive>/... (wslpath converts)
-BASE="${BASE:-${TMPDIR:-/tmp}/app-cling-san}"
+BASE="${BASE:-${TMPDIR:-/tmp}/pronao-san}"
 WSL_DISTRO="${WSL_DISTRO:-}"             # empty: WSL's default distribution
 rm -rf "$BASE"; mkdir -p "$BASE/shim" "$BASE/tests"
 cp "$CJSON"/shim/cjson_num.h "$BASE/shim/"

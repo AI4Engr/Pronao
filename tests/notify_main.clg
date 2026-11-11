@@ -141,7 +141,7 @@ int main() {
     app_test_notification_click(tray, "page-click");
     app.serveOne(100);
     check("a click on a notification the page asked for reaches the application", clicks.ids == "page-click;");
-    check("and the page that asked", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"notification.click\",{\"id\":\"page-click\"}]);");
+    check("and the page that asked", app_test_take_eval(h, ev) == 1 && ev == "window.__pronao_emit([\"notification.click\",{\"id\":\"page-click\"}]);");
 
     // ---- a program that has a tray icon ----
     App b = new App();

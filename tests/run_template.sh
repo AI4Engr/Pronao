@@ -3,7 +3,7 @@
 #   tests/run_template.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-W="${TMPDIR:-/tmp}/app-cling-template"
+W="${TMPDIR:-/tmp}/pronao-template"
 rm -rf "$W" 2>/dev/null || true; mkdir -p "$W"
 bash "$HERE/scripts/new_project.sh" "$W/my-app" > /dev/null || { echo "new_project FAILED"; exit 1; }
 bash "$HERE/scripts/new_project.sh" "$W/my-app" > /dev/null 2>&1 && { echo "new_project overwrote a project that exists"; exit 1; }

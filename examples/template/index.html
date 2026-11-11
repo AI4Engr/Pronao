@@ -12,9 +12,9 @@
 <button id="go">greet</button></p>
 <pre id="out">(the answer of the CeeLing command appears here)</pre>
 <script>
-  // cling.invoke(command, args) calls a command written in main.clg and returns a promise.
+  // pronao.invoke(command, args) calls a command written in main.clg and returns a promise.
   document.getElementById('go').onclick = () => {
-    cling.invoke('greet', { name: document.getElementById('name').value, times: Number(document.getElementById('times').value) })
+    pronao.invoke('greet', { name: document.getElementById('name').value, times: Number(document.getElementById('times').value) })
       .then(v => { out.textContent = v; }, e => { out.textContent = 'refused: ' + e.code + ' - ' + e.message; });
   };
   const out = document.getElementById('out');

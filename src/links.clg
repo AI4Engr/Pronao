@@ -1,4 +1,4 @@
-// app-cling -- what a page may ask the operating system to open: an address in the default browser, a file in its default program, a file shown in
+// pronao -- what a page may ask the operating system to open: an address in the default browser, a file in its default program, a file shown in
 // the file manager. The native layer (app_shell_open) only hands the target to the shell; WHAT may be handed over is decided here.
 //
 //  * An ADDRESS must be an http, https or mailto address that the application allowed (`allowSchemes`), written the way the network wants it: printable

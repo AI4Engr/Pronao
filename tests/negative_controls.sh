@@ -5,7 +5,7 @@
 #   tests/negative_controls.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-W="${TMPDIR:-/tmp}/app-cling-negative"
+W="${TMPDIR:-/tmp}/pronao-negative"
 rm -rf "$W"; mkdir -p "$W"
 "${CXX:-g++}" --std=c++17 -O1 "$HERE/tests/proc_helper.cpp" -o "$W/proc_helper.exe" || exit 1
 export APP_PROC_ECHO="$W/proc_helper.exe"
@@ -74,7 +74,7 @@ control "a site origin is vetted" assets.clg ' || endsWithText(origin, "/")) {' 
 control "request size limit" shim/queue.h '        if (static_cast<int>(request.size()) > max_request) return 1;' '' headless_main "a call over the size limit is refused"
 control "queue length limit" shim/queue.h '        if (static_cast<int>(q_.size()) >= max_queued) return 2;' '        if (false) return 2;' headless_main "with 3 waiting"
 control "ids a page cannot have" shim/queue.h '        if (id.empty() || id.size() > 64) return 3;' '' headless_main "an id the page could not have been given"
-control "environment is withheld" programs.clg 'splitOn("PATH,SystemRoot,' 'splitOn("APP_CLING_SECRET,PATH,SystemRoot,' headless_main "a variable of this process is not passed"
+control "environment is withheld" programs.clg 'splitOn("PATH,SystemRoot,' 'splitOn("PRONAO_SECRET,PATH,SystemRoot,' headless_main "a variable of this process is not passed"
 control "asset names are vetted" assets.clg '        if (part.length() == 0 || part == "." || part == "..") {' '        if (false) {' site_main "names it may not"
 control "the origin boundary" shim/assets.h "(url.size() > origin_.size() && url[origin_.size()] != '/' && url[origin_.size()] != '?' && url[origin_.size()] != '#')" "false" site_main "another origin is left to the network"
 control "unknown addresses are 404" shim/assets.h '        if (it == items_.end()) { status = 404;' '        if (it == items_.end()) { return false; status = 404;' site_main "an unknown address is a 404"

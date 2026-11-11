@@ -10,13 +10,13 @@ app.setShutdownGrace(5000);                       // the default
 ```
 ```js
 const c = new AbortController();
-const p = cling.invoke('proc.run', { program: 'git.log', args: { ... } }, { signal: c.signal });
+const p = pronao.invoke('proc.run', { program: 'git.log', args: { ... } }, { signal: c.signal });
 c.abort();                                        // p rejects at once with {code: 'cancelled'}; the program is killed
 ```
 - **A page call is answered once.** The native layer remembers which calls are waiting; the first answer settles the page's promise and any
   later one (a job that kept going after a deadline, a second `replyOk`, an id a worker made up) is dropped. So an answer sent by a timeout
   and the job's own late answer cannot both reach the page.
-- **Abandoning.** `cling.invoke(..., {signal})` tags the call; aborting rejects the promise immediately and sends `$cancel`. The call
+- **Abandoning.** `pronao.invoke(..., {signal})` tags the call; aborting rejects the promise immediately and sends `$cancel`. The call
   counts as *cancelled*: a program the call started (`proc.run`, anything run with a `ToolRun`) is killed together with everything it started,
   within about 50 ms, and a job of your own can check `callCancelled(handle, id)` between its steps and stop. Cancelling is a request, not an
   interruption: CeeLing cannot stop a loop that never checks, and a dialog stays open until the person answers. Only async commands can be

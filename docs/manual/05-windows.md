@@ -9,12 +9,12 @@ app.enableWindowCommands();
 app.confirmClose("Unsaved work", "Close without saving?");   // optional, see below
 ```
 ```js
-await cling.window.setTitle({ title: 'Report - draft' });
-await cling.window.setSize({ width: 900, height: 600 });     // 200..10000 by 150..10000
-await cling.window.minimize();  await cling.window.maximize();  await cling.window.restore();  await cling.window.focus();
-await cling.window.setDirty({ dirty: true });                  // the page has unsaved work
-await cling.window.close();
-cling.window.onCloseDeclined(() => { ... });                   // the user pressed the X, was asked, and chose to stay
+await pronao.window.setTitle({ title: 'Report - draft' });
+await pronao.window.setSize({ width: 900, height: 600 });     // 200..10000 by 150..10000
+await pronao.window.minimize();  await pronao.window.maximize();  await pronao.window.restore();  await pronao.window.focus();
+await pronao.window.setDirty({ dirty: true });                  // the page has unsaved work
+await pronao.window.close();
+pronao.window.onCloseDeclined(() => { ... });                   // the user pressed the X, was asked, and chose to stay
 ```
 With `confirmClose`, pressing the window's X (or Alt+F4) no longer closes the window by itself: the native layer only queues a
 record. If the page has said it has unsaved work (`setDirty`), CeeLing asks with a native box whose text is the
@@ -40,19 +40,19 @@ child.setModalFor(owner);             // while child is open the owner is greyed
 What a page may ask (off until the application registers it: `app.enableWindowLayoutCommands(allowFullscreen, allowAlwaysOnTop)`):
 
 ```js
-const b = await cling.layout.getBounds();                  // {x, y, width, height, maximized, minimized, fullscreen, alwaysOnTop, frameless, resizable}
-await cling.layout.setBounds({ x: 100, y: 80, width: 900, height: 600 });     // fitted, as above
+const b = await pronao.layout.getBounds();                  // {x, y, width, height, maximized, minimized, fullscreen, alwaysOnTop, frameless, resizable}
+await pronao.layout.setBounds({ x: 100, y: 80, width: 900, height: 600 });     // fitted, as above
 // a window with no title bar: the page draws its own and starts the system's move or resize from a mouse down on it
-titlebar.onmousedown = function () { cling.layout.startDrag(); };
-grip.onmousedown = function () { cling.layout.startResize('bottomright'); };     // left, right, top, bottom, topleft, topright, bottomleft, bottomright
-await cling.layout.setFullscreen(true);                     // only if the application allowed full screen
-await cling.layout.setAlwaysOnTop(true);                    // only if the application allowed always on top
-await cling.invoke('window.open', { start: '/dialog.html', modal: true });    // a window the page opens that disables the page that opened it
+titlebar.onmousedown = function () { pronao.layout.startDrag(); };
+grip.onmousedown = function () { pronao.layout.startResize('bottomright'); };     // left, right, top, bottom, topleft, topright, bottomleft, bottomright
+await pronao.layout.setFullscreen(true);                     // only if the application allowed full screen
+await pronao.layout.setAlwaysOnTop(true);                    // only if the application allowed always on top
+await pronao.invoke('window.open', { start: '/dialog.html', modal: true });    // a window the page opens that disables the page that opened it
 ```
 
 - **What the page cannot do:** take away its own title bar or resize border (`setFrameless` / `setResizable` are the application's), cover the screen or stay in front unless the application said it may (a page that can do both can imitate the system's
   own windows), or start a move out of nothing: `startDrag` / `startResize` act only while the left mouse button is held down.
-- **A frameless window and the page's own title bar:** the buttons are the page's: `cling.window.minimize()`, `maximize()`, `close()` already exist. Windows' snap layouts and the shadow of a window with a title bar are not kept.
+- **A frameless window and the page's own title bar:** the buttons are the page's: `pronao.window.minimize()`, `maximize()`, `close()` already exist. Windows' snap layouts and the shadow of a window with a title bar are not kept.
 - **Numbers the page sends** are checked: `x`, `y` within -32000 to 32000, width 200 to 10000, height 150 to 10000.
 - **Test:** `tests/layout_main.clg` (32 checks with a double) and `tests/run_layout_window.sh` (a real window; after each change the test asks Windows what the window looks like: the rectangle, topmost, caption, resize border, enabled, whether it covers its
   monitor; a drag with no button held does nothing; a modal window disables its owner and gives it back when the application closes it and when the user does; two controls that must fail).
@@ -124,7 +124,7 @@ told (it may be starting or stuck), `3` not supported here, `4` the name is not 
 What the running copy does when a later launch hands over its working folder and arguments:
 
 ```js
-cling.onSecondInstance(function (e) { /* e = { cwd: 'C:\\work', args: ['report.txt', '--flag'] } */ });
+pronao.onSecondInstance(function (e) { /* e = { cwd: 'C:\\work', args: ['report.txt', '--flag'] } */ });
 ```
 
 - The first window comes to the front (a minimized one is restored first), and its page gets the event `app.secondInstance`.

@@ -16,7 +16,7 @@ app.allowProgram("git.log", "git", log, 10000, 1000000);   // name, program, tem
 app.enableProcessCommands();
 ```
 ```js
-const r = await cling.proc.run({ program: 'git.log', args: { count: 20, repo: '.', file: 'src/a.txt' } });
+const r = await pronao.proc.run({ program: 'git.log', args: { count: 20, repo: '.', file: 'src/a.txt' } });
 // { exitCode, stdout, stderr, timedOut, truncated: {stdout, stderr}, lossy }   -- a non-zero exit code is a result, not an error
 ```
 Slots: `{n:int:min:max}` a whole number in range; `{n:token}` letters, digits and `. _ - / @ ~ ^ + =`; `{n:text:maxLen}` any
@@ -47,9 +47,9 @@ app.enableShellCommands();                // shell.openUrl, shell.openFile, shel
 ```
 
 ```js
-await cling.shell.openUrl({ url: 'https://example.com/docs' });   // default browser
-await cling.shell.openFile({ path: 'C:/Users/me/Docs/report.pdf' });   // default program; the file must be reachable by the file commands and of a listed type
-await cling.shell.reveal({ path: '...' });                          // shown in Explorer / the file manager; starts nothing
+await pronao.shell.openUrl({ url: 'https://example.com/docs' });   // default browser
+await pronao.shell.openFile({ path: 'C:/Users/me/Docs/report.pdf' });   // default program; the file must be reachable by the file commands and of a listed type
+await pronao.shell.reveal({ path: '...' });                          // shown in Explorer / the file manager; starts nothing
 ```
 
 - **Addresses** must be http, https or mailto, allowed by the application, in printable ASCII (percent-encode the rest; no spaces, quotes, `<>` or backslashes), at most 2048 bytes, and for http / https a host with no `user@`.

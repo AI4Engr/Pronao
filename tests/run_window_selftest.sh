@@ -3,7 +3,7 @@
 # Needs third_party/ (scripts/fetch.sh) and the WebView2 runtime. Passes only on exit code 0 AND "selftest ok".
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-W="${TMPDIR:-/tmp}/app-cling-window"
+W="${TMPDIR:-/tmp}/pronao-window"
 rm -rf "$W" 2>/dev/null || true; mkdir -p "$W/work"
 PAGE="$HERE/tests/selftest.html" WORK="$W/work" bash "$HERE/scripts/build.sh" "$HERE/tests/window_selftest.clg" "$W/t.exe" || { echo "BUILD FAILED"; exit 1; }
 [ -f "$W/t.exe" ] || { echo "BUILD FAILED (no binary)"; exit 1; }
@@ -11,7 +11,7 @@ mkdir -p "$W/run/files"
 # a private browser profile per run: a previous run's browser processes may still hold the default one for a few seconds
 export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$W/profile-$$")"
 # the page opens a real message box and a real Open dialog; this closes them the way a user would
-powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$HERE/tests/close_dialogs.ps1")" "main:app-cling selftest ready" "no:app-cling selftest close" "app-cling selftest message" "app-cling selftest open" > "$W/dialogs.log" 2>&1 &
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$HERE/tests/close_dialogs.ps1")" "main:pronao selftest ready" "no:pronao selftest close" "pronao selftest message" "pronao selftest open" > "$W/dialogs.log" 2>&1 &
 CLOSER=$!
 OUT="$(cd "$W/run" && timeout 45 "$W/t.exe" 2>&1)"; RC=$?
 wait $CLOSER; CLOSERC=$?
@@ -21,7 +21,7 @@ echo "$OUT"
 [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -q '^selftest ok$'
 
 # the same window, but with the page served by the program from memory (several files)
-S="${TMPDIR:-/tmp}/app-cling-site"
+S="${TMPDIR:-/tmp}/pronao-site"
 rm -rf "$S" 2>/dev/null || true; mkdir -p "$S/work" "$S/run"
 ASSETS="$HERE/tests/site_window" WORK="$S/work" bash "$HERE/scripts/build.sh" "$HERE/tests/site_window.clg" "$S/t.exe" || { echo "SITE BUILD FAILED"; exit 1; }
 export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$S/profile-$$")"      # (a fresh profile: the last run's browser may still be shutting down)

@@ -1,4 +1,4 @@
-// app-cling -- Running programs for a page: the table the application writes (ProgramSpec, ProgramRegistry), the slots a page fills, how a program is found and vetted
+// pronao -- Running programs for a page: the table the application writes (ProgramSpec, ProgramRegistry), the slots a page fills, how a program is found and vetted
 // (resolveProgram, runFitsOs) and the one place a run is started (runTool).
 
 #include "cjson_item.clh"
@@ -24,7 +24,7 @@ ext_fn int app_proc_run(int handle, string call, string exe, std::vector<string>
 //
 //     app.allowProgram("git.log", "git",
 //         ["log", "-n", "{count:int:1:500}", "--format=%H%x09%s", "--", "{file:file}", "@cwd={repo:folder}"], 10000, 1000000);
-//     // page:  cling.proc.run({ program: "git.log", args: { count: 20, repo: ".", file: "src/a.txt" } })
+//     // page:  pronao.proc.run({ program: "git.log", args: { count: 20, repo: ".", file: "src/a.txt" } })
 //
 // An argument is literal text, or literal text around ONE slot  {name:kind[:a[:b]]}  with kind
 //   int:min:max   a whole number from min to max        token   letters, digits and . _ - / @ ~ ^ + = (max 200)

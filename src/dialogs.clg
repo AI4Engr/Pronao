@@ -1,4 +1,4 @@
-// app-cling -- The arguments of the dialog commands (dialog.open, dialog.save, dialog.folder, dialog.message), read by generated decoders (decodeX), and the checks on what they MEAN.
+// pronao -- The arguments of the dialog commands (dialog.open, dialog.save, dialog.folder, dialog.message), read by generated decoders (decodeX), and the checks on what they MEAN.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"

@@ -3,8 +3,8 @@
 <body><h1>second window</h1>
 <script>
   (async () => {
-    const me = await cling.invoke('whoami');
+    const me = await pronao.invoke('whoami');
     // the same call id may be in flight in the other window at the same moment: calls are told apart by window
-    await cling.invoke('report', { who: 'second', handle: me, path: location.pathname });
-  })().catch(function (e) { cling.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
+    await pronao.invoke('report', { who: 'second', handle: me, path: location.pathname });
+  })().catch(function (e) { pronao.invoke('failed', { error: String(e && e.message || JSON.stringify(e)) }); });
 </script></body></html>

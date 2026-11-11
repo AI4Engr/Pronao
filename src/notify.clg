@@ -1,4 +1,4 @@
-// app-cling -- Notifications (toasts): the arguments of notification.show and the Notifier that checks and shows one, shared by the application and the page command.
+// pronao -- Notifications (toasts): the arguments of notification.show and the Notifier that checks and shows one, shared by the application and the page command.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"

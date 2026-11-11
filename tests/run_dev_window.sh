@@ -3,7 +3,7 @@
 # refuse to load any server. Needs python3 and the WebView2 runtime.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-W="${TMPDIR:-/tmp}/app-cling-dev"
+W="${TMPDIR:-/tmp}/pronao-dev"
 rm -rf "$W" 2>/dev/null || true; mkdir -p "$W/work" "$W/work-release" "$W/run"
 PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$HERE/tests/dev_site" > "$W/server.log" 2>&1 &

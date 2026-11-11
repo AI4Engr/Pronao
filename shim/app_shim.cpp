@@ -106,7 +106,7 @@ void themeSettingChanged(App* a, HWND h) {
 }
 
 LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    App* a = static_cast<App*>(GetPropW(h, L"app_cling"));
+    App* a = static_cast<App*>(GetPropW(h, L"pronao"));
     if (msg == WM_SETTINGCHANGE && lp != 0 && lstrcmpW(reinterpret_cast<const wchar_t*>(lp), L"ImmersiveColorSet") == 0) {
         const LRESULT result = CallWindowProcW(reinterpret_cast<WNDPROC>(a->oldProc), h, msg, wp, lp);
         themeSettingChanged(a, h);
@@ -160,7 +160,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
             webview::webview w(debug != 0, nullptr);
             w.set_title(title);
             w.set_size(width, height, WEBVIEW_HINT_NONE);
-            w.bind("__cling_invoke", [raw, &w](const std::string& id, const std::string& req, void*) {
+            w.bind("__pronao_invoke", [raw, &w](const std::string& id, const std::string& req, void*) {
                 const int refused = raw->calls.admit(id, req, raw->maxRequest, raw->maxQueued);
                 if (refused == 1 || refused == 2) w.resolve(id, 1, refusalJson(refused));
             }, nullptr);
@@ -176,7 +176,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
             else w.set_html(html);
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(w.window().value());
-            SetPropW(hwnd, L"app_cling", raw);
+            SetPropW(hwnd, L"pronao", raw);
             raw->hwnd = hwnd;
             // the program's icon (resource 1, from scripts/build.sh ICON=...) for the title bar, Alt+Tab and the taskbar; none linked in: the default stays
             for (int big = 0; big < 2; big++) {

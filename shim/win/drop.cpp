@@ -37,7 +37,7 @@ public:
         const std::string text = narrow(raw);
         CoTaskMemFree(raw);
         long x = 0, y = 0;
-        if (text.compare(0, 11, "cling.drop ") != 0 || std::sscanf(text.c_str() + 11, "%ld %ld", &x, &y) != 2) return S_OK;
+        if (text.compare(0, 12, "pronao.drop ") != 0 || std::sscanf(text.c_str() + 12, "%ld %ld", &x, &y) != 2) return S_OK;
         ICoreWebView2WebMessageReceivedEventArgs2* args2 = nullptr;
         if (FAILED(args->QueryInterface(IID_ICoreWebView2WebMessageReceivedEventArgs2, reinterpret_cast<void**>(&args2))) || !args2) return S_OK;
         std::vector<std::string> paths;
@@ -86,9 +86,9 @@ struct Registration {
 std::mutex g_mutex;                       // every window has its own UI thread
 std::map<HWND, Registration>& registered() { static std::map<HWND, Registration> m; return m; }
 
-// the page learns whether drops are switched on from window.__cling_drop (src/bridge.js): set for the document that is open and for every one that follows
+// the page learns whether drops are switched on from window.__pronao_drop (src/bridge.js): set for the document that is open and for every one that follows
 void tellPage(ICoreWebView2* view, bool on) {
-    const wchar_t* script = on ? L"window.__cling_drop=true;" : L"window.__cling_drop=false;";
+    const wchar_t* script = on ? L"window.__pronao_drop=true;" : L"window.__pronao_drop=false;";
     view->AddScriptToExecuteOnDocumentCreated(script, nullptr);
     view->ExecuteScript(script, nullptr);
 }

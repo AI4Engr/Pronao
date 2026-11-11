@@ -1,4 +1,4 @@
-// app-cling -- How a call from a page is answered: who is calling (CallContext), which commands a window may call (CommandRules) and the Dispatcher that parses a request,
+// pronao -- How a call from a page is answered: who is calling (CallContext), which commands a window may call (CommandRules) and the Dispatcher that parses a request,
 // checks it, runs the command and turns what it throws into {code, message}.
 
 #include "cjson_item.clh"
@@ -160,7 +160,7 @@ public:
     std::vector<string> dueIds;
     std::vector<int> dueHandles;       // (a page's call ids are only unique within its window: every table of calls is keyed by window AND id)
     std::vector<double> dueAt;
-    // The tag a page gave an async call (cling.invoke(..., {signal})) and the call it names, newest last, at most 256 of them.
+    // The tag a page gave an async call (pronao.invoke(..., {signal})) and the call it names, newest last, at most 256 of them.
     std::vector<string> tags;
     std::vector<int> tagHandles;
     std::vector<string> tagCalls;

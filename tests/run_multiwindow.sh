@@ -3,7 +3,7 @@
 # (WM_DESTROY ends that window's own message loop) the first window to close leaves the program hanging and this test times out.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-S="${TMPDIR:-/tmp}/app-cling-multi"
+S="${TMPDIR:-/tmp}/pronao-multi"
 rm -rf "$S" 2>/dev/null || true; mkdir -p "$S/work" "$S/run"
 ASSETS="$HERE/tests/site_multi" WORK="$S/work" bash "$HERE/scripts/build.sh" "$HERE/tests/multiwindow_window.clg" "$S/t.exe" || { echo "BUILD FAILED"; exit 1; }
 export WEBVIEW2_USER_DATA_FOLDER="$(cygpath -w "$S/profile-$$")"
@@ -14,7 +14,7 @@ echo "$OUT"
 
 # CONTROL: the same test against a shim whose guardProc does not end a window's own message loop on WM_DESTROY. The webview library does that only
 # for the LAST window of the process, so the window the application closed is never reported closed; the test must see that and fail.
-C="${TMPDIR:-/tmp}/app-cling-multi-control"
+C="${TMPDIR:-/tmp}/pronao-multi-control"
 rm -rf "$C" 2>/dev/null || true; mkdir -p "$C/work" "$C/run"; cp -r "$HERE/shim" "$C/shim"
 python3 - "$C/shim/app_shim.cpp" <<'PYEOF' || { echo "CONTROL SETUP FAILED"; exit 1; }
 import sys

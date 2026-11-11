@@ -119,22 +119,22 @@ int main() {
     windowLog(h);
     app_test_push_internal(h, fields("/work", "report.txt", "--flag"));
     a.serveOne(100);
-    check("the page of the window gets app.secondInstance with the folder and the arguments", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[\"report.txt\",\"--flag\"]}]);");
+    check("the page of the window gets app.secondInstance with the folder and the arguments", app_test_take_eval(h, ev) == 1 && ev == "window.__pronao_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[\"report.txt\",\"--flag\"]}]);");
     check("and the window is brought to the front", windowLog(h) == "state|3;");
     app_test_push_internal(h, fields("/work", "", ""));
     a.serveOne(100);
-    check("a launch without arguments is an event with an empty list", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[]}]);");
+    check("a launch without arguments is an event with an empty list", app_test_take_eval(h, ev) == 1 && ev == "window.__pronao_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[]}]);");
 
     string badBytes = "x";
     badBytes.push_back(char(255));
     badBytes.push_back(char(254));
     app_test_push_internal(h, fields(badBytes, "ok", badBytes));
     a.serveOne(100);
-    check("an argument or folder that is not text is left out", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"\",\"args\":[\"ok\"]}]);");
+    check("an argument or folder that is not text is left out", app_test_take_eval(h, ev) == 1 && ev == "window.__pronao_emit([\"app.secondInstance\",{\"cwd\":\"\",\"args\":[\"ok\"]}]);");
 
     app_test_push_internal(h, fields("/work", repeated("x", 4097), "short"));
     a.serveOne(100);
-    check("an argument over 4096 bytes is left out", app_test_take_eval(h, ev) == 1 && ev == "window.__cling_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[\"short\"]}]);");
+    check("an argument over 4096 bytes is left out", app_test_take_eval(h, ev) == 1 && ev == "window.__pronao_emit([\"app.secondInstance\",{\"cwd\":\"/work\",\"args\":[\"short\"]}]);");
 
     string many = "instance";
     many.push_back(char(0));

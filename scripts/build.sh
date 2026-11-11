@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build an app-cling program.
+# Build an pronao program.
 #   scripts/build.sh <main.clg> <out.exe> [--headless]
 # Every .clg (cjson-cling's library, src/*.clg, the main) is transpiled to its own .cpp/.h, compiled separately and linked
 # with the native layer in shim/ (shim/win or shim/posix for the OS). --headless links the test doubles in tests/doubles

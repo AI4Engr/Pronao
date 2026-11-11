@@ -5,13 +5,13 @@
   (async () => {
     const r = {};
     r.origin = location.origin;
-    r.bridge = await cling.invoke('ping');                       // the bridge reaches a page served by the dev server
+    r.bridge = await pronao.invoke('ping');                       // the bridge reaches a page served by the dev server
     const blocked = [];
-    cling.window.onNavigationBlocked(function (e) { blocked.push(e.url); });
+    pronao.window.onNavigationBlocked(function (e) { blocked.push(e.url); });
     setTimeout(function () { location.href = 'https://example.invalid/top'; }, 0);   // leaving the dev server's origin is refused
     for (let i = 0; i < 40 && blocked.length < 1; i++) await new Promise(function (resolve) { setTimeout(resolve, 50); });
     r.blocked = blocked.length;
     r.still = location.origin === r.origin;
-    await cling.invoke('selftest', r);
-  })().catch(function (e) { cling.invoke('selftest', { error: String(e) }); });
+    await pronao.invoke('selftest', r);
+  })().catch(function (e) { pronao.invoke('selftest', { error: String(e) }); });
 </script></body></html>

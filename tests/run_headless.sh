@@ -22,7 +22,7 @@ EXPECTED_MENU=100
 EXPECTED_NOTIFY=33
 EXPECTED_LAYOUT=32
 EXPECTED_SYSTEM=48
-W="${TMPDIR:-/tmp}/app-cling-headless"
+W="${TMPDIR:-/tmp}/pronao-headless"
 rm -rf "$W"; mkdir -p "$W"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
 CXX="${CXX:-g++}"

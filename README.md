@@ -1,4 +1,4 @@
-# app-cling
+# Pronao
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Status: prototype](https://img.shields.io/badge/status-prototype-orange.svg)
 
@@ -10,8 +10,8 @@ app.command("add", closure Command [] (Item args) {
 });
 ```
 ```js
-const sum = await cling.invoke('add', [2, 3]);       // 5
-try { await cling.invoke('fail'); } catch (e) { e }  // {code: "command_failed", message: "..."}
+const sum = await pronao.invoke('add', [2, 3]);       // 5
+try { await pronao.invoke('fail'); } catch (e) { e }  // {code: "command_failed", message: "..."}
 ```
 
 > **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
@@ -78,7 +78,7 @@ Behaviour that needs a real screen (how a menu is drawn, a toast, a real mouse d
 * [One command, from the page to the reply](docs/manual/appendix-command-journey.md): `fs.read` with the generated C++ beside the CeeLing.
 * [Compile errors you will meet](docs/manual/appendix-compile-errors.md) and the fix for each.
 * [Source map](docs/manual/source-map.md): where things are in the repository.
-* [Chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-app-cling.md): what the language did to this program, with counts of the checks it inserted and what they cost.
+* [Chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-pronao.md): what the language did to this program, with counts of the checks it inserted and what they cost.
 
 ## License
 

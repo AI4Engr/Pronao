@@ -84,11 +84,11 @@ story() { # dir  shim-dir-or-empty -> 0 if the whole story worked
     return 0
 }
 
-story "${TMPDIR:-/tmp}/app-cling-layout" "" || { echo "layout test: FAILED"; stop_program "${TMPDIR:-/tmp}/app-cling-layout/t.exe"; exit 1; }
+story "${TMPDIR:-/tmp}/pronao-layout" "" || { echo "layout test: FAILED"; stop_program "${TMPDIR:-/tmp}/pronao-layout/t.exe"; exit 1; }
 echo "layout test: ok"
 
 control() { # name  file  old  new
-    local C="${TMPDIR:-/tmp}/app-cling-layout-control-$1"
+    local C="${TMPDIR:-/tmp}/pronao-layout-control-$1"
     rm -rf "$C" 2>/dev/null || true; mkdir -p "$C"; cp -r "$HERE/shim" "$C/shim"
     python3 - "$C/shim/$2" "$3" "$4" <<'PYEOF' || { echo "CONTROL SETUP FAILED: $1"; exit 1; }
 import sys

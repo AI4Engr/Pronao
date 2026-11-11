@@ -1,4 +1,4 @@
-// app-cling -- One open window and the book of them: its state, its menu bar, its layout, the pop-up menus a page may ask for, and the checks on the pages a window may be opened on.
+// pronao -- One open window and the book of them: its state, its menu bar, its layout, the pop-up menus a page may ask for, and the checks on the pages a window may be opened on.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"

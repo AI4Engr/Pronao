@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# What CeeLing did for app-cling, in numbers: counts in src/*.clg and in the C++ the compiler generated from it.
+# What CeeLing did for pronao, in numbers: counts in src/*.clg and in the C++ the compiler generated from it.
 #   scripts/ceeling_stats.sh [work dir of a build]       (default: the one tests/run_headless.sh leaves behind)
-#   SRC="src/files.clg" GEN="files.cpp" scripts/ceeling_stats.sh $TMPDIR/app-cling-headless/work_headless_main
+#   SRC="src/files.clg" GEN="files.cpp" scripts/ceeling_stats.sh $TMPDIR/pronao-headless/work_headless_main
 #       (SRC: the .clg files to count, relative to the repository; GEN: the generated files in the work dir to count)
 # The CeeLing guide (chapter 16) quotes these numbers; run it again to refresh them.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-W="${1:-${TMPDIR:-/tmp}/app-cling-headless/work_headless_main}"
+W="${1:-${TMPDIR:-/tmp}/pronao-headless/work_headless_main}"
 [ -f "$W/app.cpp" ] || { echo "no generated code in $W (run tests/run_headless.sh first, or pass a build's work directory)"; exit 1; }
 
 # the source without comment lines and blank lines (a word in a comment is not code)

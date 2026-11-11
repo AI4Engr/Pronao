@@ -17,7 +17,7 @@ app.allowOnlyCommands(names);                    // optional: this window's page
   would hand the application's commands to a stranger's page. After the application's own page, the window loads nothing except
   an address that starts with an allowed prefix; links, redirects, scripts and **frames** pointing elsewhere are cancelled, no
   new window can open, and the right-click menu is off in a release build (`debug` false). Each refusal reaches the page as the
-  event `window.navigationBlocked {url}` (`cling.window.onNavigationBlocked`). The real-window self-test tries a frame, a script
+  event `window.navigationBlocked {url}` (`pronao.window.onNavigationBlocked`). The real-window self-test tries a frame, a script
   navigation and a popup, and fails if the guard is removed. Windows only.
 - **A window's own command list.** `app.allowOnlyCommands(names)` (after the commands are registered) limits what this window's
   page can call; anything else, registered or not, is answered `{code: "forbidden"}` (so names cannot be probed), and a name that

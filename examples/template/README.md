@@ -1,6 +1,6 @@
 # __NAME__
 
-An [app-cling](__APP_CLING__) program: the page is `index.html`, the commands it calls are written in CeeLing in `main.clg`.
+An [Pronao](__PRONAO__) program: the page is `index.html`, the commands it calls are written in CeeLing in `main.clg`.
 
 ```
 bash build.sh               # out/__NAME__(.exe)
@@ -15,5 +15,5 @@ While writing the front end, run its dev server and start the program with `APP_
 `APP_DEBUG=1` turns the developer tools on.
 
 Add a command in `main.clg` with `app.command("name", closure Command [] (Item args) { ... });` and call it from the page with
-`cling.invoke("name", args)`. What a page may do beyond that (files, programs, dialogs, watching folders, window control) is off until
-`main.clg` turns it on; see app-cling's user manual (`docs/manual/`).
+`pronao.invoke("name", args)`. What a page may do beyond that (files, programs, dialogs, watching folders, window control) is off until
+`main.clg` turns it on; see Pronao's user manual (`docs/manual/`).

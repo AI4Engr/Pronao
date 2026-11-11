@@ -2,32 +2,32 @@
 <html><body><script>
   (async () => {
     const r = {};
-    r.ping = await cling.invoke('ping');
-    r.sum = await cling.invoke('add', [2, 3]);
-    r.echo = await cling.invoke('echo', { a: [1, 'x', null] });
-    r.async = await cling.invoke('aecho', { n: [1, 2] });
-    await cling.invoke('fs.write', { path: 'a.txt', text: 'hi \u00e9' });          // inside the one allowed folder
-    r.file = await cling.invoke('fs.read', { path: 'a.txt' });
-    try { await cling.invoke('fs.read', { path: '../t.exe' }); } catch (e) { r.escape = e.code; }   // out of it
-    try { await cling.invoke('fs.read', { path: 'nothing.txt' }); } catch (e) { r.missing = e.code; }
+    r.ping = await pronao.invoke('ping');
+    r.sum = await pronao.invoke('add', [2, 3]);
+    r.echo = await pronao.invoke('echo', { a: [1, 'x', null] });
+    r.async = await pronao.invoke('aecho', { n: [1, 2] });
+    await pronao.invoke('fs.write', { path: 'a.txt', text: 'hi \u00e9' });          // inside the one allowed folder
+    r.file = await pronao.invoke('fs.read', { path: 'a.txt' });
+    try { await pronao.invoke('fs.read', { path: '../t.exe' }); } catch (e) { r.escape = e.code; }   // out of it
+    try { await pronao.invoke('fs.read', { path: 'nothing.txt' }); } catch (e) { r.missing = e.code; }
     // window control on the real window, then a real press of the X while there is unsaved work: tests/close_dialogs.ps1
     // posts WM_CLOSE to the main window once its title says "ready" and presses No in the box that asks
     const until = async function (test) { for (let i = 0; i < 40 && !test(); i++) await new Promise(function (r) { setTimeout(r, 50); }); return test(); };
-    await cling.window.setSize({ width: 640, height: 400 });
+    await pronao.window.setSize({ width: 640, height: 400 });
     const sized = await until(function () { return Math.abs(window.innerWidth * window.devicePixelRatio - 640) < 40; });
-    await cling.window.maximize();
+    await pronao.window.maximize();
     const maximized = await until(function () { return window.outerWidth >= screen.availWidth - 20; });
-    await cling.window.restore();
+    await pronao.window.restore();
     const restored = await until(function () { return window.outerWidth < screen.availWidth - 20; });
-    await cling.window.setDirty({ dirty: true });
-    const declined = cling.once('window.closeDeclined');
-    await cling.window.setTitle({ title: 'app-cling selftest ready' });
+    await pronao.window.setDirty({ dirty: true });
+    const declined = pronao.once('window.closeDeclined');
+    await pronao.window.setTitle({ title: 'pronao selftest ready' });
     r.window = sized && maximized && restored;
     r.guard = (await declined) === null;
-    await cling.window.setDirty({ dirty: false });
+    await pronao.window.setDirty({ dirty: false });
     // the window refuses to go anywhere else: a frame, a script navigation and a popup, all to an address that cannot exist
     const blocked = [];
-    cling.window.onNavigationBlocked(function (e) { blocked.push(e.url); });
+    pronao.window.onNavigationBlocked(function (e) { blocked.push(e.url); });
     const frame = document.createElement('iframe');
     frame.src = 'https://example.invalid/frame';
     document.body.appendChild(frame);
@@ -36,33 +36,33 @@
     // three things are refused and each is reported (a frame, a script navigation, a popup), in whatever order the browser engine gets to them: wait for all three
     const saw = function (part) { return blocked.some(function (u) { return u.indexOf(part) > 0; }); };
     await until(function () { return saw('/frame') && saw('/top') && saw('/popup'); });
-    r.nav = [saw('/frame'), saw('/top'), saw('/popup') && (await cling.invoke('ping')) === 'pong'];
+    r.nav = [saw('/frame'), saw('/top'), saw('/popup') && (await pronao.invoke('ping')) === 'pong'];
     // real native dialogs; tests/close_dialogs.ps1 closes them like a user clicking the X
-    r.msg = await cling.invoke('dialog.message', { title: 'app-cling selftest message', message: 'closing by itself', kind: 'info', buttons: 'ok' });
-    r.open = await cling.invoke('dialog.open', { title: 'app-cling selftest open', filters: [{ name: 'Text', extensions: ['txt'] }] });
-    const watch = await cling.fs.watch({ path: '.' });                // a real folder watch, in the real window
-    const changed = new Promise(function (resolve) { const off = cling.fs.onChange(function (e) { if (e.path === 'watched.txt') { off(); resolve(e); } }); });
-    await cling.fs.write({ path: 'watched.txt', text: 'x' });
+    r.msg = await pronao.invoke('dialog.message', { title: 'pronao selftest message', message: 'closing by itself', kind: 'info', buttons: 'ok' });
+    r.open = await pronao.invoke('dialog.open', { title: 'pronao selftest open', filters: [{ name: 'Text', extensions: ['txt'] }] });
+    const watch = await pronao.fs.watch({ path: '.' });                // a real folder watch, in the real window
+    const changed = new Promise(function (resolve) { const off = pronao.fs.onChange(function (e) { if (e.path === 'watched.txt') { off(); resolve(e); } }); });
+    await pronao.fs.write({ path: 'watched.txt', text: 'x' });
     const ev = await changed;                                           // arrives from the watcher thread via the main loop
-    await cling.fs.unwatch({ id: watch.id });
+    await pronao.fs.unwatch({ id: watch.id });
     r.watch = [ev.kind === 'created' || ev.kind === 'modified', ev.watch === watch.id];
     // the page abandons a slow program (an AbortSignal): the promise rejects at once with {code: 'cancelled'}; a call with a deadline is answered 'timed_out'
     const controller = new AbortController();
-    const slow = cling.invoke('proc.run', { program: 'slow', args: { n: 30 } }, { signal: controller.signal });
+    const slow = pronao.invoke('proc.run', { program: 'slow', args: { n: 30 } }, { signal: controller.signal });
     setTimeout(function () { controller.abort(); }, 500);
     const abortStart = Date.now();
     let abortCode = null;
     try { await slow; } catch (e) { abortCode = e.code; }
     r.abort = [abortCode, Date.now() - abortStart < 3000];
-    try { await cling.invoke('aforever'); } catch (e) { r.deadline = e.code; }
-    const ran = await cling.proc.run({ program: 'host' });            // a real program, named by the page, templated by the app
+    try { await pronao.invoke('aforever'); } catch (e) { r.deadline = e.code; }
+    const ran = await pronao.proc.run({ program: 'host' });            // a real program, named by the page, templated by the app
     r.proc = [ran.exitCode, ran.stdout.length > 0, ran.timedOut];
-    try { await cling.proc.run({ program: 'cmd' }); } catch (e) { r.noShell = e.code; }   // never registered
-    const pushed = cling.once('hello');                 // an event CeeLing pushes after this command returns
-    await cling.invoke('emit_hello');
+    try { await pronao.proc.run({ program: 'cmd' }); } catch (e) { r.noShell = e.code; }   // never registered
+    const pushed = pronao.once('hello');                 // an event CeeLing pushes after this command returns
+    await pronao.invoke('emit_hello');
     r.event = await pushed;
-    try { await cling.invoke('fail'); } catch (e) { r.rejected = e; }
-    try { await cling.invoke('nope'); } catch (e) { r.unknown = e; }
-    await cling.invoke('selftest', r);
+    try { await pronao.invoke('fail'); } catch (e) { r.rejected = e; }
+    try { await pronao.invoke('nope'); } catch (e) { r.unknown = e; }
+    await pronao.invoke('selftest', r);
   })();
 </script></body></html>

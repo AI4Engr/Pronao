@@ -1,4 +1,4 @@
-// app-cling -- which files a page may reach, and the operations on them.
+// pronao -- which files a page may reach, and the operations on them.
 //
 // THE POLICY IS HERE, in checked CeeLing code; the native layer (shim/app_fs.cpp) only opens, reads, writes, lists,
 // creates and deletes, and reports where an OPEN HANDLE really points. Every decision is taken on that answer, never on

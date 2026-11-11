@@ -56,8 +56,8 @@ string events(int handle) {
     string all = "";
     string js = "";
     while (app_test_take_eval(handle, js) == 1) {
-        if (startsWithText(js, "window.__cling_emit([\"theme.") || startsWithText(js, "window.__cling_emit([\"drop.")) {
-            all = all + js.substr(21, js.length() - 24) + "\n";
+        if (startsWithText(js, "window.__pronao_emit([\"theme.") || startsWithText(js, "window.__pronao_emit([\"drop.")) {
+            all = all + js.substr(22, js.length() - 25) + "\n";
         }
     }
     return all;

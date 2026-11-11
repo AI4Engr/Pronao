@@ -1,34 +1,34 @@
 # Appendix A. One command, from the page to the reply
 
 The command is `fs.read`; the page asks for a file, and the answer comes back. Every piece of code below is quoted from the repository
-(or from the C++ the compiler wrote from it, in `$TMPDIR/app-cling-headless/work_headless_main/` after `tests/run_headless.sh`). Line numbers in the generated code
+(or from the C++ the compiler wrote from it, in `$TMPDIR/pronao-headless/work_headless_main/` after `tests/run_headless.sh`). Line numbers in the generated code
 are `.clg` lines: that is what a failed bounds or null check would print.
 
 ```
 page                    native layer (C++, trusted)            CeeLing (checked)
- cling.fs.read({path})  ->  admit() into a queue   ->   Dispatcher.handle -> the command's closure
+ pronao.fs.read({path})  ->  admit() into a queue   ->   Dispatcher.handle -> the command's closure
                                                               -> FileGate.read -> app_fs_read (native)
  the promise resolves   <-  app_return()           <-   a Reply {status, json}
 ```
 
 ## 1. The page
 
-`src/bridge.js` is run before any page script. `cling.fs.read` is only a name for a call:
+`src/bridge.js` is run before any page script. `pronao.fs.read` is only a name for a call:
 
 ```js
-var call = function (name) { return function (args) { return window.cling.invoke(name, args || {}); }; };
+var call = function (name) { return function (args) { return window.pronao.invoke(name, args || {}); }; };
 ...
 read: call('fs.read'), ...
 ```
 
-`invoke` ends in `window.__cling_invoke(command, args)`, which returns a promise. The page has no other way to reach the program: no file API, no path of its own.
+`invoke` ends in `window.__pronao_invoke(command, args)`, which returns a promise. The page has no other way to reach the program: no file API, no path of its own.
 
 ## 2. The native layer admits or refuses; it does not decide
 
-`shim/app_shim.cpp` binds `__cling_invoke` to the window:
+`shim/app_shim.cpp` binds `__pronao_invoke` to the window:
 
 ```cpp
-w.bind("__cling_invoke", [raw, &w](const std::string& id, const std::string& req, void*) {
+w.bind("__pronao_invoke", [raw, &w](const std::string& id, const std::string& req, void*) {
     const int refused = raw->calls.admit(id, req, raw->maxRequest, raw->maxQueued);
     if (refused == 1 || refused == 2) w.resolve(id, 1, refusalJson(refused));
 }, nullptr);

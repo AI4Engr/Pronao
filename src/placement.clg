@@ -1,4 +1,4 @@
-// app-cling -- where a program's windows were the last time, and fitting that to the screens that exist now.
+// pronao -- where a program's windows were the last time, and fitting that to the screens that exist now.
 //
 // A WindowMemory keeps, per window name, the restored rectangle and whether the window was maximized, in `windows.json` in the "config" folder next to
 // settings.json (its own file gate, so a page cannot reach it either; the page never sees these numbers). Windows are named

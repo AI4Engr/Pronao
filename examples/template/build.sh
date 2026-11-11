@@ -2,11 +2,11 @@
 # Builds __NAME__:   bash build.sh [--release] [--headless]      -> out/__NAME__(.exe)
 #   --release   no developer tools, no development server (the choice is compiled in)
 #   --headless  no window (test doubles instead): for checking that the program transpiles and compiles
-# Where app-cling lives: APP_CLING in the environment, else the folder this project was created from.
+# Where pronao lives: PRONAO in the environment, else the folder this project was created from.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_CLING="${APP_CLING:-__APP_CLING__}"
-[ -f "$APP_CLING/scripts/build.sh" ] || { echo "app-cling was not found at $APP_CLING (set APP_CLING=<its folder>)" >&2; exit 1; }
+PRONAO="${PRONAO:-__PRONAO__}"
+[ -f "$PRONAO/scripts/build.sh" ] || { echo "pronao was not found at $PRONAO (set PRONAO=<its folder>)" >&2; exit 1; }
 MODE=window
 for a in "$@"; do
     case "$a" in
@@ -20,5 +20,5 @@ mkdir -p "$HERE/out"
 # what Explorer shows under Properties > Details of the exe, and what a virus scanner or SmartScreen reads about a program with no signature: fill these in
 export APP_NAME="__NAME__" APP_VERSION="${APP_VERSION:-0.1.0}" APP_COMPANY="${APP_COMPANY:-}" APP_DESCRIPTION="${APP_DESCRIPTION:-__NAME__}"
 [ -f "$HERE/icon.ico" ] && export ICON="$HERE/icon.ico"      # the program's icon: replace icon.ico with your own (a Windows .ico, several sizes)
-PAGE="$HERE/index.html" WORK="${WORK:-$HERE/out/work}" bash "$APP_CLING/scripts/build.sh" "$HERE/main.clg" "$HERE/out/__NAME__$EXE" $MODE
+PAGE="$HERE/index.html" WORK="${WORK:-$HERE/out/work}" bash "$PRONAO/scripts/build.sh" "$HERE/main.clg" "$HERE/out/__NAME__$EXE" $MODE
 echo "built out/__NAME__$EXE"

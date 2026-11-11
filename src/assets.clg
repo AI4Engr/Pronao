@@ -1,4 +1,4 @@
-// app-cling -- the application's own web files: which short addresses stand for which file, and what type each file is.
+// pronao -- the application's own web files: which short addresses stand for which file, and what type each file is.
 //
 // The files are compiled into the program (scripts/build.sh, ASSETS=<folder>) and served to the window from memory under an address of
 // their own, like http://app.localhost/. A browser engine needs real addresses for that (a page made of hundreds of files, with its

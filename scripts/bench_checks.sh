@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# What the compiler-inserted run-time checks (bounds on v[i]/s[i], null on every object dereference) cost on app-cling's own code.
+# What the compiler-inserted run-time checks (bounds on v[i]/s[i], null on every object dereference) cost on pronao's own code.
 #   scripts/bench_checks.sh [rounds]        (default 5)
 # Builds tests/bench_main.clg twice (checks on, then --no-bounds-checks --no-null-checks), runs them alternately, and prints the best time of each
 # operation in microseconds per call plus the difference. Both builds use the product's optimisation level (-O1, scripts/build.sh's default) and the
@@ -7,7 +7,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROUNDS="${1:-5}"
-W="${TMPDIR:-/tmp}/app-cling-bench"
+W="${TMPDIR:-/tmp}/pronao-bench"
 mkdir -p "$W"
 for v in on off; do
     F="--pool-shared"; [ $v = off ] && F="--pool-shared --no-bounds-checks --no-null-checks"

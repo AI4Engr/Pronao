@@ -1,4 +1,4 @@
-# app-cling user manual
+# Pronao user manual
 
 Each chapter says what the application writes in CeeLing, what the page calls in JavaScript, how it is checked, what the tests see and what they cannot see. Chapters stand alone; read 1 and 2 first.
 
@@ -18,4 +18,4 @@ Each chapter says what the application writes in CeeLing, what the page calls in
 | B | [Compile errors you will meet](appendix-compile-errors.md) | what each CeeLing message meant and the fix |
 | | [Source map](source-map.md) | where things are in the repository |
 
-What the language did to this program, with counts: [chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-app-cling.md).
+What the language did to this program, with counts: [chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-pronao.md).

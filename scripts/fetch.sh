@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Downloads the two third-party pieces app-cling's window layer needs, at PINNED versions, and checks their
+# Downloads the two third-party pieces pronao's window layer needs, at PINNED versions, and checks their
 # SHA-256 before unpacking. Nothing is committed from here (third_party/ is gitignored): Microsoft's WebView2
 # SDK is not ours to redistribute, and the webview library is fetched rather than vendored so its version is
 # an explicit, reviewable line in this file.
