@@ -35,6 +35,19 @@ try { await pronao.invoke('fail'); } catch (e) { console.log(e) }   // {code: "c
 
 The commands are CeeLing, so the compiler checks them: a dangling reference or a use after move in a command is a compile error, not a crash in front of a user. The page can call only what the program registered.
 
+## Small, and quick to build
+
+The program above, built with `RELEASE=1`, is **one 1.2 MB `.exe`**: no installer, no runtime of its own, no DLLs next to it. The window is the system's WebView, so the program carries only your commands and the native layer, linked statically with unused code dropped. The only thing it needs from the computer is the Microsoft WebView2 Runtime (Windows 11 has it; an older Windows 10 may not, and `app.checkRuntime` says so with a message box instead of failing silently).
+
+| | Measured on 2026-11-11 (the program above) |
+|---|---|
+| `RELEASE=1`: windowed, symbols stripped | **1.2 MB** (1,238,016 bytes) |
+| default build (`-O1`, symbols kept for a debugger) | 2.9 MB |
+| a build from nothing: CeeLing to C++ to `g++`, all 20 modules and the native layer | **about 14 s** (three runs: 13.8, 14.0, 13.8) on a 32-core machine |
+| the same with a warm object cache | 11.7 s (the CeeLing step and the link are not cached) |
+
+For scale, from memory and **not measured here**: an Electron app ships a copy of Chromium and Node (tens to a few hundred MB on disk), and the Tauri and Wails hello-world programs are a few MB. The 14 s is on this machine; with fewer cores the g++ step takes proportionally longer, and I have not timed one.
+
 > **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
 
 ## How it works
