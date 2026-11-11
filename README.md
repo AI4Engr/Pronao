@@ -4,22 +4,43 @@
 
 **Desktop apps with a web UI and a [CeeLing](https://github.com/AI4Engr/CeeLing) backend, in the spirit of Wails and Tauri.** The window is the system WebView (WebView2 on Windows), the page is HTML and JavaScript, and the commands the page calls are CeeLing code: checked for dangling references and use after move, compiled to plain C++.
 
+A complete program (`examples/hello` has a fuller one with a page; build it with the Quick start below):
+
 ```
-app.command("add", closure Command [] (Item args) {
-    return createNumber(numberAt(args, 0) + numberAt(args, 1));
-});
+#include "app.clh"
+
+int main() {
+    App app = new App();
+    app.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    app.command("fail", closure Command [] (Item args) {
+        throw "this command always fails";
+    });
+    if (!app.openPage("My app", 640, 420, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}
 ```
+
+and the page it shows (`PAGE=index.html`), calling those commands:
+
 ```js
-const sum = await pronao.invoke('add', [2, 3]);       // 5
-try { await pronao.invoke('fail'); } catch (e) { e }  // {code: "command_failed", message: "..."}
+const sum = await pronao.invoke('add', [2, 3]);                 // 5
+try { await pronao.invoke('fail'); } catch (e) { console.log(e) }   // {code: "command_failed", message: "this command always fails"}
 ```
+
+The commands are CeeLing, so the compiler checks them: a dangling reference or a use after move in a command is a compile error, not a crash in front of a user. The page can call only what the program registered.
 
 > **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
 
 ## How it works
 
 ```
-page JS --cling.invoke--> webview bind callback [UI thread] --> mutex queue (shim)
+page JS --pronao.invoke--> webview bind callback [UI thread] --> mutex queue (shim)
 CeeLing main thread:  app_next_call()  <-- blocks on the queue
                       Dispatcher.handle(request)   parse JSON, find the command, call it
                       app_return(id, status, json) --> resolves / rejects the page's promise

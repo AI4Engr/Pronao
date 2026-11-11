@@ -5,7 +5,7 @@ The page, the native layer and the CeeLing loop; how events travel back to the p
 ## How it works
 
 ```
-page JS --cling.invoke--> webview bind callback [UI thread] --> mutex queue (shim)
+page JS --pronao.invoke--> webview bind callback [UI thread] --> mutex queue (shim)
 CeeLing main thread:  app_next_call()  <-- blocks on the queue
                       Dispatcher.handle(request)   parse JSON, find the command, call it
                       app_return(id, status, json) --> resolves / rejects the page's promise
