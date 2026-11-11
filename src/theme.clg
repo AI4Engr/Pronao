@@ -1,10 +1,7 @@
-// pronao -- The system's colour scheme (light or dark) and the application's choice of how its windows look: follow the system, or stay light, or stay dark.
-// The native layer sets the title bar and what the page's CSS media query `prefers-color-scheme` answers, and says when the system's scheme changed
-// (the record "window" "theme" 0|1); WHAT is allowed and what the page is told is decided here. A page only ever gets the NAMES "system", "light", "dark".
-//
-// A window follows the system by itself even if none of this is used: its page (the browser engine does that) and its title bar (the window library does). What this adds is the
-// application knowing (`systemTheme`), a FORCED light or dark for the title bar and the page, going back to "system", and the event `theme.changed {mode, system}` for pages that
-// draw their own colours.
+// The system's colour scheme (light or dark) and the application's choice of how its windows look: follow the system, stay light, or stay dark.
+// The native layer sets the title bar and the page's `prefers-color-scheme` and reports when the system's scheme changes (the record "window" "theme" 0|1); this
+// file decides what is allowed. A page only ever gets the names "system", "light", "dark". Without any of this a window still follows the system by itself;
+// this adds `systemTheme`, a forced light or dark, and the event `theme.changed {mode, system}`. See docs/manual/06-menus-tray-notifications.md.
 #include "cjson_item.clh"
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
@@ -16,7 +13,7 @@
 ext_fn int app_theme_system();
 ext_fn int app_window_theme(int handle, int mode);
 
-// 0 "system", 1 "light", 2 "dark"; -1 for any other word
+// 0 "system", 1 "light", 2 "dark"; -1 for any other word.
 int themeModeCode(string name) {
     if (name == "system") {
         return 0;
@@ -40,7 +37,7 @@ string themeModeName(int mode) {
     return "system";
 }
 
-// what app_theme_system answered: 0 light, 1 dark, anything else (a system that has no such setting) unknown
+// What app_theme_system answered: 0 light, 1 dark, anything else (no such setting) unknown.
 string themeSchemeName(int scheme) {
     if (scheme == 0) {
         return "light";
@@ -55,7 +52,7 @@ class ThemeState {
 public:
     int mode;          // what the application chose: 0 follow the system, 1 light, 2 dark
     int system;        // the system's scheme as last reported (0 light, 1 dark, -1 not known yet)
-    bool active;       // a choice was made (setTheme): the windows were told, and say when the system's scheme changes
+    bool active;       // a choice was made (setTheme); until then windows are left alone
     WindowBook book;   // the application's windows
     ThemeState(WindowBook windows) {
         book = windows;
@@ -64,7 +61,7 @@ public:
         active = false;
     }
 
-    // {mode, system}: the application's choice and the system's scheme right now
+    // {mode, system}: the application's choice and the system's scheme now.
     Item stateItem() {
         Item e = createObject();
         addStringToObject(e, "mode", themeModeName(mode));
@@ -72,7 +69,7 @@ public:
         return e;
     }
 
-    // Chooses how every window looks, now and for windows opened later. false for a word that is not "system", "light" or "dark" (nothing changes).
+    // Chooses how every window looks, now and for windows opened later. False for any other word (nothing changes).
     bool apply(string name) {
         int code = themeModeCode(name);
         if (code < 0) {
@@ -91,14 +88,14 @@ public:
         return true;
     }
 
-    // A window opened after a choice was made looks as chosen. (Before one was made a window is left alone.)
+    // A window opened after a choice was made looks as chosen.
     void windowOpened(int handle) {
         if (active) {
             app_window_theme(handle, mode);
         }
     }
 
-    // The native layer reports the system's scheme (each window says so; the first report of a change is the one that counts). Not before a choice was made.
+    // The native layer reports the system's scheme (every window reports; the first report of a change counts). Ignored before a choice was made.
     void systemChanged(string scheme) {
         int now = -1;
         if (scheme == "0") {

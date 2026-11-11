@@ -1,5 +1,5 @@
-// pronao -- Running programs for a page: the table the application writes (ProgramSpec, ProgramRegistry), the slots a page fills, how a program is found and vetted
-// (resolveProgram, runFitsOs) and the one place a run is started (runTool).
+// Running programs for a page: the table the application writes (ProgramSpec, ProgramRegistry), the slots a page fills, how a program is found and vetted
+// (resolveProgram, runFitsOs) and the one place a run is started (runTool). See docs/manual/04-programs-and-links.md.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"
@@ -15,23 +15,18 @@ ext_fn int app_os_env(string name, ref string out);
 ext_fn int app_os_path_kind(string path);
 ext_fn int app_proc_run(int handle, string call, string exe, std::vector<string> args, string cwd, std::vector<string> env, int timeoutMs, int maxBytes, ref string out, ref string err, ref int exitCode, ref int flags);
 
-// ---- program commands -----------------------------------------------------------------------------
-// The application declares WHICH programs may run and with what arguments (allowProgram); a page can only ask for one
-// of them by name and fill in the named slots of its argument template. It never supplies a program name, a command
-// line or an option: there is no shell, every argument is a separate string, and a slot value that could be read as an
-// option (a leading '-') is refused when the slot is a whole argument. The shim (app_proc.cpp) runs the program with no
-// stdin, a time limit, an output cap, and kills everything it started.
+// The application declares which programs may run and with what arguments (allowProgram); a page can only name one and fill in the slots of its argument
+// template. It never supplies a program name, command line or option: there is no shell, every argument is a separate string, and a slot value that could be
+// read as an option (a leading '-') is refused when the slot is a whole argument. The shim (shim/win/proc.cpp, shim/posix/proc.cpp) runs the program with no
+// stdin, a time limit and an output cap, and kills everything it started.
 //
 //     app.allowProgram("git.log", "git",
 //         ["log", "-n", "{count:int:1:500}", "--format=%H%x09%s", "--", "{file:file}", "@cwd={repo:folder}"], 10000, 1000000);
 //     // page:  pronao.proc.run({ program: "git.log", args: { count: 20, repo: ".", file: "src/a.txt" } })
 //
-// An argument is literal text, or literal text around ONE slot  {name:kind[:a[:b]]}  with kind
-//   int:min:max   a whole number from min to max        token   letters, digits and . _ - / @ ~ ^ + = (max 200)
-//   text:maxLen   any text of at most maxLen bytes      file / folder / path   an existing file, folder or either that
-//                                                       the file commands could reach (passed as its absolute path)
-// The element "@cwd={name:folder}" (at most one) names the working folder; without it the program runs in the first
-// folder the application allowed.
+// An argument is literal text, or literal text around one slot {name:kind[:a[:b]]}: int:min:max, token (max 200 bytes), text:maxLen, or file / folder / path
+// (existing, reachable by the file commands, passed as an absolute path). The element "@cwd={name:folder}" (at most one) names the working folder; without
+// it the program runs in the first folder the application allowed.
 
 class ProgramSpec {
 public:
@@ -49,8 +44,8 @@ public:
     }
 };
 
-// The environment a program gets: ONLY these variables of this process, if they are set (a program started from an application that
-// holds a token in its environment must not inherit the token). passEnvironment adds names.
+// The environment a program gets is only these variables of this process, if set, so a secret in the application's environment is not inherited.
+// passEnvironment adds names.
 class ProgramRegistry {
 public:
     std::vector<ProgramSpec> specs;
@@ -60,7 +55,7 @@ public:
         envNames = base;
     }
 
-    // NAME=value for each of the names that is set
+    // NAME=value for each of the names that is set.
     std::vector<string> environment() {
         std::vector<string> env;
         int i = 0;
@@ -87,7 +82,7 @@ public:
     }
 };
 
-// "count:int:1:500", "ref:token", "msg:text:80", "f:file" -- is the slot text well formed?
+// Is the slot text well formed? E.g. "count:int:1:500", "ref:token", "msg:text:80", "f:file".
 bool slotSpecOk(string text) {
     std::vector<string> p = splitOn(text, ':');
     if (p.size() < 2) {
@@ -118,7 +113,7 @@ bool slotSpecOk(string text) {
     return false;
 }
 
-// where the slot sits in an element: the index of '{' (or -1) -- an element has at most one, and it must close
+// The index of the '{' that opens an element's slot, or -1 (an element has at most one, and it must close).
 int slotOpen(string element) {
     return indexOfChar(element, '{');
 }
@@ -222,8 +217,7 @@ string renderElement(FileGate gate, string element, Item args) {
     return element.substr(0, open) + value + element.substr(close + 1, element.length() - close - 1);
 }
 
-// Replies for a finished program: {exitCode, stdout, stderr, timedOut, truncated: {stdout, stderr}, lossy}.
-// Runs on the worker that ran it.
+// Replies for a finished program: {exitCode, stdout, stderr, timedOut, truncated: {stdout, stderr}, lossy}. Runs on the worker that ran it.
 void finishRun(int handle, string id, int status, string out, string err, int exitCode, int flags) {
     if (status == 0 && ((flags / 8) % 2) == 1) {
         replyError(handle, id, "cancelled", "the call was abandoned or the window is closing");
@@ -265,7 +259,7 @@ bool programNameOk(string name) {
     return true;
 }
 
-// The slot text inside an element's braces, or "" if it has none (-1: malformed braces).
+// 0 if the element has no slot, 1 if it has one well-formed slot, -1 for malformed braces or a bad slot.
 int elementSlotCheck(string element) {
     int open = slotOpen(element);
     int close = slotClose(element);
@@ -286,12 +280,11 @@ int elementSlotCheck(string element) {
     return 1;
 }
 
-// ---- finding a program ----------------------------------------------------------------------------
-// `name` is an absolute path to a program (a plain .exe on Windows), or a bare name ("git") that is searched for on PATH ONLY: never
-// the current folder, never the folder of the running program, and ("" and relative entries of PATH mean the current folder) never
-// a PATH entry that is not absolute. Anything else is refused. Windows note: the arguments are joined into one command line with the
-// C runtime's quoting rules, and a program that parses its command line differently (cmd.exe, and so every .bat / .cmd, msiexec,
-// ...) could read them differently, so only .exe is accepted. Status: 0 found (text = absolute path), 2 not found, 5 refused.
+// ---- finding a program ----
+// `name` is an absolute path to a program (a plain .exe on Windows), or a bare name ("git") searched for on PATH only: never the current folder, never the
+// folder of the running program, never a PATH entry that is not absolute (an empty or relative entry means the current folder). Anything else is refused.
+// On Windows the arguments are joined into one command line with the C runtime's quoting rules; a program that parses its command line differently (cmd.exe,
+// so every .bat / .cmd, msiexec, ...) could read them differently, so only .exe is accepted. Status: 0 found (text = absolute path), 2 not found, 5 refused.
 
 bool windowsAbsolute(string w) {
     if (isDriveAbsolute(w)) {
@@ -304,7 +297,7 @@ bool endsWithExe(string w) {
     return w.length() >= 4 && lowerAscii(w.substr(w.length() - 4, 4)) == ".exe";
 }
 
-// no "." or ".." component in an absolute path
+// True if an absolute path has no "." or ".." component.
 bool plainComponents(string path) {
     std::vector<string> parts = splitOn(path, '/');
     std::vector<string> more = splitOn(path, '\\');
@@ -410,14 +403,13 @@ FsResult resolveProgram(string name) {
     return new FsResult(2, "");
 }
 
-// ---- programs the application runs itself -------------------------------------------------------------------------------
-// A command that is the application's own (not a page's choice from the allowProgram table) runs a program like this: the main thread
-// builds a ToolRun from values it has vetted, a worker calls runTool, and the worker answers the page (or sends the main loop a
-// `Later` record when the answer needs the main thread, which alone may touch the file policy). Both structs hold plain values only,
-// so they can be copied into a worker.
+// ---- programs the application runs itself ----
+// A command of the application's own (not a page's choice from the allowProgram table) runs a program like this: the main thread builds a ToolRun from
+// vetted values, a worker calls runTool and answers the page, or sends the main loop a `Later` record when the answer needs the main thread, which alone may
+// touch the file policy. Both structs hold plain values only, so they can be copied into a worker.
 struct ToolRun {
 public:
-    int handle;              // the window and page call this run belongs to: cancelling the call (or closing the window) kills the program
+    int handle;              // the window this run belongs to: cancelling the call or closing the window kills the program
     string call;
     string exe;
     std::vector<string> args;
@@ -447,11 +439,11 @@ public:
         exitCode = 0;
         flags = 0;
     }
-    // ran, did not time out, exited 0
+    // Ran, did not time out, exited 0.
     bool succeeded() {
         return status == 0 && (flags % 2) == 0 && exitCode == 0;
     }
-    // what to tell the page when it did not succeed: the program's own complaint, else the reason
+    // What to tell the page when it did not succeed: the program's own complaint, else the reason.
     string complaint() {
         if (status == 2) {
             return "program_not_found: the program or its working folder does not exist";
@@ -476,8 +468,8 @@ public:
     }
 };
 
-// What the native runner is given must already be fit for the operating system: absolute paths, text that is valid UTF-8 without a NUL, environment
-// entries of the form NAME=value, limits in range. The native layer checks none of it (it only runs what it is handed), so this is the one place.
+// What the native runner is given must already be fit for the operating system: absolute paths, valid UTF-8 without a NUL, environment entries NAME=value,
+// limits in range. The native layer checks none of it, so this is the one place.
 bool runFitsOs(string exe, std::vector<string> args, string cwd, std::vector<string> env, int timeoutMs, int maxBytes) {
     bool windows = app_os_windows() == 1;
     bool exeAbsolute = exe.length() > 0 && exe[0] == '/';
@@ -524,8 +516,8 @@ ToolResult runTool(ToolRun run) {
     return r;
 }
 
-// runTool, or throws the complaint ("code: message") when the program could not run, timed out or exited non-zero. For use in a worker's job:
-// a throw there rejects the page's promise with that code and message.
+// runTool, or throws the complaint ("code: message") when the program could not run, timed out or exited non-zero. In a worker's job the throw
+// rejects the page's promise with that code and message.
 ToolResult runToolOrThrow(ToolRun run) {
     ToolResult r = runTool(run);
     if (!r.succeeded()) {

@@ -1,4 +1,4 @@
-// POSIX: no single-instance support yet (a lock file and a socket belong here). The program simply runs; nothing is enforced.
+// POSIX: no single-instance support: the program simply runs and nothing is enforced. app_command_line reads /proc/self/cmdline.
 #include <fstream>
 #include <iterator>
 #include <string>

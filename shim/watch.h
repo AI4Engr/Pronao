@@ -16,8 +16,8 @@ struct Watch {
     std::mutex armMutex;                       // the thread tells app_watch_start that the OS is now watching (or that it could not)
     std::condition_variable armCv;
     bool armed = false;
-    void* stopEvent = nullptr;                 // Windows
-    int stopPipe[2] = {-1, -1};                // POSIX
+    void* stopEvent = nullptr;
+    int stopPipe[2] = {-1, -1};
 };
 
 const int kQuietMs = 40;                       // how often a loop with something left to say wakes up on its own
@@ -27,14 +27,13 @@ const int kQuietMs = 40;                       // how often a loop with somethin
 void pushEvent(Watch& w, const std::string& kind, const std::string& path, const std::string& from);
 void flushOverflow(Watch& w);
 
-// Called by the loop once the operating system is really watching the folder (the first ReadDirectoryChangesW is issued / the inotify watches are
-// added), or has failed to. app_watch_start does not return before that: a change made right after fs.watch answers would otherwise be lost.
+// Called by the loop once the OS is watching the folder (first ReadDirectoryChangesW issued / inotify watches added), or has failed to. app_watch_start waits
+// for it: a change made right after fs.watch answers would otherwise be lost.
 inline void markArmed(Watch& w) {
     { std::lock_guard<std::mutex> lock(w.armMutex); w.armed = true; }
     w.armCv.notify_all();
 }
 
-// per platform
 void watchMain(std::shared_ptr<Watch> w);      // runs on the watcher's thread until w->stop; ends with a "stopped" record
 void prepareStop(Watch& w);
 void signalStop(Watch& w);

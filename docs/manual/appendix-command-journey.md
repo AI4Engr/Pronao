@@ -80,16 +80,16 @@ rejects with.
 |---|---|
 | `command("fs.read", closure Command [files, maxReadBytes] (Item args) {` | `class __closure_app_8 : public Command { std::shared_ptr<FileGate> files; int maxReadBytes; ... }` |
 | `string path = requiredString(args, "path");` | `std::string path = requiredString(args, "path");` |
-| `FsResult r = files.read(path, maxReadBytes);` | `std::unique_ptr<FsResult> r = cling::nn(this->files, "line 404")->read(path, this->maxReadBytes);` |
-| `fsCheck(r.status, "cannot read " + path);` | `fsCheck(cling::nn(r, "line 405")->status, ("cannot read " + path));` |
-| `if (!isUtf8(r.text)) { throw "not_text: ..."; }` | `if (!isUtf8(cling::nn(r, "line 406")->text)) { throw std::string("not_text: ..."); }` |
+| `FsResult r = files.read(path, maxReadBytes);` | `std::unique_ptr<FsResult> r = cling::nn(this->files, "line 380")->read(path, this->maxReadBytes);` |
+| `fsCheck(r.status, "cannot read " + path);` | `fsCheck(cling::nn(r, "line 381")->status, ("cannot read " + path));` |
+| `if (!isUtf8(r.text)) { throw "not_text: ..."; }` | `if (!isUtf8(cling::nn(r, "line 382")->text)) { throw std::string("not_text: ..."); }` |
 | `Item result = createObject();` | `std::shared_ptr<Item> result = createObject();` |
-| `addStringToObject(result, "text", r.text);` | `addStringToObject(result, "text", cling::nn(r, "line 410")->text);` |
+| `addStringToObject(result, "text", r.text);` | `addStringToObject(result, "text", cling::nn(r, "line 386")->text);` |
 
 Things the source never says and the compiler decided:
 - The closure lists what it captures, `[files, maxReadBytes]`, by value; there is no way to write "capture everything by reference". The closure became a class with those as fields.
 - `files` is a `shared_ptr`, because the app and every command that uses the file policy hold it. `r` is a `unique_ptr`, because only this function owns that result.
-- Each `.` on an object became `cling::nn(x, "line N")->`: if `r` were empty the program would print `null dereference at line 405` and stop, instead of reading address 0.
+- Each `.` on an object became `cling::nn(x, "line N")->`: if `r` were empty the program would print `null dereference at line 381` and stop, instead of reading address 0.
 - A failed `requiredString` throws `invalid_argument: \`path\` must be a string`; nothing else in this function can reach a missing field.
 
 ## 6. The file policy decides (CeeLing again)
@@ -114,12 +114,12 @@ The generated version:
 ```cpp
 std::unique_ptr<FsResult> FileGate::read(const std::string& path, int maxBytes) {
     std::unique_ptr<FsResult> n = normalize(path, true, true);
-    if ((cling::nn(n, "line 598")->status != 0)) {
+    if ((cling::nn(n, "line 578")->status != 0)) {
         return std::move(n);                       // the compiler saw this was the last use of n
     }
     ...
-    int st = app_fs_read(cling::nn(o, "line 613")->h, maxBytes, data);
-    app_fs_close(cling::nn(o, "line 614")->h);
+    int st = app_fs_read(cling::nn(o, "line 593")->h, maxBytes, data);
+    app_fs_close(cling::nn(o, "line 594")->h);
     return std::make_unique<FsResult>(st, data);
 }
 ```

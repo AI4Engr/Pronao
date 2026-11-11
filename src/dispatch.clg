@@ -1,5 +1,6 @@
-// pronao -- How a call from a page is answered: who is calling (CallContext), which commands a window may call (CommandRules) and the Dispatcher that parses a request,
-// checks it, runs the command and turns what it throws into {code, message}.
+// How a call from a page is answered: who is calling (CallContext), which commands a window may call (CommandRules) and the
+// Dispatcher that parses a request, checks it, runs the command and turns what it throws into {code, message}.
+// See docs/manual/02-how-it-works.md and 08-security.md.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"
@@ -13,8 +14,8 @@ ext_fn int app_cancel(int handle, string call);
 ext_fn int app_pending(int handle, string call);
 ext_fn double app_now_ms();
 
-// Which window is calling right now: set by the Dispatcher around a synchronous command (0 outside one). A command that acts on "its" window
-// holds this object and reads `handle`.
+// The window calling right now: set by the Dispatcher around a synchronous command (0 outside one). A command that acts on "its"
+// window reads `handle`.
 class CallContext {
 public:
     int handle;
@@ -23,9 +24,9 @@ public:
     }
 };
 
-// The commands each window's page may call. The default list (once restrictAll has been used; before that: every registered command) applies
-// to every window without a list of its own; restrictWindow gives one window its own. Anything else is answered {code: "forbidden"}, whether or not
-// such a command exists, so the page cannot probe for names. `known` is every registered command name.
+// The commands each window's page may call. The default list (set by restrictAll; before that every registered command is allowed)
+// applies to every window without its own (restrictWindow). Anything else is answered {code: "forbidden"}, whether or not the command
+// exists, so the page cannot probe for names. `known` is every registered command name.
 class CommandRules {
 public:
     std::vector<string> known;
@@ -82,7 +83,7 @@ public:
         return false;
     }
 
-    // A window opened by another one starts with the opener's own list, if it has one (the default list applies to it anyway).
+    // A window opened by another starts with the opener's own list, if it has one.
     void inheritRules(int from, int to) {
         bool own = false;
         int i = 0;
@@ -152,21 +153,19 @@ public:
     std::vector<Command> handlers;
     std::vector<string> asyncNames;
     std::vector<AsyncCommand> asyncHandlers;
-    // How long the page waits for an async command before it is answered {code: "timed_out"} (0 = as long as it takes), per command name
-    // with a default for the rest, and the calls that are waiting against their deadline.
+    // Deadline of an async command before it is answered {code: "timed_out"} (0 = none), per command name with a default for the rest,
+    // and the calls waiting against their deadline.
     std::vector<string> timeoutNames;
     std::vector<int> timeoutValues;
     int defaultTimeoutMs;
     std::vector<string> dueIds;
-    std::vector<int> dueHandles;       // (a page's call ids are only unique within its window: every table of calls is keyed by window AND id)
+    std::vector<int> dueHandles;       // call ids are only unique within a window: every table of calls is keyed by window and id
     std::vector<double> dueAt;
-    // The tag a page gave an async call (pronao.invoke(..., {signal})) and the call it names, newest last, at most 256 of them.
+    // The tag a page gave an async call (pronao.invoke(..., {signal})) and the call it names; newest last, at most 256.
     std::vector<string> tags;
     std::vector<int> tagHandles;
     std::vector<string> tagCalls;
 
-    // Which commands each window's page may call (see CommandRules), and which window's synchronous command is running right now (see
-    // CallContext). Both are separate objects so that the commands, which are owned by this Dispatcher, can hold them without pointing back at it.
     CommandRules rules;
     CallContext caller;
 
@@ -176,7 +175,6 @@ public:
         caller = new CallContext();
     }
 
-    // A window is gone: its list, its tags and its deadlines go with it.
     void forgetWindow(int handle) {
         rules.forgetRules(handle);
         int t = tags.size() - 1;
@@ -246,8 +244,8 @@ public:
         tagCalls.push_back(call);
     }
 
-    // The page abandons the call it tagged: the work is told to stop. Unknown or finished tags are ignored, and a tag only names a call of the
-    // window that sent it.
+    // The page abandons the call it tagged: the work is told to stop. Unknown or finished tags are ignored; a tag only names a call of
+    // the window that sent it.
     void cancelTag(int handle, string tag) {
         int i = 0;
         while (i < tags.size()) {
@@ -271,9 +269,8 @@ public:
         dueAt.pop_back();
     }
 
-    // Answers every call whose time is up {code: "timed_out"} and tells the work to stop (callCancelled, and a program it started is
-    // killed). A call that was answered meanwhile is just forgotten; the late answer of a job that kept going is dropped by the shim
-    // (a page call is answered once).
+    // Answers every call whose time is up {code: "timed_out"} and tells the work to stop. A call answered meanwhile is just forgotten;
+    // the late answer of a job that kept going is dropped by the shim (a call is answered once).
     void sweep() {
         double now = app_now_ms();
         int i = dueIds.size() - 1;
@@ -284,14 +281,13 @@ public:
                 dropDue(i);
             } else if (now >= dueAt[i]) {
                 replyError(handle, id, "timed_out", "the command took longer than the application allows");
-                app_cancel(handle, id);      // (after the reply: replying forgets a cancel; the job's own late reply forgets this one)
+                app_cancel(handle, id);      // after the reply: a reply forgets a cancel
                 dropDue(i);
             }
             i = i - 1;
         }
     }
 
-    // Milliseconds until the first deadline, or -1 if no call is waiting against one.
     int nextDueMs() {
         if (dueAt.size() == 0) {
             return -1;
@@ -323,7 +319,6 @@ public:
         rules.known.push_back(name);
     }
 
-    // The index of the async command called `name`, or -1.
     int indexOfAsync(string name) {
         int i = 0;
         while (i < asyncNames.size()) {
@@ -335,7 +330,6 @@ public:
         return -1;
     }
 
-    // The index of the command called `name`, or -1.
     int indexOf(string name) {
         int i = 0;
         while (i < names.size()) {
@@ -347,9 +341,8 @@ public:
         return -1;
     }
 
-    // One request in, one reply out. Never throws and never aborts on a malformed request: a bad
-    // request is a rejected promise, not a dead application. For an async command the reply has status 2
-    // ("deferred"): nothing is sent now, the worker answers later.
+    // One request in, one reply out. Never throws or aborts on a malformed request: that is a rejected promise. For an async command
+    // the reply has status 2 ("deferred"): nothing is sent now, the worker answers later.
     Reply handle(int appHandle, string id, string request) {
         Item parsed = parse(request);
         if (parsed == nullptr) {
@@ -389,7 +382,7 @@ public:
         if (index < 0) {
             try {
                 AsyncCommand starter = asyncHandlers[asyncIndex];
-                // every job this start() spawns inherits this: a throw inside it rejects the page's promise
+                // a throw in any job this start() spawns rejects the page's promise
                 onJobFailure(closure Failure [id, appHandle] (string message) {
                     replyError(appHandle, id, errorCodeOf(message), errorTextOf(message));
                 });
@@ -411,7 +404,7 @@ public:
             }
         }
         try {
-            // (a local first: the checker cannot resolve a method call made directly on `handlers[index]`)
+            // a local first: the checker cannot resolve a method call made directly on `handlers[index]`
             Command handler = handlers[index];
             caller.handle = appHandle;
             Item result = handler.call(args);

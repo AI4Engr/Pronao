@@ -1,25 +1,11 @@
-// pronao -- menus: the window's menu bar, the tray icon's menu, and a menu a page may ask to have popped up. THE APPLICATION declares every menu; a page can only
-// choose among the names of menus the application declared, and it learns the id of what was clicked. Nothing a page sends can add, change or show an item.
-//
-// A Menu is built with a flat list of calls (CeeLing has no chaining on a call's result):
-//
-//     Menu bar = new Menu();
-//     bar.begin("&File");                                   // a submenu; begin / end nest at most 4 deep
-//     bar.item("file.open", "&Open...", "Ctrl+O");          // id, label, shortcut ("" = none)
-//     bar.check("view.grid", "Show &grid", "", false);      // an item with a tick
-//     bar.separator();
-//     bar.item("file.quit", "&Quit", "Ctrl+Q");
-//     bar.end();
-//     bar.problem                                            // "" while everything so far was accepted; else why the last call was refused
-//
-// Rules (every call that breaks one returns false, changes nothing and sets `problem`): an id is 1 to 64 letters, digits, `.`, `_`, `-` and is used once in the
-// whole menu; a label is 1 to 200 bytes of text with no control character and at most one `&` (the letter after it is the keyboard mnemonic); at most 200 entries;
-// a shortcut is Ctrl / Alt / Shift plus a key (see parseShortcut) and appears once in the whole menu. The native layer is handed `spec()` and builds the menu from
-// it; what it reports back is an id it was given, never anything else.
+// Menus: the window's menu bar, the tray icon's menu and pop-up menus. Only the application declares a menu; a page can choose among the declared names and
+// learns the id of what was clicked, but cannot add, change or show an item. Every Menu call that breaks a rule (see add, parseShortcut) returns false, changes
+// nothing and sets `problem`. The native layer builds the menu from spec() and reports back only ids it was given.
+// See docs/manual/06-menus-tray-notifications.md.
 #include "text.clh"
 #include "settings.clh"
 
-// the id of a menu entry or of a popup name: 1 to 64 letters, digits, `.`, `_`, `-`
+// The id of a menu entry or a popup name: 1 to 64 letters, digits, `.`, `_`, `-`.
 bool menuId(string id) {
     if (id.length() < 1 || id.length() > 64) {
         return false;
@@ -34,7 +20,7 @@ bool menuId(string id) {
     return true;
 }
 
-// 1 to 200 bytes of UTF-8 text without control characters, at most one `&` (a doubled `&&` is one literal ampersand, as in Windows)
+// 1 to 200 bytes of UTF-8 without control characters and at most one `&` (`&&` is a literal ampersand).
 bool menuLabel(string label) {
     if (label.length() < 1 || label.length() > 200 || !isUtf8(label)) {
         return false;
@@ -102,9 +88,8 @@ int keyCode(string key) {
     return 0;
 }
 
-// A shortcut written as "Ctrl+Shift+S": modifiers Ctrl, Alt, Shift (each once, any order) and one key. Returns "vk mods" (mods: Ctrl 1, Alt 2, Shift 4) or "" if it
-// is not acceptable. A key that types into a page (a letter, a digit, Space, Enter, Tab, Backspace, Delete, Insert, Home, End, the arrows, PageUp / PageDown)
-// needs Ctrl or Alt, or the menu would take it away from the page; F1 to F12 may stand alone.
+// Parses "Ctrl+Shift+S": modifiers Ctrl, Alt, Shift (each once, any order) and one key. Returns "vk mods" (mods: Ctrl 1, Alt 2, Shift 4), or "" if not acceptable.
+// Any key that types into a page needs Ctrl or Alt, or the menu would take it from the page; only F1 to F12 may stand alone.
 string parseShortcut(string text) {
     std::vector<string> parts = splitOn(text, '+');
     if (parts.size() < 1 || parts.size() > 4) {
@@ -145,7 +130,7 @@ string parseShortcut(string text) {
 
 class Menu {
 public:
-    std::vector<string> kinds;         // "b" begin a submenu, "e" end it, "i" item, "c" item with a tick, "s" separator
+    std::vector<string> kinds;         // "b" submenu begin, "e" its end, "i" item, "c" item with a tick, "s" separator
     std::vector<string> ids;
     std::vector<string> labels;
     std::vector<string> shortcuts;     // as written, "" = none
@@ -183,7 +168,7 @@ public:
         return indexOfId(id) >= 0;
     }
 
-    // Adds one entry. kind "b", "i" or "c". Everything is checked before anything is added.
+    // Adds one entry (kind "b", "i" or "c"); all checks run before anything is added.
     bool add(string kind, string id, string label, string shortcut, int flag) {
         if (entries >= 200) {
             return refuse("a menu has at most 200 entries");
@@ -227,7 +212,7 @@ public:
         return true;
     }
 
-    // A submenu starts; everything up to the matching end() is in it. A submenu has no id of its own that anything reports: it gets one made from its position.
+    // Starts a submenu, up to the matching end(). Its id is made from its position and is never reported.
     bool begin(string label) {
         if (depth >= 4) {
             return refuse("submenus are nested at most 4 deep");
@@ -282,7 +267,7 @@ public:
         return true;
     }
 
-    // Marks an item that is already in the menu as greyed out.
+    // Greys out an item already in the menu.
     bool disable(string id) {
         int i = indexOfId(id);
         if (i < 0) {
@@ -293,12 +278,12 @@ public:
         return true;
     }
 
-    // true when every begin() was closed
+    // True when every begin() was closed.
     bool complete() {
         return depth == 0 && entries > 0;
     }
 
-    // true when the top level is only submenus: what a menu BAR is made of
+    // True when the top level is only submenus, which is what a menu bar is made of.
     bool isBar() {
         int level = 0;
         int i = 0;
@@ -315,7 +300,7 @@ public:
         return true;
     }
 
-    // The ids that can be clicked (submenus and separators have none that matter).
+    // The ids that can be clicked.
     std::vector<string> clickable() {
         std::vector<string> out;
         int i = 0;
@@ -328,7 +313,7 @@ public:
         return out;
     }
 
-    // The menu as the native layer reads it: per entry seven fields, each followed by a NUL: kind, id, label, shortcut text, key, modifiers, flags.
+    // The menu as the native layer reads it: per entry seven NUL-terminated fields: kind, id, label, shortcut text, key, modifiers, flags.
     string spec() {
         string out = "";
         int i = 0;

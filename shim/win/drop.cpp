@@ -1,12 +1,7 @@
-// Windows: files dragged from the shell (Explorer, the desktop) onto the window. See app_drop_accept in app_native.h.
-//
-// How the paths get here. The browser engine owns the window's drop target and a window of the program cannot take it over (tried: a target registered on the program's own windows is
-// never asked, because the engine's windows, which are another program's, sit between the pointer and ours). So the engine's own handling is used, and the page is the one that is
-// told: it gets the HTML drag events and a File object for each file dropped. The engine can turn such a File into the path it came from, but only for a host that asks
-// (WebMessageReceived with AdditionalObjects), which is what this file does. src/bridge.js sends the message from its drop handler when the application has switched drops on.
-//
-// What that makes of the trust: the paths are those of File objects that a page was handed by the user (dropped, or chosen in its own file input) -- a page cannot make a File that has a
-// path. A page that holds such a file can ask for the same grant a drop would give, and nothing else; whether it gets one is the application's call (src/drops.clg).
+// Windows: files dragged from the shell onto the window (see app_drop_accept in app_native.h). The browser engine owns the window's drop target and the program cannot
+// take it over, so the page gets the HTML drag events and a File per dropped file, and this file asks the engine for each File's path (WebMessageReceived with
+// AdditionalObjects) when src/bridge.js sends the message from its drop handler. The paths are those of Files the user gave the page (a page cannot make a File that
+// has a path); whether a path is granted is decided in src/drops.clg.
 #include "../app_native.h"
 #include "../app_shim_internal.h"
 #include <WebView2.h>
@@ -33,7 +28,7 @@ public:
     HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) override {
         if (!on.load()) return S_OK;
         LPWSTR raw = nullptr;
-        if (FAILED(args->TryGetWebMessageAsString(&raw)) || !raw) return S_OK;          // (a message that is not a string is somebody else's)
+        if (FAILED(args->TryGetWebMessageAsString(&raw)) || !raw) return S_OK;
         const std::string text = narrow(raw);
         CoTaskMemFree(raw);
         long x = 0, y = 0;
@@ -83,7 +78,7 @@ struct Registration {
     DropMessages* handler = nullptr;
     EventRegistrationToken token = {};
 };
-std::mutex g_mutex;                       // every window has its own UI thread
+std::mutex g_mutex;                       // guards `registered` (each window has its own UI thread)
 std::map<HWND, Registration>& registered() { static std::map<HWND, Registration> m; return m; }
 
 // the page learns whether drops are switched on from window.__pronao_drop (src/bridge.js): set for the document that is open and for every one that follows
@@ -98,7 +93,7 @@ void release(Registration& reg) {
     if (reg.handler) { reg.handler->on = false; reg.handler->Release(); }
     if (reg.view) reg.view->Release();
 }
-}  // namespace
+}
 
 int app_drop_set(void* nativeWindow, void* controller, int handle, bool on) {
     HWND window = static_cast<HWND>(nativeWindow);

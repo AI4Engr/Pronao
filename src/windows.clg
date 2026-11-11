@@ -1,4 +1,5 @@
-// pronao -- One open window and the book of them: its state, its menu bar, its layout, the pop-up menus a page may ask for, and the checks on the pages a window may be opened on.
+// One open window and the book of them: its state, menu bar and layout, the pop-up menus a page may ask for, and the checks on the pages a window may open.
+// See docs/manual/05-windows.md.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"
@@ -41,7 +42,6 @@ public:
     }
 };
 
-// ---- the window -----------------------------------------------------------------------------------
 class WindowState {
 public:
     int handle;
@@ -62,8 +62,6 @@ public:
     }
 };
 
-// One open window: what belongs to it and not to the application. The application (App) owns the commands, the file policy, the programs;
-// a Window owns its handle, its close-button state, its watches, the addresses it may load and (through the Dispatcher) its command list.
 // The pop-up menus a page may ask for, by name. Only the application adds to it (App.allowPopup).
 class PopupBook {
 public:
@@ -82,7 +80,7 @@ public:
         return -1;
     }
 
-    // true if some pop-up menu has an enabled item with this id
+    // True if some pop-up menu has an enabled item with this id.
     bool hasItem(string id) {
         int i = 0;
         while (i < menus.size()) {
@@ -97,6 +95,8 @@ public:
     }
 };
 
+// One open window: its handle, close-button state, watches, the addresses it may load, its menu bar and (through the Dispatcher) its command list.
+// The application (App) owns the commands, the file policy and the programs.
 class Window {
 public:
     int handle;
@@ -104,7 +104,7 @@ public:
     Watches watches;
     std::vector<string> navigation;
     CommandRules rules;
-    string memoryKey;                  // the name under which WindowMemory keeps this window's place ("" = not remembered)
+    string memoryKey;                  // the name WindowMemory keeps this window's place under ("" = not remembered)
     Menu menu;                         // the menu bar now on the window (empty = none)
     Window(int h, CommandRules r) {
         menu = new Menu();
@@ -121,8 +121,8 @@ public:
         return emitEvent(handle, name, payloadJson);
     }
 
-    // The close button (X, Alt+F4) hides the window instead of closing it; the program, and the page in the hidden window, keep running. Bring the window back
-    // with show() (a tray icon's menu is the usual way), end the program with App.quit(). Hiding loses nothing, so it does not ask about unsaved work. Windows only.
+    // The close button (X, Alt+F4) hides the window instead of closing it; the program and the hidden page keep running. Hiding does not ask about unsaved work.
+    // Windows only.
     bool hideOnClose(bool on) {
         state.hides = on;
         int guard = 0;
@@ -132,20 +132,20 @@ public:
         return app_window_guard(handle, guard) >= 0;
     }
 
-    // Hides the window now (it has no taskbar button either) and shows it again with show().
+    // Hides the window now (it has no taskbar button either).
     bool hide() {
         return app_window_state(handle, 5) >= 0;
     }
 
-    // Shows the window again if it was hidden, restores it if it was minimized, and brings it to the front.
+    // Shows the window if hidden, restores it if minimized, and brings it to the front.
     bool show() {
         return app_window_state(handle, 6) >= 0;
     }
 
     // ---- layout (Windows) ----
 
-    // Where the window is: x, y, width, height (screen pixels, the frame included) and a sum of 1 maximized, 2 minimized, 4 full screen, 8 always on top,
-    // 16 no title bar, 32 not resizable, 64 hidden. An empty list if it cannot be told.
+    // x, y, width, height (screen pixels, frame included) and a sum of flags: 1 maximized, 2 minimized, 4 full screen, 8 always on top, 16 no title bar,
+    // 32 not resizable, 64 hidden. An empty list if it cannot be told.
     std::vector<int> bounds() {
         std::vector<int> out;
         string text = "";
@@ -166,8 +166,7 @@ public:
         return out;
     }
 
-    // Puts the window at x, y with this size, FITTED to the monitors there are (never off the screen, never bigger than the biggest monitor: the same rule as
-    // remembered window places, src/placement.clg). false if the window is in full screen, or the system cannot do it.
+    // Moves and sizes the window, fitted to the monitors by fitToMonitors (src/placement.clg). False in full screen or if the system cannot do it.
     bool setBounds(int x, int y, int width, int height) {
         std::vector<int> now = bounds();
         if (now.size() != 5 || (now[4] / 4) % 2 == 1) {
@@ -177,23 +176,23 @@ public:
         return app_window_placement(handle, fit[0], fit[1], fit[2], fit[3], 0) >= 0;
     }
 
-    // The window covers the whole monitor it is on, with no frame; false puts it back as it was. No other window of the program is touched.
+    // The window covers the whole monitor it is on, with no frame; false restores it. Other windows are not touched.
     bool setFullscreen(bool on) {
         return app_window_style(handle, 1, flag(on)) >= 0;
     }
 
-    // The window stays above the others, also when it is not the active one.
+    // The window stays above the others even when not active.
     bool setAlwaysOnTop(bool on) {
         return app_window_style(handle, 2, flag(on)) >= 0;
     }
 
-    // No title bar and no border line: the page draws its own, and calls startDrag on a mouse down on it to let the user move the window (and startResize for the
-    // edges). The thin resize border stays while the window may be resized. Minimize, maximize and close are then the page's buttons (window.minimize and so on).
+    // No title bar and no border line: the page draws its own and calls startDrag / startResize from a mouse-down handler. A thin resize border stays while
+    // the window may be resized.
     bool setFrameless(bool on) {
         return app_window_style(handle, 3, flag(on)) >= 0;
     }
 
-    // May the user change the size, and maximize? false: a fixed-size window.
+    // False makes a fixed-size window that cannot be maximized.
     bool setResizable(bool on) {
         return app_window_style(handle, 4, flag(on)) >= 0;
     }
@@ -205,12 +204,12 @@ public:
         return 0;
     }
 
-    // Starts the system's move for this window; it only does anything while the user is holding the left mouse button (a page calls it from a mouse-down handler).
+    // Starts the system's move; it does something only while the left mouse button is held.
     bool startDrag() {
         return app_window_drag(handle, 0) >= 0;
     }
 
-    // Starts the system's resize from an edge or corner: left, right, top, bottom, topleft, topright, bottomleft, bottomright. Same condition.
+    // Starts the system's resize from an edge or corner: left, right, top, bottom, topleft, topright, bottomleft, bottomright. Same condition as startDrag.
     bool startResize(string edge) {
         int code = 0;
         if (edge == "left") { code = 10; }
@@ -227,15 +226,13 @@ public:
         return app_window_drag(handle, code) >= 0;
     }
 
-    // Makes this window modal for another: while it is open the owner cannot be used (it is greyed and ignores the mouse and the keyboard) and it is enabled again
-    // when this window closes. false if either window is gone, or they are the same.
+    // Makes this window modal for another: the owner ignores mouse and keyboard until this window closes. False if either window is gone or they are the same.
     bool setModalFor(int owner) {
         return app_window_modal(handle, owner, 1) == 0;
     }
 
-    // Puts a menu bar on this window (src/menu.clg): every id, label and shortcut was checked when the menu was built, and the top level must be only submenus.
-    // The menu is taken over by the window; to change it later use setEnabled / setChecked or set a new one. false if the menu is not a complete bar, or the system
-    // cannot show one (not Windows).
+    // Puts a menu bar (src/menu.clg) on this window. To change it later use setEnabled / setChecked or set a new one. False if the menu is not a complete bar
+    // (top level only submenus) or the system cannot show one (not Windows).
     bool setMenu(Menu bar) {
         if (!bar.complete() || !bar.isBar()) {
             return false;
@@ -252,7 +249,7 @@ public:
         return app_menu_set(handle, "") == 0;
     }
 
-    // Greys out or enables an item of the menu bar (and its shortcut stops working while it is grey).
+    // Greys out or enables a menu bar item; a grey item's shortcut does not work.
     bool setEnabled(string id, bool enabled) {
         int i = menu.indexOfId(id);
         if (i < 0) {
@@ -280,13 +277,13 @@ public:
         return app_menu_item(handle, id, -1, on) == 0;
     }
 
-    // true if the item was made with check() and is ticked now
+    // True if the item was made with check() and is ticked.
     bool isChecked(string id) {
         int i = menu.indexOfId(id);
         return i >= 0 && menu.kinds[i] == "c" && menu.flags[i] % 2 == 1;
     }
 
-    // true if the item exists, can be clicked (not a submenu) and is not greyed out
+    // True if the item exists, can be clicked (not a submenu) and is not greyed out.
     bool menuItemEnabled(string id) {
         int i = menu.indexOfId(id);
         if (i < 0) {
@@ -313,8 +310,7 @@ public:
         return app_window_title(handle, title) == 1;
     }
 
-    // When the user closes this window (the X, Alt+F4) while its page has said it has unsaved work, ask first with a native box whose text
-    // is the application's, not the page's.
+    // When the user closes the window while its page says it has unsaved work, a native box asks first; its text is the application's, not the page's.
     bool confirmClose(string title, string message) {
         if (!plainText(title, 200) || !plainText(message, 4000)) {
             return false;
@@ -325,7 +321,7 @@ public:
         return app_window_guard(handle, 1) >= 0;
     }
 
-    // From now on this window may also load addresses that start with `prefix` (the event window.navigationBlocked reports the rest).
+    // The window may also load addresses that start with `prefix` (window.navigationBlocked reports the rest).
     bool allowNavigation(string prefix) {
         if (prefix.length() < 5 || !plainText(prefix, 1000)) {
             return false;
@@ -335,8 +331,7 @@ public:
         return true;
     }
 
-    // This window's page may call only the commands named here (every name must be registered); a list of its own replaces the application's.
-    // false, and nothing changes, if a name is not registered.
+    // This window's page may call only the named commands; the list replaces the application's. False, changing nothing, if a name is not registered.
     bool allowOnlyCommands(std::vector<string> names) {
         int i = 0;
         while (i < names.size()) {
@@ -438,7 +433,7 @@ public:
     }
 };
 
-// A page path for a window the page asks to open: inside the program's own site, plain, no parent folders, no scheme.
+// A page path for a window the page asks to open: inside the program's own site, no parent folders, no scheme.
 bool pagePathOk(string path) {
     if (path.length() < 1 || path.length() > 300 || path[0] != '/' || !plainText(path, 300)) {
         return false;
@@ -449,10 +444,8 @@ bool pagePathOk(string path) {
     return true;
 }
 
-// A running application: commands, the file policy, programs, and any number of windows.
-// The origin ("http://localhost:5173") of a development server address, or "" if the address is not one we load. Only the machine's own
-// loopback names are accepted, over plain http, with an optional port and no user name: a development server is a program on this machine
-// that serves the page while it is being written, and nothing else may be given the application's commands.
+// The origin ("http://localhost:5173") of a development server address, or "" if it is not one to load. Only the machine's own loopback names are accepted,
+// over plain http, with an optional port and no user name: nothing else may be given the application's commands.
 string devServerOrigin(string url) {
     if (url.length() > 300 || !plainText(url, 300) || !startsWithText(url, "http://")) {
         return "";
@@ -493,7 +486,7 @@ string devServerOrigin(string url) {
     return "http://" + hostPort;
 }
 
-// (a struct is decoded in the file that declares it: other files call this)
+// The struct's decoder is generated in the file that declares it; other files call this wrapper.
 OpenWindowArgs readOpenWindowArgs(Item args) {
     return decodeOpenWindowArgs(args);
 }

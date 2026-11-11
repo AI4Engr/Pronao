@@ -1,23 +1,22 @@
-// pronao -- what a page may ask the operating system to open: an address in the default browser, a file in its default program, a file shown in
-// the file manager. The native layer (app_shell_open) only hands the target to the shell; WHAT may be handed over is decided here.
+// What a page may ask the operating system to open: an address in the default browser, a file in its default program, a file
+// shown in the file manager. The native layer (app_shell_open) only hands the target to the shell; what may be handed over is
+// decided here (docs/manual/04-programs-and-links.md).
 //
-//  * An ADDRESS must be an http, https or mailto address that the application allowed (`allowSchemes`), written the way the network wants it: printable
-//    ASCII only (so an address with spaces, quotes, angle brackets or a backslash is refused, and non-ASCII must be percent-encoded), at most 2048
-//    bytes, and for http / https a host with no `user@` in front of it. Nothing else is ever opened: not `file:`, not `javascript:`, not a program.
-//  * A FILE must be one the file policy lets the page reach, a regular file, and its extension must be one the application listed (`allowExtensions`).
-//    A fixed list of extensions that start programs or scripts, or change settings, is refused even if the application lists one by mistake: opening
-//    a program is "run this", and the page may not ask for that here (proc.run is the only door to programs, and it has its own table).
-//  * SHOWING a file or folder in the file manager needs only the file policy: it starts nothing.
-//  * Every kind is rate limited (one per 300 ms), so a page cannot open a thousand browser tabs.
+//  * An address must use a scheme the application allowed (`allowSchemes`: http, https, mailto) and be printable ASCII only (spaces,
+//    quotes, angle brackets, backslashes and non-ASCII are refused), at most 2048 bytes, with no `user@` before an http / https host.
+//    Never `file:`, `javascript:` or a program.
+//  * A file must be reachable under the file policy, a regular file, with an extension the application listed (`allowExtensions`).
+//    Extensions that start programs or scripts, or change settings, are refused even if listed: proc.run is the only door to programs.
+//  * Showing a file or folder in the file manager needs only the file policy: it starts nothing.
+//  * Every kind is rate limited (one per 300 ms).
 //
-// What this does not do: it cannot tell what the browser or the default program of a file type will do with what it receives. A document viewer that
-// runs scripts in a file is the application's choice to list.
+// Not covered: what the browser or a file type's default program does with what it receives.
 #include "text.clh"
 
 ext_fn int app_shell_open(string target, int mode);
 ext_fn double app_now_ms();
 
-// Extensions that start a program, run a script, install something or change a setting when the shell opens them. Never opened from a page.
+// Extensions that start a program, run a script, install something or change a setting when the shell opens them.
 bool dangerousExtension(string ext) {
     std::vector<string> names = splitOn("exe,com,bat,cmd,scr,pif,msi,msp,msix,appx,appxbundle,ps1,psm1,psd1,ps1xml,vbs,vbe,js,jse,wsf,wsh,hta,cpl,lnk,url,reg,jar,dll,sys,drv,ocx,inf,chm,gadget,application,sh,bash,zsh,command,app,run,bin,desktop,workflow,action,scpt,py,pl,rb,php,ade,adp,mde,mdb,msc,msh,job,theme,themepack,settingcontent-ms,library-ms,search-ms,diagcab,iso,img,vhd,vhdx,dmg,pkg,deb,rpm,apk", ',');
     int i = 0;
@@ -45,7 +44,6 @@ bool extensionName(string ext) {
     return true;
 }
 
-// the lower-case extension of the last component of a path ("" if it has none)
 string extensionOf(string path) {
     int cut = path.length() - 1;
     while (cut >= 0 && path[cut] != '/' && path[cut] != '\\') {
@@ -74,7 +72,6 @@ bool hostChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':' || c == '[' || c == ']' || c == '_';
 }
 
-// the lower-case scheme of an address ("" if it does not start with one)
 string schemeOf(string url) {
     int colon = indexOfChar(url, ':');
     if (colon < 1) {
@@ -105,7 +102,6 @@ public:
         lastMs = -1.0e9;
     }
 
-    // Names from http, https, mailto. false (and nothing changes) for anything else or an empty list.
     bool allowSchemes(std::vector<string> names) {
         if (names.size() == 0 || names.size() > 3) {
             return false;
@@ -180,7 +176,6 @@ public:
         return end > 2;
     }
 
-    // true if the extension of this path (the resolved name of a file) is one the application listed
     bool extensionAllowed(string path) {
         string ext = extensionOf(path);
         if (ext.length() == 0 || dangerousExtension(ext)) {
@@ -196,7 +191,7 @@ public:
         return false;
     }
 
-    // One open per 300 ms. true (and the clock is set) if this one may go ahead.
+    // One open per 300 ms. true, and the clock is set, if this one may go ahead.
     bool mayOpenNow() {
         double now = app_now_ms();
         if (now - lastMs < 300.0) {
@@ -206,7 +201,6 @@ public:
         return true;
     }
 
-    // Opens an address that addressAllowed accepted. "" on success, else the error for the page.
     string openAddress(string url) {
         if (!addressAllowed(url)) {
             return "invalid_argument: `url` must be an http, https or mailto address that this application allows";

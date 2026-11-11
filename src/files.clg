@@ -1,13 +1,13 @@
-// pronao -- which files a page may reach, and the operations on them.
+// Which files a page may reach, and the operations on them (FileGate).
 //
-// THE POLICY IS HERE, in checked CeeLing code; the native layer (shim/app_fs.cpp) only opens, reads, writes, lists,
-// creates and deletes, and reports where an OPEN HANDLE really points. Every decision is taken on that answer, never on
-// the text of a path: `..`, links, junctions, case, 8.3 names and `\\?\` all defeat text checks, and the answer can change
-// between a check and an open. So an operation opens first, asks "where does this handle point?", decides, and only then
-// reads or writes through that same handle. (A text pre-check still runs first, but only to refuse early and without
-// saying whether the path exists; it never allows anything by itself.)
+// The policy is here, in checked CeeLing code. The native layer (shim/win/fs.cpp, shim/posix/fs.cpp) only opens, reads, writes,
+// lists, creates and deletes, and reports where an open handle really points. Every decision is taken on that answer, never on the
+// text of a path (`..`, links, junctions, case, 8.3 names and `\\?\` defeat text checks, and the answer can change between a check
+// and an open): an operation opens first, asks where the handle points, decides, and only then reads or writes through that same
+// handle. A text pre-check runs first, but only to refuse early; it never allows anything by itself.
+// See docs/manual/03-files-and-data.md and 08-security.md.
 //
-// A FileGate is used from the main thread only (the command loop). Grants coming from a dialog are applied there too.
+// A FileGate is used from the main thread only; grants from a dialog are applied there too.
 //
 // Status codes (the same numbers the native layer uses):
 //   0 ok  1 forbidden  2 not found  3 too large  4 io error  5 invalid  6 exists  7 not empty  8 is a folder
@@ -39,7 +39,7 @@ public:
     }
 };
 
-// An open native handle and where it points (plain form: no \\?\ prefix). The holder must close it.
+// An open native handle and where it points (plain form, no \\?\ prefix). The holder must close it.
 class Opened {
 public:
     int status;
@@ -131,8 +131,6 @@ public:
         return '/';
     }
 
-    // ---- the roots ----------------------------------------------------------------------------------------------
-
     bool isInside(string path, string root) {
         if (path == root) {
             return true;
@@ -143,7 +141,6 @@ public:
         return startsWithText(path, root + sep());
     }
 
-    // `fin` is what the OS says an open handle points at: exact comparison, the OS spells both the same way
     bool allowedFinal(string fin) {
         int i = 0;
         while (i < paths.size()) {
@@ -159,7 +156,7 @@ public:
         return false;
     }
 
-    // the same for TEXT (a pre-check only): Windows paths ignore ASCII case
+    // the same for text (a pre-check only); on Windows ASCII case is ignored
     bool allowedText(string path) {
         string p = path;
         if (windows == 1) {
@@ -183,7 +180,7 @@ public:
         return false;
     }
 
-    // an allowed FOLDER itself (never removable); a granted file may be removed, the user chose it
+    // an allowed folder itself (never removable); a granted file may be removed
     bool isRootItself(string fin) {
         int i = 0;
         while (i < paths.size()) {
@@ -195,7 +192,7 @@ public:
         return false;
     }
 
-    // relative paths hang off the FIRST folder the application allowed (never off a grant)
+    // relative paths hang off the first folder the application allowed, never off a grant
     string basePath() {
         int i = 0;
         while (i < paths.size()) {
@@ -217,11 +214,9 @@ public:
         return n;
     }
 
-    // ---- text: the absolute, normalized form of a path --------------------------------------------------------
-
-    // Lexical only. Relative paths hang off the first allowed folder. Refuses device paths, drive- and root-relative
-    // paths, alternate data streams, trailing dots and spaces (Windows drops them, so the page would get another file
-    // than the one it named) and device names. With checkRoots the text must also lie under an allowed place.
+    // Lexical only. Refuses device paths, drive- and root-relative paths, alternate data streams, trailing dots and spaces (Windows
+    // drops them, so the page would get another file than it named) and device names. With checkRoots the text must also lie under
+    // an allowed place.
     FsResult normalize(string path, bool allowRelative, bool checkRoots) {
         if (path.length() == 0 || !plainText(path, 32000)) {
             return new FsResult(5, "");
@@ -331,13 +326,10 @@ public:
         return new FsResult(0, full);
     }
 
-    // normalize for something that is not a path to open yet (no roots check): used by grants
     FsResult normalizeAbsolute(string path) {
         FsResult r = normalize(path, false, false);
         return r;
     }
-
-    // ---- parent and leaf of a normalized path ------------------------------------------------------------------
 
     int lastSeparator(string full) {
         char c = sepChar();
@@ -374,7 +366,6 @@ public:
         return dir + sep() + leaf;
     }
 
-    // a name that may be CREATED
     bool nameOk(string leaf) {
         if (leaf.length() == 0 || leaf == "." || leaf == "..") {
             return false;
@@ -399,8 +390,6 @@ public:
         return true;
     }
 
-    // ---- opening ---------------------------------------------------------------------------------------------
-
     Opened openAt(string path, int mode) {
         int h = 0;
         string fin = "";
@@ -412,8 +401,8 @@ public:
         return new Opened(0, h, plainOf(fin), created);
     }
 
-    // Opens `full` and refuses (closing it, and undoing a file this call created) if the handle does not point inside an
-    // allowed place. `full` came from normalize.
+    // Opens `full` (from normalize) and refuses, closing it and undoing a file this call created, if the handle does not point inside
+    // an allowed place.
     Opened openAllowed(string full, int mode) {
         Opened o = openAt(full, mode);
         if (o.status != 0) {
@@ -443,9 +432,6 @@ public:
         return status;
     }
 
-    // ---- the allow-list ----------------------------------------------------------------------------------------
-
-    // Adds a folder the application allows. It must exist; it is stored as the OS spells it (links resolved).
     int allow(string dir) {
         if (dir.length() == 0 || !plainText(dir, 32000)) {
             return 5;
@@ -471,7 +457,6 @@ public:
         grant.push_back(isGrant);
     }
 
-    // Empties the allow-list (nothing is reachable afterwards), grants included.
     void clear() {
         while (paths.size() > 0) {
             paths.pop_back();
@@ -480,8 +465,8 @@ public:
         }
     }
 
-    // What the user picked: exactly that file (it may not exist yet: a "save as" target, whose folder must) or folder.
-    // At most 256 at a time. On success the text is the form the file commands will accept.
+    // What the user picked: exactly that file (a "save as" target may not exist yet, but its folder must) or folder. At most 256 at a
+    // time. On success the text is the form the file commands accept.
     FsResult addGrant(string fin, int isExact) {
         string canonical = fin;
         int i = 0;
@@ -531,7 +516,6 @@ public:
         if (o.status != 2) {
             return new FsResult(o.status, "");
         }
-        // does not exist yet: its folder must, and the name must be an ordinary one
         string leaf = leafOf(n.text);
         if (!nameOk(leaf)) {
             return new FsResult(1, "");
@@ -548,7 +532,6 @@ public:
         return addGrant(join(parent.fin, leaf), 1);
     }
 
-    // Withdraws every grant; the application's own folders stay.
     void revokeGrants() {
         std::vector<string> keptPaths;
         std::vector<int> keptExact;
@@ -568,10 +551,8 @@ public:
         }
     }
 
-    // ---- operations ---------------------------------------------------------------------------------------------
-
-    // An EXISTING path the file commands could reach, as its canonical absolute form (links resolved), or the failure.
-    // kind: 0 anything, 1 a file, 2 a folder. This is how a page-supplied path is vetted before it is handed to a program.
+    // An existing path the file commands could reach, as its canonical absolute form (links resolved), or the failure.
+    // kind: 0 anything, 1 a file, 2 a folder. Used to vet a page-supplied path before it is handed to a program.
     FsResult resolve(string path, int kind) {
         FsResult n = normalize(path, true, true);
         if (n.status != 0) {
@@ -592,7 +573,6 @@ public:
         return new FsResult(0, o.fin);
     }
 
-    // The whole file, refusing (without reading it) one larger than maxBytes.
     FsResult read(string path, int maxBytes) {
         FsResult n = normalize(path, true, true);
         if (n.status != 0) {
@@ -681,7 +661,7 @@ public:
         return new FsResult(st, records);
     }
 
-    // The same four NUL-terminated fields for one path. A link is described as itself, not as its target.
+    // The same four fields for one path; a link is described as itself, not its target.
     FsResult stat(string path) {
         FsResult n = normalize(path, true, true);
         if (n.status != 0) {
@@ -798,14 +778,14 @@ public:
         return 0;
     }
 
-    // A folder and everything in it, links removed as links (never followed), at most 64 levels deep. The folder itself must not be an
-    // allowed folder. Returns the first failure.
+    // A folder and everything in it, links removed as links (never followed), at most 64 levels deep. The folder itself must not be
+    // an allowed folder. Returns the first failure.
     int removeTree(string path, int depth) {
         if (depth > 64) {
             return 4;
         }
         if (depth == 0) {
-            // refuse BEFORE deleting anything below: removing the contents and then failing on the folder itself would be the worst of both
+            // refuse before deleting anything below: emptying the folder and then failing on the folder itself is the worst outcome
             FsResult here = resolve(path, 2);
             if (here.status != 0) {
                 return here.status;
@@ -836,9 +816,9 @@ public:
         return remove(path);
     }
 
-    // Renames a file to another name in the SAME allowed folder, replacing a file that is already there in one step: what a reader sees is the old
-    // file or the new one, never half of either (write a temporary file, then replace). Both must be plain file names; the source must be a
-    // regular file, and a target that exists must be one too (never a folder or a link). Not for a granted file: the folder itself must be allowed.
+    // Renames a file to another name in the same allowed folder, replacing an existing file in one step: a reader sees the old file or
+    // the new one, never half of either. Both must be plain file names; the source must be a regular file, and an existing target must
+    // be one too (never a folder or a link). Not for a granted file: the folder itself must be allowed.
     int replace(string fromPath, string toPath) {
         FsResult a = normalize(fromPath, true, true);
         if (a.status != 0) {

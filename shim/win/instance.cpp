@@ -1,9 +1,8 @@
 // Windows: one running copy of a program per user session (see app_native.h).
-//   claim   a named mutex in the session's namespace ("Local\pronao-<name>"): the first process to create it is the instance.
-//   handoff a later process connects to the instance's named pipe, writes its working folder and arguments, and closes it. The pipe is created with a
-//           DACL that grants access to this user and to SYSTEM only, refuses remote clients, and a message is at most 64 KiB.
-//   serve   one thread in the instance accepts those messages for as long as the process lives and queues each as an "instance" record on the window
-//           the application named (before that, up to 16 are kept).
+//   claim   a named mutex ("Local\pronao-<name>"): the first process to create it is the instance.
+//   handoff a later process writes its working folder and arguments to the instance's named pipe (DACL: this user and SYSTEM only, no remote clients; a message is
+//           at most 64 KiB).
+//   serve   one thread in the instance queues each message as an "instance" record on the window given to app_instance_listen (up to 16 are kept before that).
 // What may be done with the arguments is decided in src/app.clg; this only moves bytes between two processes of the same user.
 #include <aclapi.h>
 #include <sddl.h>
@@ -31,7 +30,7 @@ struct Instance {
     std::vector<std::string> pending;
     bool serving = false;
 };
-Instance* g_instance = nullptr;                    // (lives until the process ends)
+Instance* g_instance = nullptr;
 
 std::string recordFor(const std::string& message) {
     std::string r = "instance";
@@ -69,7 +68,6 @@ void deliver(Instance* in, const std::string& message) {
     }
 }
 
-// one more pipe instance for clients to connect to (INVALID_HANDLE_VALUE if that is not possible)
 HANDLE makePipe(Instance* in) {
     SECURITY_ATTRIBUTES sa = {};
     sa.nLength = sizeof sa;
@@ -85,9 +83,9 @@ HANDLE makePipe(Instance* in) {
 void serve(Instance* in) {
     HANDLE pipe = makePipe(in);
     while (pipe != INVALID_HANDLE_VALUE) {
-        // (a client that connected, wrote and closed before we got here is reported as ERROR_PIPE_CONNECTED or ERROR_NO_DATA; what it wrote can still be read)
+        // (a client that already wrote and closed is reported as ERROR_PIPE_CONNECTED or ERROR_NO_DATA; its data can still be read)
         if (ConnectNamedPipe(pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED || GetLastError() == ERROR_NO_DATA) {
-            HANDLE ready = makePipe(in);                 // before this client is served: a launch right behind it must find a pipe to connect to
+            HANDLE ready = makePipe(in);                 // before serving this client: a launch right behind it must find a pipe
             std::string message;
             bool tooLong = false;
             char chunk[4096];
@@ -101,7 +99,7 @@ void serve(Instance* in) {
             CloseHandle(pipe);
             pipe = ready;
         } else {
-            DisconnectNamedPipe(pipe);                   // (a failed connect: try the same instance again)
+            DisconnectNamedPipe(pipe);
         }
     }
 }
@@ -111,7 +109,7 @@ std::string currentFolder() {
     const DWORD n = GetCurrentDirectoryW(static_cast<DWORD>(sizeof buffer / sizeof buffer[0]), buffer);
     return (n > 0 && n < sizeof buffer / sizeof buffer[0]) ? narrow(std::wstring(buffer, n)) : std::string();
 }
-}  // namespace
+}
 
 int app_command_line(std::string& out) {
     int argc = 0;

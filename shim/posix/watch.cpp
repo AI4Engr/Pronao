@@ -29,7 +29,7 @@ void addTree(int ifd, const std::string& abs, const std::string& rel, bool recur
     }
     closedir(d);
 }
-}  // namespace
+}
 
 void watchMain(std::shared_ptr<Watch> w) {
     const int ifd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
@@ -37,7 +37,7 @@ void watchMain(std::shared_ptr<Watch> w) {
     if (ifd >= 0) addTree(ifd, w->root, std::string(), w->recursive, wds, 0);
     markArmed(*w);                                         // (the watches are added: from here on the kernel queues every change)
     if (ifd < 0 || wds.empty()) { if (ifd >= 0) close(ifd); pushEvent(*w, "stopped", "failed", ""); w->finished = true; return; }
-    std::map<uint32_t, std::string> movedFrom;             // cookie -> old relative path
+    std::map<uint32_t, std::string> movedFrom;
     std::vector<char> buf(65536);
     const char* why = "closed";
     while (!w->stop.load()) {
@@ -74,7 +74,7 @@ void watchMain(std::shared_ptr<Watch> w) {
             } else if (ev->mask & IN_MOVED_TO) {
                 auto from = movedFrom.find(ev->cookie);
                 if (from != movedFrom.end()) { pushEvent(*w, "renamed", rel, from->second); movedFrom.erase(from); }
-                else pushEvent(*w, "created", rel, "");     // moved in from outside
+                else pushEvent(*w, "created", rel, "");
             }
             if ((ev->mask & IN_ISDIR) && (ev->mask & (IN_CREATE | IN_MOVED_TO)) && w->recursive) addTree(ifd, w->root + "/" + rel, rel, true, wds, 1);
         }

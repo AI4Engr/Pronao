@@ -1,5 +1,4 @@
-// Windows: native dialogs (see app_native.h): the Vista common item dialogs and MessageBoxW, shown on the window's UI thread.
-// What may be shown (lengths, characters, which kinds) is decided in src/dialogs.clg.
+// Windows: native dialogs (see app_native.h): the common item dialogs and MessageBoxW, shown on the window's UI thread. What may be shown is decided in src/dialogs.clg.
 #include <shobjidl.h>
 
 #include <memory>
@@ -12,7 +11,6 @@
 #include "util.h"
 
 namespace {
-// mode: 0 open a file, 1 save as, 2 pick a folder. 1 chose, 0 cancelled, -1 failed.
 int showFileDialog(HWND owner, int mode, const std::string& title, const std::string& defaultName, const std::string& defaultExt,
                    const std::vector<std::string>& filters, std::string& pathOut) {
     const HRESULT initHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);   // S_FALSE / RPC_E_CHANGED_MODE are fine
@@ -56,7 +54,7 @@ int showFileDialog(HWND owner, int mode, const std::string& title, const std::st
     if (SUCCEEDED(initHr)) CoUninitialize();
     return result;
 }
-}  // namespace
+}
 
 int app_dialog_pick(int handle, int mode, std::string title, std::string default_name, std::string default_ext, std::vector<std::string> filters,
                     std::string& path) {
@@ -66,8 +64,7 @@ int app_dialog_pick(int handle, int mode, std::string title, std::string default
     return out->first;
 }
 
-// kind: 0 info, 1 warning, 2 error, 3 question. buttons: 0 ok, 1 ok+cancel, 2 yes+no. Returns the button: 1 ok, 2 cancel, 3 yes, 4 no
-// (closing the box counts as cancel, or no for yes/no); -1 if it could not be shown.
+// Closing the box counts as cancel, or as no for yes/no.
 int app_dialog_message(int handle, std::string title, std::string message, int kind, int buttons) {
     const UINT flags = MB_SETFOREGROUND | (kind == 1 ? MB_ICONWARNING : kind == 2 ? MB_ICONERROR : kind == 3 ? MB_ICONQUESTION : MB_ICONINFORMATION) |
                        (buttons == 1 ? MB_OKCANCEL : buttons == 2 ? MB_YESNO : MB_OK);

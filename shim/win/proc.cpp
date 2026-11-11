@@ -1,4 +1,4 @@
-// Windows: running a program (see app_native.h). Which program and which arguments is decided in src/app.clg.
+// Windows: running a program (see app_native.h). Which program and arguments is decided in src/programs.clg.
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -8,8 +8,7 @@
 #include "util.h"
 
 namespace {
-// the C runtime's rules (CommandLineToArgvW reads them back): wrap in quotes when needed, double backslashes that precede a
-// quote, escape the quote
+// Quotes one argument by the C runtime's rules, which CommandLineToArgvW reads back.
 std::wstring quoteArg(const std::wstring& a) {
     if (!a.empty() && a.find_first_of(L" \t\n\v\"") == std::wstring::npos) return a;
     std::wstring out = L"\"";
@@ -36,7 +35,7 @@ DWORD WINAPI readerMain(LPVOID p) {
     return 0;
 }
 
-struct AttrList {   // the list that says which handles the child inherits
+struct AttrList {
     std::vector<char> mem;
     LPPROC_THREAD_ATTRIBUTE_LIST list = nullptr;
     bool make(HANDLE* handles, size_t bytes) {
@@ -49,7 +48,7 @@ struct AttrList {   // the list that says which handles the child inherits
     }
     ~AttrList() { if (list) DeleteProcThreadAttributeList(list); }
 };
-}  // namespace
+}
 
 int app_os_env(std::string name, std::string& out) {
     const std::wstring w = widen(name);
@@ -60,14 +59,14 @@ int app_os_env(std::string name, std::string& out) {
     return 1;
 }
 
-// 0 nothing there, 1 a file (+4 if it can be executed: on Windows that is for CeeLing to judge by name), 2 a folder
+// 0 nothing there, 1 a file (+4 if it can be executed: always reported here, CeeLing judges by name), 2 a folder
 int app_os_path_kind(std::string path) {
     const DWORD a = GetFileAttributesW(widen(path).c_str());
     return a == INVALID_FILE_ATTRIBUTES ? 0 : (a & FILE_ATTRIBUTE_DIRECTORY) ? 2 : 5;
 }
 
-// Runs `exe` in `cwd` with exactly the environment `env` (all of it already vetted by CeeLing: toolRunOk): no stdin, no console window, only three handles inherited,
-// inside a job object so that everything it starts dies with it. flags: 1 timed out, 2 stdout cut at max_bytes, 4 stderr cut.
+// Runs `exe` in `cwd` with exactly the environment `env` (vetted by CeeLing: toolRunOk): no stdin, no console window, only three handles inherited, inside a job object
+// so that everything it starts dies with it. flags: 1 timed out, 2 stdout cut at max_bytes, 4 stderr cut, 8 cancelled.
 int app_proc_run(int handle, std::string call, std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env,
                  int timeout_ms, int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
     out.clear(); err.clear(); exit_code = -1; flags = 0;
@@ -83,10 +82,10 @@ int app_proc_run(int handle, std::string call, std::string exe, std::vector<std:
     SECURITY_ATTRIBUTES inheritable = {sizeof inheritable, nullptr, TRUE};
     Handle outR, outW, errR, errW, job, process, thread;
     if (!CreatePipe(outR.put(), outW.put(), &inheritable, 0) || !CreatePipe(errR.put(), errW.put(), &inheritable, 0)) return 4;
-    SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);          // only the write ends are inherited
+    SetHandleInformation(outR, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(errR, HANDLE_FLAG_INHERIT, 0);
     Handle nul(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inheritable, OPEN_EXISTING, 0, nullptr));
-    HANDLE inherit[3] = {nul, outW, errW};                      // the child inherits exactly these three handles and nothing else
+    HANDLE inherit[3] = {nul, outW, errW};
     AttrList attrs;
     job.h = CreateJobObjectW(nullptr, nullptr);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
@@ -142,7 +141,7 @@ int app_proc_run(int handle, std::string call, std::string exe, std::vector<std:
         for (HANDLE t : readers) CloseHandle(t);
         delete rOut; delete rErr;
     } else {
-        outR.h = errR.h = nullptr;      // (the pipes stay open for the stuck readers)
+        outR.h = errR.h = nullptr;
     }
     return 0;                           // the job handle closes here: kill-on-close, nothing the child started outlives this call
 }

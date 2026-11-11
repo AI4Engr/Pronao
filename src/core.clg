@@ -1,9 +1,9 @@
-// pronao -- what every other module uses: replies and structured errors, events to the page, argument helpers, and the
-// classes a command is built from. The native calls (the `ext_fn`s below) are trusted C++, not checked.
+// What every other module uses: replies and structured errors, events to the page, argument helpers, and the classes a command is
+// built from. The `ext_fn`s below are trusted C++, not checked.
 //
-// A request arrives as the JSON array ["command", args]; the reply is a status (0 = resolve, 1 = reject) and a JSON text. Reply
-// texts are built with the JSON library, never by string concatenation, so they are always valid JSON whatever the command or
-// the error message contains.
+// A request is the JSON array ["command", args]; the reply is a status (0 = resolve, 1 = reject) and a JSON text. Error texts and
+// event scripts are built with the JSON printer, never by string concatenation, so they stay valid JSON whatever a message contains.
+// See docs/manual/02-how-it-works.md and 07-background-work.md.
 #include "cjson_item.clh"
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
@@ -16,7 +16,6 @@ ext_fn int app_cancel_forget(int handle, string call);
 ext_fn int app_cancelled(int handle, string call);
 ext_fn int app_sleep_ms(int ms);
 
-// What a handler produces. status 0 resolves the page's promise with `json`; 1 rejects it.
 class Reply {
 public:
     int status;
@@ -27,7 +26,6 @@ public:
     }
 };
 
-// A command. Override `call`; the default answers null.
 class Command {
 public:
     Command() { }
@@ -36,7 +34,6 @@ public:
     }
 };
 
-// {"code": code, "message": message} as JSON text
 string errorJson(string code, string message) {
     Item e = createObject();
     addStringToObject(e, "code", code);
@@ -44,9 +41,8 @@ string errorJson(string code, string message) {
     return printUnformatted(e);
 }
 
-// A thrown message may start with "<code>: " (lower-case letters, digits and underscores, at most 40): the code becomes
-// the reply's error code and the rest its message, so a page can tell "not_found" from "forbidden". Anything else keeps
-// the code "command_failed" and the whole message.
+// A thrown message may start with "<code>: " (lower-case letters, digits and underscores, at most 40): the code becomes the
+// reply's error code and the rest its message. Anything else keeps the code "command_failed" and the whole message.
 int errorPrefixLength(string thrown) {
     int i = 0;
     while (i < thrown.length() && i < 40) {
@@ -82,16 +78,13 @@ string errorTextOf(string thrown) {
 }
 
 // ---- argument helpers --------------------------------------------------------------------------
-// A command receives whatever the page sent. Reading a missing or wrongly typed value straight off the
-// JSON would dereference a null handle and stop the application (the runtime null check turns that into a
-// clean abort naming the line, but a web page should not be able to end the program). These helpers reject
-// the call instead: the page's promise is rejected with the message.
+// A page sends anything. Reading a missing or wrongly typed value straight off the JSON would hit the null check and abort the
+// program, which a page must not be able to do. These helpers throw instead, so the page's promise is rejected with the message.
 
 string argName(int index) {
     return "argument " + intToString(index);
 }
 
-// args[index] as a number, or throws "argument N must be a number"
 double numberAt(Item args, int index) {
     Item v = getArrayItem(args, index);
     if (!isNumber(v)) {
@@ -119,7 +112,6 @@ bool boolAt(Item args, int index) {
     return isTrue(v);
 }
 
-// the member `name` of an object argument, or throws "missing field NAME"
 Item fieldOf(Item object, string name) {
     Item v = getObjectItem(object, name);
     if (v == nullptr) {
@@ -130,21 +122,10 @@ Item fieldOf(Item object, string name) {
 }
 
 // ---- background work ---------------------------------------------------------------------------
-// A command that must not block the window loop is an AsyncCommand. `start` runs on the main thread, copies
-// what it needs out of `args` into plain values, and hands them to a worker:
-//
-//     app.asyncCommand("scan", closure AsyncCommand [] (Item args, string id, int handle) {
-//         string payload = printUnformatted(args);
-//         spawn(closure Job [payload, id, handle] () {
-//             Item mine = parse(payload);            // the worker builds its OWN tree
-//             replyOk(handle, id, printUnformatted(mine));
-//         });
-//     });
-//
-// `spawn` accepts only primitives, string and vectors of primitives in the capture list (the compiler refuses
-// an Item or any other object), so the worker shares no CeeLing memory with the main thread; it answers the
-// page itself through replyOk / replyError, which go through the mutex-protected shim. `start` must either
-// spawn and return, or throw BEFORE spawning -- a promise is answered exactly once.
+// An AsyncCommand does not block the window loop. `start` runs on the main thread, copies what it needs out of `args` into plain
+// values (the compiler refuses an Item in a `spawn` capture list) and spawns a worker that answers through replyOk / replyError.
+// `start` must either spawn and return, or throw BEFORE spawning: a promise is answered exactly once. Example in
+// docs/manual/07-background-work.md.
 class Job {
 public:
     Job() { }
@@ -157,37 +138,32 @@ public:
     virtual void start(Item args, string id, int handle) { }
 };
 
-// What runs when a spawned job throws (see spawn's optional second argument and onJobFailure). The dispatcher
-// installs one around every AsyncCommand.start, so a job that throws answers the page with a rejection
-// {code: "command_failed", message} instead of leaving its promise pending.
+// What runs when a spawned job throws. The dispatcher installs one around every AsyncCommand.start, so a job that throws rejects
+// the page's promise instead of leaving it pending.
 class Failure {
 public:
     Failure() { }
     virtual void fail(string message) { }
 };
 
-// What runs when a menu item is clicked (App.onMenu): `clicked` gets the id the application gave the item.
 class MenuAction {
 public:
     MenuAction() { }
     virtual void clicked(string id) { }
 };
 
-// What runs when the tray icon is clicked (App.onTray): `happened` gets "click" (a left click) or "double" (a double click).
 class TrayAction {
 public:
     TrayAction() { }
     virtual void happened(string kind) { }
 };
 
-// What runs when the user clicks a notification the application showed (App.onNotificationClick): `clicked` gets the id the application gave it ("" if it gave none).
 class NotificationAction {
 public:
     NotificationAction() { }
     virtual void clicked(string id) { }
 };
 
-// Answers a call from any thread. status 0 resolves the page's promise with `json`, 1 rejects it.
 void replyOk(int handle, string id, string json) {
     app_return(handle, id, 0, json);
     app_cancel_forget(handle, id);
@@ -198,22 +174,19 @@ void replyError(int handle, string id, string code, string message) {
     app_cancel_forget(handle, id);
 }
 
-// True once the page gave up on call `id` (its AbortSignal fired, or its timeout passed) or the window is closing. A job that runs for a
-// long time checks this between its steps and stops; a program it started is killed by the runner without the job doing anything.
+// True once the page gave up on call `id` (its AbortSignal fired, or its timeout passed) or the window is closing. A long job
+// checks this between steps and stops; a program it started is killed without the job doing anything.
 bool callCancelled(int handle, string id) {
     return app_cancelled(handle, id) == 1;
 }
 
 // ---- events: CeeLing -> page -------------------------------------------------------------------
-// emitEvent(handle, "progress", "{\"done\":3}") runs `pronao.on("progress", fn)` listeners on the page with the payload
-// {done: 3}. It takes only an int and strings, so a worker job can call it (capture the handle):
+// emitEvent(handle, "progress", "{\"done\":3}") runs the page's `pronao.on("progress", fn)` listeners with {done: 3}. It takes
+// only an int and strings, so a worker job can call it.
 //
-//     spawn(closure Job [handle, payload] () { ... emitEvent(handle, "progress", text); ... });
-//
-// The payload must be valid JSON text; the script handed to the page is built ONLY with the JSON printer (the name
-// and the payload are re-printed, never pasted), so a name or a string containing quotes, backslashes or script text
-// stays a string literal and cannot become code. Returns false, and sends nothing, if the payload is not valid JSON or
-// the window is gone. An event sent before the page has loaded and registered its listener is dropped.
+// The payload must be valid JSON text. The script handed to the page is built only with the JSON printer (name and payload are
+// re-printed, never pasted), so script text in either stays a string literal and cannot run. Returns false, and sends nothing, if
+// the payload is not valid JSON or the window is gone. An event sent before the page registered its listener is dropped.
 bool emitEvent(int handle, string name, string payloadJson) {
     Item payload = parseWithOpts(payloadJson, true);   // strict: trailing text after the JSON value is an error
     if (payload == nullptr) {
@@ -257,7 +230,6 @@ string optionalString(Item args, string name, string fallback) {
     return v.valuestring;
 }
 
-// like optionalString, but a JSON null counts as absent (what a page sends for an optional value that is undefined or None)
 string optionalNullableString(Item args, string name) {
     Item v = getObjectItem(objectArg(args), name);
     if (v == nullptr || isNull(v)) {

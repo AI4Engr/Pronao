@@ -1,6 +1,6 @@
 // Windows: is the WebView2 runtime installed, and a message box for when it is not (see app_runtime_version and app_message_box in app_native.h).
-// The runtime registers its version under the "Clients" key of the Edge updater (the documented way to detect it without loading it); the value "pv" is
-// "0.0.0.0" or missing when it is not installed. Per machine (both registry views) or per user.
+// The runtime registers its version as the value "pv" under the "Clients" key of the Edge updater ("0.0.0.0" or missing: not installed), per machine (both registry
+// views) or per user.
 #include <windows.h>
 
 #include <string>
@@ -20,7 +20,7 @@ bool readVersion(HKEY root, REGSAM view, const wchar_t* path, std::wstring& out)
     out = value;
     return true;
 }
-}  // namespace
+}
 
 int app_runtime_version(std::string& version) {
     static const wchar_t* kClients = L"SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";

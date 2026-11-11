@@ -1,5 +1,5 @@
-// Windows: answers the window's requests for the application's own files from memory (see shim/assets.h), so a web UI of hundreds of
-// files can be a part of the program. Every request passes through here; only those under the configured origin are answered.
+// Windows: answers the window's requests for the application's own files from memory (see shim/assets.h). Every request passes through here; only those under the
+// configured origin are answered.
 #include <shlwapi.h>
 #include <WebView2.h>
 
@@ -25,7 +25,7 @@ struct Handler : ICoreWebView2WebResourceRequestedEventHandler {
     }
     HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* a) override { fn(a); return S_OK; }
 };
-}  // namespace
+}
 
 void app_assets_install(void* controller, std::shared_ptr<AssetStore> store) {
     ICoreWebView2* view = nullptr;

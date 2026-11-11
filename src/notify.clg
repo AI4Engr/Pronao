@@ -1,4 +1,4 @@
-// pronao -- Notifications (toasts): the arguments of notification.show and the Notifier that checks and shows one, shared by the application and the page command.
+// Notifications (toasts): the arguments of notification.show and the Notifier that checks and shows one. See docs/manual/06-menus-tray-notifications.md.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"
@@ -26,7 +26,7 @@ public:
     }
 };
 
-// Notifications (toasts). One object, shared by the application and by the page command, so the command does not have to hold the whole App.
+// One Notifier is shared by the application and the page command, so the command need not hold the whole App.
 class Notifier {
 public:
     int handle;                // the tray icon the notifications come from (0 = none yet)
@@ -40,7 +40,7 @@ public:
         asker = 0;
     }
 
-    // text with no control character in it (a line break is allowed when `lines`)
+    // Text with no control character (a line break is allowed when `lines`).
     bool cleanText(string s, int maxBytes, bool lines) {
         if (!plainText(s, maxBytes)) {
             return false;
@@ -56,8 +56,8 @@ public:
         return true;
     }
 
-    // Shows a notification. "" on success, else the error as "code: message". kind: info, warning, error. id: "" or a name (1 to 64 letters, digits, . _ -) that comes
-    // back when the user clicks THIS notification. At most one every gapMs (2 seconds unless the application changed it), so a program (or a page) cannot flood the screen.
+    // "" on success, else the error as "code: message". kind: info, warning, error. id: "" or a menuId that comes back when the user clicks this notification.
+    // At most one per gapMs (default 2000), so a program or page cannot flood the screen.
     string show(string title, string text, string kind, string id) {
         if (title.length() == 0 || !cleanText(title, 63, false)) {
             return "invalid_argument: `title` must be 1 to 63 bytes of text on one line";
@@ -95,7 +95,7 @@ public:
     }
 };
 
-// (a struct is decoded in the file that declares it: other files call this)
+// The struct's decoder is generated in the file that declares it; other files call this wrapper.
 NotifyArgs readNotifyArgs(Item args) {
     return decodeNotifyArgs(args);
 }

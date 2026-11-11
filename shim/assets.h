@@ -1,6 +1,5 @@
-// shim-internal: the application's own web files, served from memory to the window. This is only a table lookup: which files exist,
-// what their types are and which short addresses stand for which file are all decided in CeeLing (App.serveSite) and handed over
-// with app_asset_add / app_asset_alias. Header-only so the real window (shim/win/assets.cpp) and the test double use the same code.
+// shim-internal: the application's own web files, served from memory to the window. Only a table lookup: which files exist, their types and the aliases are decided in
+// src/assets.clg. Header-only, so the real window (shim/win/assets.cpp) and the test double share the code.
 #pragma once
 #include <map>
 #include <memory>
@@ -24,7 +23,7 @@ class AssetStore {
         return out;
     }
 public:
-    // origin without a trailing slash ("http://app.local"); csp "" for none
+    // origin without a trailing slash ("http://app.localhost"); csp "" for none
     void configure(const std::string& origin, const std::string& csp) { std::lock_guard<std::mutex> l(m_); origin_ = origin; csp_ = csp; }
     bool add(const std::string& path, const std::string& mime, std::string bytes) {
         std::lock_guard<std::mutex> l(m_);

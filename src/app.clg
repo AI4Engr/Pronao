@@ -70,33 +70,33 @@ public:
     LaterBook laters;
     PumpBook pumps;
     FileGate gate;
-    SettingsStore settings;            // the application's own settings file (empty until open() is called on it)
-    bool instanceClaimed;              // claimInstance made this process the one instance: the first window listens for later launches
-    WindowMemory memory;               // where windows were last (rememberWindows)
-    bool stayWithoutWindows;           // keepRunning: the program goes on with no window open (only a tray icon) until quit() is called
+    SettingsStore settings;
+    bool instanceClaimed;              // claimInstance succeeded: the first window listens for later launches
+    WindowMemory memory;
+    bool stayWithoutWindows;
     bool quitCalled;
-    Notifier notifier;                 // notifications (enableNotifications)
-    NotificationAction notifyHandler;  // what runs when one is clicked (onNotificationClick)
-    PopupBook popups;                  // the pop-up menus a page may ask for (allowPopup)
-    std::vector<int> trays;            // the handles of the tray icons that are open
+    Notifier notifier;
+    NotificationAction notifyHandler;
+    PopupBook popups;
+    std::vector<int> trays;            // handles of the open tray icons
     std::vector<Menu> trayMenus;
-    TrayAction trayHandler;            // what runs when the tray icon is clicked (onTray)
-    MenuAction menuHandler;            // what runs when a menu item is clicked (onMenu)
-    bool menuToPage;                   // a click is also an event for the page of the window (menuEventsToPage)
-    LinkRules links;                   // what a page may ask the system to open (allowLinkSchemes, allowOpenExtensions, enableShellCommands)
-    ThemeState theme;                  // how the windows look: follow the system's light or dark scheme, or stay light or dark (setTheme)
-    DropRules drops;                   // files dragged onto a window (enableFileDrop)
-    WindowBook windows;                // the open windows
-    std::vector<int> opened;           // every window this application ever opened (close() closes them all, even those already closed by the user)
-    Watches watches;                   // the first window's (see `handle`); each Window has its own
-    WindowState window;                // the first window's
-    std::vector<string> navigation;    // addresses every window opened from now on may load after the application's own page (allowNavigation)
+    TrayAction trayHandler;
+    MenuAction menuHandler;
+    bool menuToPage;
+    LinkRules links;                   // what a page may ask the system to open
+    ThemeState theme;
+    DropRules drops;
+    WindowBook windows;
+    std::vector<int> opened;           // every window ever opened (close() closes them all)
+    Watches watches;                   // the primary window's; each Window has its own
+    WindowState window;                // the primary window's
+    std::vector<string> navigation;
     int maxRequestBytes;
     int maxQueuedCalls;
-    string siteStart;          // the address windows open on, when the program serves its own web files
-    string siteOrigin;         // the origin the program's own web files are served under ("" until openSite)
-    int maxWindows;            // how many windows a page may ask for (enableWindowOpenCommand); 0 = a page may not open windows
-    bool confirmDefault;       // confirmClose was called: every window asks before it closes with unsaved work
+    string siteStart;          // where windows open when the program serves its own web files
+    string siteOrigin;         // origin of those files ("" until openSite)
+    int maxWindows;            // enableWindowOpenCommand cap; 0 = a page may not open windows
+    bool confirmDefault;
     string confirmTitle;
     string confirmMessage;
 
@@ -143,8 +143,7 @@ public:
         dispatcher.addAsync(name, handler);
     }
 
-    // Pushes an event to the page of EVERY open window (see emitEvent; Window.emit addresses one). Safe to call from the main thread only
-    // through this method; worker jobs use emitEvent with a captured handle. true if some window took it.
+    // Pushes an event to the page of every open window. Main thread only; worker jobs use emitEvent with a captured handle. true if some window took it.
     bool emit(string name, string payloadJson) {
         bool any = false;
         int i = 0;
@@ -158,16 +157,13 @@ public:
         return any;
     }
 
-    // Adds a folder the page may reach through the file commands. Nothing is reachable until at least one is added;
-    // a relative path from the page means "inside the first folder added". false if the folder does not exist.
+    // Adds a folder the page may reach through the file commands; relative page paths resolve inside the first one added. false if it does not exist.
     bool allowFolder(string dir) {
         return gate.allow(dir) == 0;
     }
 
-    // Makes the application's own folder for `kind` ("data" or "cache", see appFolderPath in settings.clg) and adds it to the folders the page may
-    // reach through the file commands. false if the name or the kind is not acceptable, the environment does not say where the folder is, or it
-    // cannot be made. "config" is refused on purpose: it holds settings.json, which a page may change only through the settings commands (and only
-    // the keys the application declared).
+    // Makes the application's "data" or "cache" folder (appFolderPath in settings.clg) and allows it like allowFolder. "config" is refused: it holds
+    // settings.json, which a page may change only through the settings commands. false if the name or kind is not acceptable or the folder cannot be made.
     bool allowAppFolder(string appName, string kind) {
         if (kind == "config") {
             return false;
@@ -180,11 +176,8 @@ public:
         return gate.allow(path) == 0;
     }
 
-    // Registers settings.get {key} -> the value, settings.getAll {} -> {key: value, ...} and settings.set {key, value} -> null for the settings the
-    // application declared in `app.settings` (open it, declare the keys, load it: see SettingsStore in settings.clg). Nothing else is reachable: a key that is not declared is "unknown_setting", a value that does not
-    // fit its declaration is "invalid_argument", and a write that could not be saved is "io_error" (the page's promise is rejected; the value in
-    // memory is changed). Every window may call them unless its command list says otherwise. After a successful set the page of EVERY window gets
-    // the event "settings.changed" {key, value}.
+    // Registers settings.get / getAll / set for the keys declared in `app.settings` (see SettingsStore in settings.clg). Errors: "unknown_setting", "invalid_argument",
+    // "io_error" (a failed save still changes the value in memory). A successful set sends every window the event settings.changed {key, value}.
     void enableSettingsCommands() {
         SettingsStore settings = this.settings;
         command("settings.get", closure Command [settings] (Item args) {
@@ -218,12 +211,8 @@ public:
         });
     }
 
-    // ---- starting up on someone else's computer ----
-
-    // Is what the window needs installed? On Windows the window is the Microsoft WebView2 Runtime, which every current Windows has but an older Windows 10 may not.
-    // If it is missing, a message box (it needs no window) says so and offers the download page; the answer here is false and the program should end:
-    //     if (!app.checkRuntime("My app")) { return 1; }
-    // true if the runtime is there or nothing is needed on this system. Call it before the first window is opened; `appName` is plain text of at most 80 bytes.
+    // false if the Microsoft WebView2 Runtime (the Windows window) is missing: a message box offers the download page and the program should end:
+    // `if (!app.checkRuntime("My app")) { return 1; }`. Call before the first window; `appName` is plain text of at most 80 bytes.
     bool checkRuntime(string appName) {
         string version = "";
         if (app_runtime_version(version) != 1) {
@@ -240,8 +229,7 @@ public:
         return false;
     }
 
-    // A message box with an OK button and no window of ours, for what a program has to say when it cannot open its window (a program without a console has nowhere to
-    // print to). Title up to 80 and text up to 1000 bytes of plain text. false if it could not be shown.
+    // A message box with an OK button and no window, for a program that cannot open its window. Title up to 80 and text up to 1000 bytes of plain text. false if it could not be shown.
     bool showMessage(string title, string text) {
         if (title.length() == 0 || !plainText(title, 80) || text.length() == 0 || !plainText(text, 1000)) {
             return false;
@@ -261,17 +249,13 @@ public:
         return links.allowExtensions(extensions);
     }
 
-    // A click (not a script) on a link that leaves the application, or on one with target=_blank, opens the address in the default browser when its
-    // scheme is allowed (allowLinkSchemes). Off by default; the event window.navigationBlocked is sent either way.
+    // A click (not a script) on a link that leaves the application, or on one with target=_blank, opens it in the default browser if its scheme is allowed. Off by default.
     void openLinksInBrowser(bool on) {
         links.browserLinks = on;
     }
 
-    // Registers shell.openUrl {url}, shell.openFile {path} and shell.reveal {path}, all answering null:
-    //   openUrl   an address of an allowed scheme, in the default browser;
-    //   openFile  a regular file the file policy lets the page reach, with an extension from allowOpenExtensions, in its default program;
-    //   reveal    a file or folder the file policy lets the page reach, shown in the file manager (starts nothing).
-    // At most about three opens a second. A refused address or file is "invalid_argument" / "forbidden" / "not_found" ..., a limit is "too_many".
+    // Registers shell.openUrl {url}, shell.openFile {path} and shell.reveal {path}, all answering null: an address of an allowed scheme; a file the file policy lets
+    // the page reach, with an allowed extension; a file or folder shown in the file manager. About three opens a second at most ("too_many").
     void enableShellCommands() {
         LinkRules rules = links;
         FileGate files = gate;
@@ -314,22 +298,18 @@ public:
 
     // ---- the colour scheme (src/theme.clg) ----
 
-    // How every window looks, now and for windows opened later: "system" follows the user's choice of light or dark applications (the title bar, and what the page's
-    // `prefers-color-scheme` says), "light" and "dark" stay as they are. The page of every window gets the event theme.changed {mode, system}. From the first call on the
-    // title bar also follows the system when it changes and the event is sent then too. false for any other word (nothing changes). Windows only; elsewhere the call is
-    // harmless and changes nothing. The page part is the browser engine's per-program setting, so with several windows the page of all of them follows the last choice.
+    // How every window looks, now and for windows opened later: "system" follows the user's light or dark choice (title bar and the page's `prefers-color-scheme`),
+    // "light" and "dark" stay fixed. Every page gets the event theme.changed {mode, system}. false for any other word. Windows only. The page part is per program, so the last choice wins.
     bool setTheme(string mode) {
         return theme.apply(mode);
     }
 
-    // The system's scheme right now: "light", "dark", or "unknown" (a system with no such setting, or not Windows).
+    // The system's scheme right now: "light", "dark", or "unknown" (not Windows, or no such setting).
     string systemTheme() {
         return themeSchemeName(app_theme_system());
     }
 
-    // Registers theme.get {} -> {mode, system} ("system" | "light" | "dark", and "light" | "dark" | "unknown") and, if `pageMaySet`, theme.set {mode} -> null (a word that is
-    // not system, light or dark is "invalid_argument"). The event theme.changed {mode, system} reaches every window when the choice or the system's scheme changes (once
-    // setTheme was called).
+    // Registers theme.get {} -> {mode, system} and, if `pageMaySet`, theme.set {mode}; a word other than system, light or dark is "invalid_argument".
     void enableThemeCommands(bool pageMaySet) {
         ThemeState state = theme;
         command("theme.get", closure Command [state] (Item args) {
@@ -348,9 +328,8 @@ public:
 
     // ---- files dragged onto a window (src/drops.clg) ----
 
-    // From now on files dropped on a window from the file manager reach its page as the event drop.files {x, y, files: [{path, kind}], skipped} (and drop.enter / over / leave
-    // while the drag is over the page); every file in it has been granted to the file commands like a dialog pick (that file only). At most `maxFiles` (1 to 64) paths are taken from one drop. With `folders` a dropped folder is accepted too and granted as a folder.
-    // false if the number is out of range, or if some open window could not accept drops (not Windows).
+    // Files dropped on a window reach its page as the event drop.files {x, y, files: [{path, kind}], skipped} (and drop.enter / over / leave); each is granted to the file
+    // commands like a dialog pick. At most `maxFiles` (1 to 64) paths per drop; `folders` also accepts folders. false if maxFiles is out of range or a window cannot accept drops (not Windows).
     bool enableFileDrop(int maxFiles, bool folders) {
         if (maxFiles < 1 || maxFiles > 64) {
             return false;
@@ -370,7 +349,6 @@ public:
         return all;
     }
 
-    // Stops accepting files (every window, and windows opened later).
     void disableFileDrop() {
         drops.on = false;
         int i = 0;
@@ -381,7 +359,7 @@ public:
         }
     }
 
-    // A record "drop" "files" x y path... from the window `from`: the event it comes to (see DropRules.eventFor).
+    // A "drop" record from window `from` becomes the event drop.files (see DropRules.eventFor).
     void onDropRecord(int from, std::vector<string> f) {
         string made = drops.eventFor(f);
         if (made.length() > 0) {
@@ -389,14 +367,12 @@ public:
         }
     }
 
-    // Withdraws everything the user granted through dialogs (the folders added with allowFolder stay).
     void revokeGrants() {
         gate.revokeGrants();
     }
 
-    // Registers fs.read, fs.write, fs.list, fs.stat, fs.exists, fs.mkdir and fs.remove. Every path is checked by the
-    // FileGate against the folders added with allowFolder. fs.read refuses files larger than maxReadBytes and files that
-    // are not valid UTF-8 (text only; binary needs its own command).
+    // Registers fs.read, fs.readBytes, fs.write, fs.writeBytes, fs.list, fs.stat, fs.exists, fs.mkdir and fs.remove. Every path goes through the FileGate, which checks it
+    // against the folders added with allowFolder. fs.read refuses files over maxReadBytes and files that are not valid UTF-8 (use fs.readBytes).
     void enableFileCommands(int maxReadBytes) {
         FileGate files = gate;
         command("fs.read", closure Command [files, maxReadBytes] (Item args) {
@@ -420,7 +396,7 @@ public:
             fsCheck(files.write(path, text, code), "cannot write " + path);
             return createNull();
         });
-        // the same for bytes: {base64} instead of {text}; a binary file travels through JSON as base64 text
+        // like fs.write, but the data is {base64}, since a binary file travels through JSON as text
         command("fs.writeBytes", closure Command [files] (Item args) {
             string path = requiredString(args, "path");
             string encoded = requiredString(args, "base64");
@@ -497,9 +473,8 @@ public:
         });
     }
 
-    // Declares a program the page may run, by name, with an argument template (see the comment above ProgramSpec).
-    // `exe` is an absolute path to a .exe, or a bare name searched for on PATH only. Returns false, and registers
-    // nothing, if the name or the template is malformed, the program cannot be found, or the name is taken.
+    // Declares a program the page may run by name, with an argument template (see the comment above ProgramSpec in programs.clg). `exe` is an absolute path or a bare name
+    // searched on PATH. false, registering nothing, if the name or template is malformed (at most 64 elements), the timeout is outside 100 to 600000 ms, the output cap is over 64 MiB, the program is not found or the name is taken.
     bool allowProgram(string name, string exe, std::vector<string> elements, int timeoutMs, int maxOutputBytes) {
         if (!programNameOk(name) || programs.indexOf(name) >= 0 || elements.size() > 64) {
             return false;
@@ -567,7 +542,7 @@ public:
         return true;
     }
 
-    // Adds variables of this process that programs may see (see ProgramRegistry); everything else is withheld.
+    // Adds a variable of this process that programs may see; all others are withheld (see ProgramRegistry).
     bool passEnvironment(string name) {
         if (name.length() == 0 || !plainText(name, 200) || indexOfChar(name, '=') >= 0) {
             return false;
@@ -576,9 +551,8 @@ public:
         return true;
     }
 
-    // Registers proc.run: {program: "git.log", args: {count: 20, ...}} -> {exitCode, stdout, stderr, timedOut,
-    // truncated: {stdout, stderr}, lossy}. A non-zero exit code is a result, not an error. Asynchronous: the program
-    // runs on a worker, so the command loop keeps serving.
+    // Registers proc.run {program, args} -> {exitCode, stdout, stderr, timedOut, truncated: {stdout, stderr}, lossy}. A non-zero exit code is a result,
+    // not an error. The program runs on a worker, so the command loop keeps serving.
     void enableProcessCommands() {
         ProgramRegistry registry = programs;
         FileGate files = gate;
@@ -596,7 +570,7 @@ public:
                 throw "unknown_program: no program is allowed under that name";
             }
             ProgramSpec spec = registry.specs[index];
-            // every value in `args` must belong to a slot: nothing extra is passed along
+            // every key in `args` must name a slot: nothing extra is passed along
             Item child = given.child;
             while (child != nullptr) {
                 bool known = false;
@@ -661,10 +635,7 @@ public:
         });
     }
 
-    // ---- watches ----
-
-    // Registers fs.watch and fs.unwatch (see "watching folders" above). A page may watch only folders the file commands
-    // can reach, at most 32 at a time.
+    // Registers fs.watch and fs.unwatch. A page may watch only folders the file commands can reach, at most 32 at a time.
     void enableWatchCommands() {
         FileGate files = gate;
         WindowBook book = windows;
@@ -711,11 +682,7 @@ public:
         });
     }
 
-    // ---- dialogs ----
-
-    // Registers dialog.open, dialog.save, dialog.folder and dialog.message. They are asynchronous commands, so the
-    // command loop keeps serving while a dialog is open. A pick answers null on cancel, else {path} and grants that
-    // one file (or folder) to the file commands.
+    // Registers dialog.open, dialog.save, dialog.folder and dialog.message (asynchronous). A pick answers null on cancel, else {path}, and grants that one file or folder.
     void enableDialogCommands() {
         asyncCommand("dialog.open", closure AsyncCommand [] (Item args, string id, int handle) {
             DialogArgs given = readDialogArgs(args);
@@ -800,8 +767,7 @@ public:
 
     // ---- the window ----
 
-    // Registers window.setTitle {title}, window.setSize {width, height}, window.minimize / maximize / restore / focus,
-    // window.close, and window.setDirty {dirty}: the page says it has unsaved work, which matters to confirmClose.
+    // Registers window.setTitle, window.setSize, window.minimize / maximize / restore / focus / close, and window.setDirty {dirty} (unsaved work, used by confirmClose).
     void enableWindowCommands() {
         CallContext who = dispatcher.caller;
         WindowBook book = windows;
@@ -855,11 +821,9 @@ public:
         });
     }
 
-    // Registers the commands a page needs to lay out ITS OWN window: window.getBounds {} -> {x, y, width, height, maximized, minimized, fullscreen, alwaysOnTop, frameless,
-    // resizable}, window.setBounds {x, y, width, height} (fitted to the monitors, see Window.setBounds), window.startDrag {} and window.startResize {edge} (for a window with no title bar;
-    // they do something only while the left mouse button is held down). `fullscreen` and `alwaysOnTop` also register window.setFullscreen {on} and window.setAlwaysOnTop {on}: off unless asked
-    // for, because a page that can cover the screen and stay in front can imitate the system's own windows. Whether the window HAS a title bar or can be resized, and which windows
-    // are modal, is for the application (Window.setFrameless / setResizable / setModalFor), not the page.
+    // Registers window.getBounds, window.setBounds (fitted to the monitors), window.startDrag and window.startResize {edge} (for a window with no title bar; only while the left
+    // mouse button is down). `fullscreen` and `alwaysOnTop` also register window.setFullscreen / setAlwaysOnTop, off unless asked: a page that can cover the screen and stay in
+    // front can imitate system windows. Title bar, resizing and modality are the application's (Window.setFrameless / setResizable / setModalFor), not the page's.
     void enableWindowLayoutCommands(bool fullscreen, bool alwaysOnTop) {
         CallContext who = dispatcher.caller;
         WindowBook book = windows;
@@ -931,11 +895,9 @@ public:
         }
     }
 
-    // Registers window.open {start, title?, width?, height?}: a page may ask for another window of the program's own site. Off unless this is called
-    // (a page that can open windows can show the application's commands to more places); `max` windows at most (1 to 32, counting the open ones).
-    // `start` must be a path inside the site ("/settings.html"): plain text, no "..", no scheme. The window opens after the call has been answered
-    // (null), on the thread that serves the windows; it gets the opener's own command list if it has one, and if it cannot open the opener receives
-    // the event window.openFailed {start}. Needs openSite to have been used.
+    // Registers window.open {start, title?, width?, height?, modal?}: a page may ask for another window of the program's own site (needs openSite). Off unless called, since a page
+    // that can open windows can show the application's commands in more places. At most `max` windows (1 to 32, counting open ones). `start` must be a path inside the site: plain
+    // text, no "..", no scheme. The window opens after the call is answered, on the thread that serves the windows, with the opener's command list; on failure the opener gets window.openFailed {start}.
     bool enableWindowOpenCommand(int max) {
         if (max < 1 || max > 32) {
             return false;
@@ -987,7 +949,7 @@ public:
         return true;
     }
 
-    // The window.open record: opens the window if the cap still allows it, and tells the opener when it could not.
+    // The window.open record: opens the window if the cap allows it, else tells the opener.
     void openFromRecord(int opener, std::vector<string> f) {
         if (f.size() < 5) {
             return;
@@ -1016,8 +978,8 @@ public:
         }
     }
 
-    // When the user closes a window (the X, Alt+F4) while its page has said it has unsaved work, ask first with a native box whose text is
-    // the application's, not the page's. Applies to every window, open now or opened later. Without this a window just closes.
+    // When the user closes a window whose page reported unsaved work (window.setDirty), ask first with a native box whose text is the application's, not the page's.
+    // Applies to every window, open now or later. Without this a window just closes.
     bool confirmClose(string title, string message) {
         if (!plainText(title, 200) || !plainText(message, 4000)) {
             return false;
@@ -1062,7 +1024,6 @@ public:
                 Item e = createObject();
                 addStringToObject(e, "url", f[2]);
                 emitEvent(from, "window.navigationBlocked", printUnformatted(e));
-                // a click (not a script) on a link that leaves the application: the browser opens it if the application said so
                 if (links.browserLinks && f.size() >= 4 && f[3] == "1") {
                     links.openAddress(f[2]);
                 }
@@ -1107,8 +1068,8 @@ public:
         });
     }
 
-    // The page may not send a call larger than maxRequestBytes or while maxQueuedCalls are waiting: such a call is answered at
-    // once with {code: "too_large"} / {code: "busy"} and never reaches a command (defaults 4 MiB and 256). Applies to the next open.
+    // A call larger than maxRequestBytes (default 4 MiB) or arriving while maxQueuedCalls (default 256) are waiting is answered {code: "too_large"} /
+    // {code: "busy"} and never reaches a command. Applies to windows opened afterwards.
     bool setRequestLimits(int maxRequest, int maxQueued) {
         if (maxRequest < 1024 || maxRequest > 268435456 || maxQueued < 1 || maxQueued > 100000) {
             return false;
@@ -1118,9 +1079,8 @@ public:
         return true;
     }
 
-    // After the application's own page, the window may load only addresses that start with `prefix` (for example a dev server,
-    // "http://localhost:5173/"); everything else, every new window and every frame pointing elsewhere is refused and reported as
-    // the event window.navigationBlocked {url}. Call before open.
+    // After the application's own page a window may load only addresses starting with `prefix` (for example a dev server, "http://localhost:5173/"); anything else,
+    // including new windows and frames, is refused and reported as the event window.navigationBlocked {url}. Call before open.
     bool allowNavigation(string prefix) {
         if (prefix.length() < 5 || !plainText(prefix, 1000)) {
             return false;
@@ -1140,10 +1100,8 @@ public:
         navigation.push_back(prefix);
     }
 
-    // From now on the page may call only the commands named here (every name must be one that is registered by now, so a typo cannot
-    // silently leave a command open or closed). Others are answered {code: "forbidden"}, registered or not. Cancelling a call
-    // ($cancel) is always allowed. Calling it again replaces the list. This is the list of every window that has no list of its own
-    // (Window.allowOnlyCommands gives one window its own). false (and nothing changes) if a name is not registered.
+    // From now on the page may call only the named commands; each must already be registered, so a typo cannot leave one open. Others are answered {code: "forbidden"};
+    // $cancel is always allowed. A second call replaces the list. It applies to every window without its own list (Window.allowOnlyCommands). false, changing nothing, if a name is not registered.
     bool allowOnlyCommands(std::vector<string> names) {
         int i = 0;
         while (i < names.size()) {
@@ -1156,9 +1114,8 @@ public:
         return true;
     }
 
-    // How long a page waits for the async command `name` ("" = every async command that has no setting of its own): after ms it is answered
-    // {code: "timed_out"}, the call counts as cancelled (callCancelled; a program it started is killed) and a late answer is dropped.
-    // 0 means as long as it takes, which is the default. Do not set it for the dialog commands, which wait for a person.
+    // How long a page waits for the async command `name` ("" = every one without its own setting), 50 ms to 24 hours: then the call is answered
+    // {code: "timed_out"}, counts as cancelled (callCancelled) and a late answer is dropped. 0 (the default) waits as long as it takes; do not set it for the dialog commands.
     bool setAsyncTimeout(string name, int ms) {
         if (ms < 0 || (ms > 0 && ms < 50) || ms > 86400000) {
             return false;
@@ -1171,8 +1128,7 @@ public:
         return true;
     }
 
-    // After the program ends (main returns) the jobs still running get this long, then the process ends without them (a message on stderr
-    // says how many). Default 5000. 0 waits for every job however long it takes.
+    // When main returns, jobs still running get this many ms (default 5000, at most 1 hour; 0 = wait for every job), then the process ends without them.
     bool setShutdownGrace(int ms) {
         if (ms < 0 || ms > 3600000) {
             return false;
@@ -1181,14 +1137,13 @@ public:
         return true;
     }
 
-    // At most n async jobs run at the same time (the rest wait in a queue, oldest first); 0 = the default,
-    // max(4, number of cores). A job is never dropped: on exit every queued job still runs.
+    // At most n async jobs run at once, the rest wait in a queue; 0 = the default, max(4, cores). Every queued job still runs on exit.
     void setWorkerLimit(int n) {
         cling::setWorkerLimit(n);
     }
 
-    // Opens a window on `start` (an address, or "" for `html`). Returns its handle, 0 if it could not be created (the shim has printed why on
-    // stderr). The first window opened is the primary one: `handle`, `window` and `watches` name it.
+    // Opens a window on `start` (an address, or "" for `html`). Returns its handle, 0 if it could not be created (the shim prints why on stderr).
+    // The first window opened is the primary one: `handle`, `window` and `watches` name it.
     int openAt(string title, int width, int height, string html, string start, string bridgeJs, bool debug) {
         int d = 0;
         if (debug) {
@@ -1230,19 +1185,16 @@ public:
 
     // ---- menus (src/menu.clg) ----
 
-    // What runs when an item of a menu bar is clicked or its shortcut is pressed: `clicked(id)`, with an id the application gave. One handler for the
-    // application; it runs on the main thread. A throw in it is dropped (nobody is waiting for an answer).
+    // Runs `clicked(id)` when a menu bar item is clicked or its shortcut pressed: one handler for the application, on the main thread. A throw in it is dropped.
     void onMenu(MenuAction handler) {
         menuHandler = handler;
     }
 
-    // From now on a click is also sent to the page of the window it came from, as the event menu.click {id}. Off by default: a page that is not told
-    // has nothing to react to.
+    // Also sends each menu click to the page of its window as the event menu.click {id}. Off by default.
     void menuEventsToPage(bool on) {
         menuToPage = on;
     }
 
-    // The menu bar of the first window.
     bool setMenu(Menu bar) {
         Window w = windows.get(handle);
         if (w == nullptr) {
@@ -1268,7 +1220,7 @@ public:
             Menu tm = trayMenus[ti];
             int mi = tm.indexOfId(id);
             if (mi < 0 || (tm.flags[mi] / 2) % 2 == 1) {
-                return;                   // not an item of the tray menu, or a greyed one
+                return;                   // not an item of the tray menu, or greyed out
             }
             try {
                 MenuAction trayItem = menuHandler;
@@ -1280,13 +1232,12 @@ public:
         }
         Window w = windows.get(from);
         if (w == nullptr || !(w.menuItemEnabled(id) || popups.hasItem(id))) {
-            return;                       // an id this window's menu (or a pop-up menu) does not have, or an item that is greyed out: nothing happens
+            return;                       // not in this window's menu or a pop-up menu, or greyed out
         }
         try {
             MenuAction handler = menuHandler;
             handler.clicked(id);
         } catch (string message) {
-            // nobody is waiting for an answer
         }
         if (menuToPage) {
             Item e = createObject();
@@ -1295,10 +1246,7 @@ public:
         }
     }
 
-    // ---- pop-up menus a page may ask for ----
-
-    // Registers a menu under a name (1 to 64 letters, digits, `.`, `_`, `-`; at most 16 menus): the page may ask for it by that name and for nothing else.
-    // The menu may have items at its top level. false if the name is taken or not a name, the menu is not complete, or there are 16 already.
+    // Registers a menu under a name (1 to 64 letters, digits, `.`, `_`, `-`; at most 16 menus) that a page may ask for, and nothing else. false if the name is taken or invalid, the menu is incomplete, or 16 exist.
     bool allowPopup(string name, Menu popup) {
         if (!menuId(name) || popups.indexOf(name) >= 0 || !popup.complete() || popups.names.size() >= 16) {
             return false;
@@ -1308,8 +1256,8 @@ public:
         return true;
     }
 
-    // Registers menu.popup {name}: shows the menu with that name at the mouse and answers the id of the item chosen, or null if it was dismissed. A name that was not
-    // registered with allowPopup is "unknown_menu". The chosen item also runs the handler of onMenu. Off until this is called.
+    // Registers menu.popup {name}: shows that menu at the mouse and answers the chosen item's id, or null if dismissed (the onMenu handler runs too).
+    // A name not registered with allowPopup is "unknown_menu". Off until this is called.
     void enablePopupCommand() {
         PopupBook book = popups;
         asyncCommand("menu.popup", closure AsyncCommand [book] (Item args, string id, int handle) {
@@ -1339,8 +1287,7 @@ public:
 
     // ---- notifications (Windows) ----
 
-    // Makes notifications possible in a program that has no tray icon: a notification-only icon (tooltip: `appName`, at most 127 bytes of text) that is in the
-    // notification area only while a notification is up. A program that has a tray icon (openTray) needs nothing: its notifications come from that icon. false if it could not be made.
+    // For a program without a tray icon (openTray makes this unnecessary): a notification-only icon (tooltip `appName`, at most 127 bytes) that exists only while a notification is up. false if it could not be made.
     bool enableNotifications(string appName) {
         if (notifier.handle != 0) {
             return true;
@@ -1358,15 +1305,14 @@ public:
         return true;
     }
 
-    // Shows a notification (a toast on current Windows): a title of 1 to 63 bytes, text of up to 255, kind "info", "warning" or "error", and an id ("" or a name) that
-    // onNotificationClick gets when the user clicks it. "" if the system took it, else the reason as "code: message". At most one every 2 seconds (setNotificationGap). Whether it is SHOWN is up to the
-    // system: Focus Assist / Do Not Disturb, the user's settings for notifications and a full-screen program in front can all hide it.
+    // Shows a notification: title 1 to 63 bytes, text up to 255, kind "info", "warning" or "error", and an id ("" or a name) that onNotificationClick gets on a click. Returns "" if the system took it,
+    // else "code: message". At most one per setNotificationGap. The system may still hide it (Focus Assist / Do Not Disturb, a full-screen program).
     string notify(string title, string text, string kind, string id) {
         notifier.asker = 0;
         return notifier.show(title, text, kind, id);
     }
 
-    // The least time between two notifications, from 200 ms to 10 minutes (default 2 seconds). The page cannot change it. false if it is out of that range.
+    // The least time between notifications, 200 ms to 10 minutes (default 2 seconds); the page cannot change it. false if out of range.
     bool setNotificationGap(int ms) {
         if (ms < 200 || ms > 600000) {
             return false;
@@ -1375,13 +1321,12 @@ public:
         return true;
     }
 
-    // What runs when the user clicks a notification: `clicked(id)`.
     void onNotificationClick(NotificationAction handler) {
         notifyHandler = handler;
     }
 
-    // Registers notification.show {title, text, kind?, id?} for the page: the same limits and the same gap. A click on that notification reaches the page that
-    // asked as the event notification.click {id}, and the handler of onNotificationClick too. Off until this is called; notifications must be enabled (enableNotifications or a tray).
+    // Registers notification.show {title, text, kind?, id?} for the page, with the same limits and gap. A click reaches that page as the event notification.click {id}
+    // and also runs onNotificationClick. Needs enableNotifications or a tray icon.
     void enableNotificationCommand() {
         Notifier shared = notifier;
         CallContext caller = dispatcher.caller;
@@ -1404,7 +1349,6 @@ public:
             NotificationAction handler = notifyHandler;
             handler.clicked(id);
         } catch (string message) {
-            // nobody is waiting for an answer
         }
         if (notifier.asker != 0) {
             Item e = createObject();
@@ -1415,10 +1359,9 @@ public:
 
     // ---- the tray icon (Windows) ----
 
-    // Puts an icon in the notification area: the program's own icon (ICON= in build.sh, else the system's), a tooltip of at most 127 bytes of plain text, and a
-    // right-click menu `popup` (src/menu.clg; its items may be at the top level). Returns the tray's handle, 0 if it could not be made (not Windows, no
-    // shell, a menu that is not complete, a bad tooltip). Choosing an item runs the handler of onMenu with the item's id; clicking the icon runs onTray.
-    // Close it with closeTray; App.close() closes all of them. Not closed, the icon stays in the notification area until the mouse passes over it.
+    // Puts an icon in the notification area: the program's icon (ICON= in scripts/build.sh), a tooltip of at most 127 bytes of plain text and a right-click menu
+    // `popup` (its items may be at the top level). Returns the tray's handle, 0 if it could not be made (not Windows, no shell, incomplete menu, bad tooltip, or 4 icons
+    // already). Choosing an item runs the onMenu handler; clicking the icon runs onTray. closeTray or close() removes it.
     int openTray(string tooltip, Menu popup) {
         if (!plainText(tooltip, 127) || tooltip.length() == 0 || !popup.complete() || trays.size() >= 4) {
             return 0;
@@ -1430,12 +1373,12 @@ public:
         trays.push_back(th);
         trayMenus.push_back(popup);
         if (notifier.handle == 0) {
-            notifier.handle = th;            // a program with a tray icon says its notifications from it
+            notifier.handle = th;            // notifications come from the tray icon
         }
         return th;
     }
 
-    // What runs when the tray icon is clicked: `happened("click")` for a left click, `happened("double")` for a double click. The right click shows the menu.
+    // Runs `happened("click")` on a left click and `happened("double")` on a double click; the right click shows the menu.
     void onTray(TrayAction handler) {
         trayHandler = handler;
     }
@@ -1483,7 +1426,6 @@ public:
         return app_tray_item(th, id, -1, on) == 0;
     }
 
-    // Removes the icon.
     bool closeTray(int th) {
         int ti = trayIndex(th);
         if (ti < 0) {
@@ -1511,7 +1453,7 @@ public:
         }
     }
 
-    // The window with this handle comes back (see Window.hide, hideOnClose): shown, restored if minimized, in front.
+    // Shows the window with this handle again, restored and in front (see Window.hide, hideOnClose).
     bool showWindow(int h) {
         Window w = windows.get(h);
         if (w == nullptr) {
@@ -1522,11 +1464,9 @@ public:
 
     // ---- remembering where windows were (src/placement.clg) ----
 
-    // From now on windows open where they were the last time (the restored rectangle and whether they were maximized, kept per window in windows.json in the
-    // application's config folder), fitted to the monitors that exist now, and the place is saved when the user moves, resizes, maximizes or restores one.
-    // The first window is "main", another window is named by the page it starts on; at most 16 names. Call before the first window is opened. false if the
-    // application name is not a plain name or the config folder cannot be used (windows then open as they always did). The window is created where the
-    // program asked and moved at once, so it can be seen to jump; a program that cares passes its own default size.
+    // Windows open where they were last time (rectangle and maximized state, kept per window in windows.json in the application's config folder), fitted to the current monitors;
+    // the place is saved when the user moves, resizes, maximizes or restores one. The first window is "main", another is named by its start page; at most 16 names. Call before the first window.
+    // false if `appName` is not a plain name or the config folder cannot be used. The window is created where the program asked and then moved, so it can visibly jump.
     bool rememberWindows(string appName) {
         return memory.open(appName) == "";
     }
@@ -1552,14 +1492,12 @@ public:
         app_window_placement(h, r[0], r[1], r[2], r[3], mem.maxed[i]);
     }
 
-    // Opens a window on the page embedded at build time or on `siteStart`. false if it could not be created.
     bool open(string title, int width, int height, string html, string bridgeJs, bool debug) {
         return openAt(title, width, height, html, siteStart, bridgeJs, debug) != 0;
     }
 
-    // Opens another window and returns its handle (0 if it could not be created); `windows.get(handle)` is the Window object. `start` is ""
-    // for the embedded page, a path inside the program's own site ("/settings.html", after openSite), or the address of a development server
-    // (see openDevServer). It gets the application's command list and the addresses allowNavigation added.
+    // Opens another window and returns its handle (0 if it could not be created); windows.get(handle) is its Window. `start` is "" for the embedded page, a path inside
+    // the program's own site (after openSite) or a development server address (see openDevServer). It gets the application's command list and the allowNavigation addresses.
     int openWindow(string title, int width, int height, bool debug, string start) {
         string address = "";
         string html = "";
@@ -1584,8 +1522,7 @@ public:
         return openAt(title, width, height, html, address, app_bridge_js() + app_extra_js(), debug);
     }
 
-    // The development server address the program was asked to load (environment variable APP_DEV_URL), or "" if there is none, it is not a
-    // loopback address (see devServerOrigin) or this is a release build.
+    // The development server address from the environment variable APP_DEV_URL, or "" if it is unset, not a loopback address (see devServerOrigin) or a release build.
     string devServerFromEnvironment() {
         if (app_release_build() == 1) {
             return "";
@@ -1601,10 +1538,8 @@ public:
         return url;
     }
 
-    // Opens the window on a development server (Vite, webpack, `python -m http.server`...) running on this machine, with the bridge
-    // injected and the developer tools on. The page reloads itself the way the dev server arranges (hot module replacement); this
-    // program's commands stay the compiled ones. Refused (false) for an address that is not http on localhost / 127.0.0.1 / [::1], and in
-    // a release build, where nothing may load a server. The window may navigate within that origin and nowhere else.
+    // Opens a window on a development server (Vite, webpack, ...) on this machine, with the bridge injected and the developer tools on. The program's commands
+    // stay the compiled ones. false for an address that is not http on localhost / 127.0.0.1 / [::1], and in a release build. The window may navigate within that origin only.
     bool openDevServer(string title, int width, int height, string url) {
         if (app_release_build() == 1) {
             return false;
@@ -1618,15 +1553,13 @@ public:
         return open(title, width, height, "", app_bridge_js() + app_extra_js(), true);
     }
 
-    // Opens the window on the page embedded at build time, with the standard bridge script.
     bool openPage(string title, int width, int height, bool debug) {
         return open(title, width, height, app_page_html(), app_bridge_js() + app_extra_js(), debug);
     }
 
-    // Opens the window on the program's own web files (build with ASSETS=<folder>), served from memory under `origin`, which must be
-    // http:// or https:// with no path ("http://app.localhost"). `csp`, if not empty, is sent with every HTML file as its
-    // Content-Security-Policy. The window may navigate to that origin and nowhere else (allowNavigation adds more). false if there
-    // are no files, no page among them, or the window could not be created.
+    // Opens a window on the program's own web files (ASSETS=<folder> at build time), served from memory under `origin`: http:// or https:// with no path
+    // ("http://app.localhost"). `csp`, if not empty, is sent as the Content-Security-Policy of every HTML file. The window may navigate to that origin only
+    // (allowNavigation adds more). false if there are no files, no page among them, or the window could not be created.
     bool openSite(string title, int width, int height, bool debug, string origin, string csp) {
         if (siteOrigin.length() > 0 && siteOrigin != origin) {
             return false;           // one site per program: every window shares the origin
@@ -1643,8 +1576,7 @@ public:
         return open(title, width, height, "", app_bridge_js() + app_extra_js(), debug);
     }
 
-    // Registers the pump that wakeMain(handle, name) runs on the main thread (see Pump). The same name replaces the earlier pump.
-    // false for a name that is empty, over 64 bytes or not plain text.
+    // Registers the pump that wakeMain(handle, name) runs on the main thread (see Pump); the same name replaces an earlier one. false for an empty name, over 64 bytes or not plain text.
     bool onPump(string name, Pump p) {
         if (name.length() == 0 || !plainText(name, 64)) {
             return false;
@@ -1659,16 +1591,14 @@ public:
         return true;
     }
 
-    // Expects a record from a worker for the page call `id` of window `handle` (the one the command was called from; call ids repeat across
-    // windows): when finishLater arrives, `l.done` runs on the main thread.
+    // Expects a worker's record for the page call `id` of window `handle` (call ids repeat across windows); when finishLater arrives, `l.done` runs on the main thread.
     void later(int handle, string id, Later l) {
         laters.handles.push_back(handle);
         laters.ids.push_back(id);
         laters.items.push_back(l);
     }
 
-    // The run of a program the application chooses itself: `exe` as resolveProgram found it, `args` vetted by the caller, `cwd` a
-    // folder the file policy has resolved. The environment is the one programs get (see passEnvironment).
+    // A run of a program the application chooses itself: `args` vetted by the caller, `cwd` resolved by the file policy, the environment as in passEnvironment.
     ToolRun toolRun(string exe, std::vector<string> args, string cwd, int timeoutMs, int maxBytes) {
         ToolRun run = new ToolRun(exe, cwd, timeoutMs, maxBytes);
         run.args = args;
@@ -1676,10 +1606,8 @@ public:
         return run;
     }
 
-    // A record the native layer queued itself (empty id) for window `from`: "watch", "pick", "window", "later" or "pump".
-    // A later launch of this program handed over its working folder and arguments (record "instance", folder, arguments...). They are text from
-    // another process and reach the page as the event app.secondInstance {cwd, args}; at most 64 arguments of plain text up to 4096 bytes each. The window
-    // comes to the front. Nothing in them is allowed or opened by this: if an argument names a file, whether the page may reach it is the application's call.
+    // A later launch handed over its working folder and arguments (record "instance", folder, arguments...). The text comes from another process: it reaches the page as the event
+    // app.secondInstance {cwd, args} (at most 64 plain-text arguments of up to 4096 bytes) and the window comes to the front. Nothing in them is allowed or opened by this.
     void onSecondInstance(int from, std::vector<string> f) {
         if (f.size() < 2) {
             return;
@@ -1705,12 +1633,9 @@ public:
         app_window_state(from, 3);
     }
 
-    // ---- one running copy (Windows; elsewhere nothing is enforced) ----
-
-    // Makes this process THE instance named `appName` (a plain name), or finds that another one is running and hands it this process's folder and
-    // arguments. 0 this is the instance (the first window listens for later launches); 1 another one runs and was told: exit now; 2 another one holds
-    // the name but could not be told (it may be starting or stuck): exit now, or tell the user; 3 not supported on this system, nothing is enforced;
-    // 4 the name is not a plain name. Call before the first window is opened.
+    // Makes this process THE instance named `appName` (a plain name), or hands the running one this process's folder and arguments. Returns 0 this is the
+    // instance (its first window listens for later launches); 1 another one runs and was told: exit now; 2 another one holds the name but could not be told: exit, or
+    // tell the user; 3 not supported on this system, nothing enforced; 4 not a plain name. Call before the first window.
     int claimInstance(string appName) {
         if (!plainName(appName)) {
             return 4;
@@ -1730,20 +1655,20 @@ public:
         return 3;
     }
 
-    // true if this process may go on: it is the instance, or nothing can be enforced here. false: another copy is running (and, if it could be reached,
-    // was told); the program should end. `if (!app.singleInstance("my-app")) { return 0; }`
+    // true if this process may go on (it is the instance, or nothing can be enforced here); false if another copy runs and the program should end.
+    // `if (!app.singleInstance("my-app")) { return 0; }`
     bool singleInstance(string appName) {
         int code = claimInstance(appName);
         return code == 0 || code == 3;
     }
 
-    // The arguments this process was started with, without the program name.
     std::vector<string> arguments() {
         string raw = "";
         app_command_line(raw);
         return splitFields(raw);
     }
 
+    // Dispatches a record the native layer queued itself (empty id): watch, openwin, pick, window, instance, drop, menu, notify, tray, pump or later.
     void onInternalRecord(int from, string request) {
         std::vector<string> f = splitFields(request);
         if (f.size() == 0) {
@@ -1774,7 +1699,6 @@ public:
                     TrayAction clicked = trayHandler;
                     clicked.happened(f[1]);
                 } catch (string message) {
-                    // nobody is waiting for an answer
                 }
             }
         } else if (f[0] == "pump" && f.size() >= 2) {
@@ -1784,7 +1708,7 @@ public:
                 try {
                     p.pump(gate);
                 } catch (string message) {
-                    // nothing to answer: a pump has no page call (see Pump)
+                    // a pump has no page call to answer (see Pump)
                 }
             }
         } else if (f[0] == "later" && f.size() >= 4) {
@@ -1802,8 +1726,7 @@ public:
         }
     }
 
-    // A window's queue reported that it is closed: the work it started is told to stop (callCancelled; programs it started are killed), its
-    // book entries go, and the next window becomes the primary one if it was the primary.
+    // A window's queue closed: its work is told to stop (callCancelled), its book entries go, and the next window becomes the primary one if this was.
     void windowGone(int gone) {
         app_cancel_all(gone);
         dispatcher.forgetWindow(gone);
@@ -1820,10 +1743,8 @@ public:
         }
     }
 
-    // Serves the next thing in any window's queue: a call from a page (dispatched and answered) or a record from the native layer (a file
-    // watcher's change, a dialog's choice, a window's close button). Waits up to timeoutMs (-1 = for as long as it takes), and delivers merged
-    // file-watch events when they have been quiet for a moment.
-    // Returns 1 if something was served, 2 if the wait timed out, 0 when no window is open any more (the last one has closed).
+    // Serves the next item in any window's queue: a page call (dispatched and answered) or a record from the native layer, and delivers merged file-watch events once quiet.
+    // Waits up to timeoutMs (-1 = as long as it takes). Returns 1 if something was served, 2 if the wait timed out, 0 when no window is open any more.
     int serveOne(int timeoutMs) {
         double started = app_now_ms();
         if (quitCalled && windows.count() == 0) {
@@ -1906,13 +1827,12 @@ public:
         return served;
     }
 
-    // By default the program ends when its last window has closed. With keepRunning(true) it goes on with no window open (a program that lives in the tray) until
-    // quit() is called; the loop (run / serveOne) then returns 0.
+    // By default the program ends when its last window closes. With keepRunning(true) it goes on with no window (a program that lives in the tray) until quit() is called.
     void keepRunning(bool on) {
         stayWithoutWindows = on;
     }
 
-    // Closes every window the way the close button does when nothing asks first, and ends the loop even for a program that keeps running without windows.
+    // Closes every window as the close button does when nothing asks first, and ends the loop even when keepRunning is set.
     void quit() {
         quitCalled = true;
         int i = 0;
@@ -1923,8 +1843,7 @@ public:
         }
     }
 
-    // Ends the application in order: every call still running is told to stop (callCancelled, programs killed), the watchers are stopped,
-    // the window closes. Jobs that are still running afterwards get setShutdownGrace milliseconds when main returns, then the process ends.
+    // Ends the application in order: running calls are told to stop (callCancelled), tray icons and windows close. Jobs still running get setShutdownGrace ms when main returns.
     void close() {
         while (trays.size() > 0) {
             closeTray(trays[0]);

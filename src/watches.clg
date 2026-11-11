@@ -1,4 +1,5 @@
-// pronao -- Watching folders for a window: the watches a page started, merging of bursts of changes, and the events that go to the page.
+// Folder watches for a window: bursts of native change records are merged, the permission is re-checked before every delivery, and events go to the page.
+// See docs/manual/03-files-and-data.md.
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"
@@ -11,15 +12,9 @@
 ext_fn int app_watch_stop(int handle, int watchId);
 ext_fn double app_now_ms();
 
-// ---- watching folders -----------------------------------------------------------------------------
-// fs.watch {path, recursive?} starts a watch and answers {id}; changes then arrive on the page as "fs.change" events
-//     {watch: id, kind: "created" | "modified" | "removed", path}              path is relative to the watched folder
-//     {watch: id, kind: "renamed", path: newName, from: oldName}
-//     {watch: id, kind: "overflow"}                                              events were lost: read the folder again
-//     {watch: id, kind: "stopped", reason: "closed" | "access_revoked" | "folder_gone" | "failed"}   no more will come
-// The native watcher thread queues one record per change (id empty: a page's own call always has one); this side merges bursts
-// (a program saving a file touches it many times in a few milliseconds), re-checks the permission before every delivery, and
-// ends a watch whose folder can no longer be reached. At most 32 watches at a time.
+// The native watcher thread queues one record per change (marked by an empty request id, which a page cannot forge). This side merges bursts (a program saving a
+// file touches it many times in a few milliseconds), re-checks the permission before every delivery, and ends a watch whose folder can no longer be reached.
+// The page gets "fs.change" events {watch, kind, path, from?}; kind "overflow" means events were lost, "stopped" carries a reason instead of a path.
 
 class WatchEvent {
 public:
@@ -56,7 +51,7 @@ public:
         overflowed = false;
     }
 
-    // The same change again straight away, or one more "modified" for a file that already has one, adds nothing.
+    // A repeat of the last pending change, or another "modified" for a file that has one pending, adds nothing. At 500 pending events the watch overflows.
     void merge(string kind, string path, string from, double now) {
         if (pending.size() == 0) {
             firstAt = now;
@@ -119,7 +114,7 @@ public:
         return -1;
     }
 
-    // (order does not matter: the last one takes the place of the dropped one)
+    // Order does not matter: the last state takes the dropped one's place.
     void drop(int index) {
         int last = states.size() - 1;
         if (index != last) {
@@ -140,8 +135,8 @@ public:
         return false;
     }
 
-    // Delivers what a watch has merged so far, after checking that the folder can still be reached. If it cannot (the
-    // permission was withdrawn, or the folder is gone) the watch ends: the thread is stopped and "stopped" is the last event.
+    // Delivers what a watch has merged, after checking the folder can still be reached. If not (permission withdrawn or folder gone) the watch ends:
+    // the thread is stopped and "stopped" is the last event.
     void flush(FileGate gate, int handle, int index) {
         WatchState s = states[index];
         FsResult now = gate.resolve(s.root, 2);
@@ -167,7 +162,7 @@ public:
         s.clearPending();
     }
 
-    // Delivers every watch that has been quiet for 40 ms, or has been collecting for 400 ms.
+    // Delivers every watch that has been quiet for 40 ms or has been collecting for 400 ms.
     void flushQuiet(FileGate gate, int handle) {
         double now = app_now_ms();
         int i = states.size() - 1;

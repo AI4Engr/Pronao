@@ -1,24 +1,17 @@
-// pronao -- where an application keeps its own data, and the settings it saves there.
+// Where an application keeps its data, and the settings it saves there. Both are policy, so both live here in checked CeeLing; the native layer only makes a
+// folder and renames a file. See docs/manual/03-files-and-data.md.
 //
-// Two things, both policy and so both here in checked CeeLing (the native layer only makes a folder and renames a file):
+// 1. Standard folders. `appFolderPath(kind, appName)` names the per-user folder for kind "config", "data" or "cache" (Windows: %APPDATA%, %LOCALAPPDATA%,
+//    %LOCALAPPDATA%\<app>\cache; elsewhere the XDG folders under $HOME; macOS is not told apart from Linux). There is no "temp" kind: a predictable name in the
+//    shared temporary folder can be taken over by another user. The application name is a plainName, so it can never be a path. `makeAppFolder` creates the folder.
 //
-//  1. STANDARD FOLDERS. `appFolderPath(kind, appName)` names the per-user folder an application should use: kind "config", "data" or "cache"
-//     (Windows: %APPDATA%, %LOCALAPPDATA%, %LOCALAPPDATA%\<app>\cache; elsewhere the XDG folders under $HOME). There is no "temp" kind on purpose: a
-//     predictable name in the shared temporary folder can be taken over by another user of the machine. The name of the
-//     application is a plain name (letters, digits, `.`, `_`, `-`; at most 64 bytes), so it can never be a path. The folder is made by
-//     `makeAppFolder`. macOS is not told apart from Linux (it would need its own table).
+// 2. Settings. A SettingsStore keeps `settings.json` in the "config" folder. The application declares every key with a type and the accepted values (declareString,
+//    declareInt, declareBool, declareDouble); a value of the wrong type or outside its range is refused, from the page, from the program and when the file is
+//    read (the default is used and `problem` says so). The file is written whole to settings.json.tmp and swapped in with FileGate.replace, so a crash leaves the
+//    old file or the new one. A key in the file that the program does not declare is kept as it is and is neither readable nor writable through the store.
 //
-//  2. SETTINGS. A SettingsStore keeps a small JSON object, `settings.json`, in the "config" folder. The APPLICATION declares every key it has, with a
-//     type and the values it will accept (`declareString(key, default, maxBytes)`, `declareInt(key, default, low, high)`, `declareBool`,
-//     `declareDouble`); a value that is not of the declared type, or outside its range, is refused (from the page, from the program, and when the
-//     file is read, where the default is used instead and `problem` says so). The file is written whole into `settings.json.tmp` and swapped in
-//     with FileGate.replace, so a crash leaves the old file or the new one. A key in the file that the program does not declare is kept as it is
-//     (a newer or older version of the program may know it) and is neither readable nor writable through the store.
-//
-// The store has its OWN FileGate that allows nothing but its folder. The page's file commands use the application's gate, so a page cannot read or
-// replace `settings.json` through fs.read / fs.write: it can only go through the commands the application registers (App.enableSettingsCommands),
-// which know the declared keys. What the page cannot do is also what the store does not do: it does not encrypt, and it does not protect the file
-// from other programs of the same user.
+// The store has its own FileGate that allows only its folder, so a page cannot reach settings.json through fs.read / fs.write; it can only use the commands
+// the application registers (App.enableSettingsCommands). The store does not encrypt and does not protect the file from other programs of the same user.
 #include "cjson_item.clh"
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
@@ -34,7 +27,7 @@ bool nameChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
 }
 
-// 1 to 64 bytes of letters, digits, `.`, `_` and `-`, starting with a letter or a digit: the name of an application or of a setting
+// 1 to 64 bytes of letters, digits, `.`, `_` and `-`, starting with a letter or a digit: the name of an application or of a setting.
 bool plainName(string name) {
     if (name.length() < 1 || name.length() > 64) {
         return false;
@@ -52,7 +45,7 @@ bool plainName(string name) {
     return true;
 }
 
-// the value of an environment variable if it is set to plain text, else ""
+// The value of an environment variable if it is set to plain text, else "".
 string envText(string name) {
     string value = "";
     if (app_os_env(name, value) != 1) {
@@ -86,8 +79,7 @@ string joinHere(string dir, string leaf) {
     return dir + "/" + leaf;
 }
 
-// The per-user folder for a kind of data, as the environment gives it ("" if the environment does not say, or says something that is not an absolute
-// path). Not the application's own folder yet: see appFolderPath.
+// The per-user folder for a kind of data, as the environment gives it; "" if it does not say or the value is not an absolute path. See appFolderPath.
 string baseFolder(string kind) {
     bool windows = app_os_windows() == 1;
     string base = "";
@@ -145,9 +137,8 @@ string appFolderPath(string kind, string appName) {
     return folder;
 }
 
-// Makes the application's folder for `kind`. Only what the environment's folder needs and nothing above it: the application's own folder, the
-// "cache" level below it on Windows, and the base folder and its parent if they are missing (a fresh account has no ~/.local/share yet). Every
-// mkdir is one level and a level that exists is passed over; whether the result is a usable folder is for the caller to find out by opening it.
+// Makes the application's folder for `kind`: its own folder, the "cache" level below it on Windows, and the base folder and its parent if missing (a fresh
+// account has no ~/.local/share yet). Every mkdir is one level and an existing level is passed over; the caller finds out whether the result is usable by opening it.
 void makeAppFolder(string kind, string appName) {
     string base = baseFolder(kind);
     string folder = appFolderPath(kind, appName);
@@ -177,7 +168,7 @@ public:
     string problem;                      // what was wrong in the file that was read ("" if nothing)
     std::vector<string> names;
     std::vector<string> kinds;           // "string", "int", "bool", "double"
-    std::vector<string> texts;           // the value of a string; the default of a string is kept in defTexts
+    std::vector<string> texts;           // the value of a string; its default is in defTexts
     std::vector<double> numbers;         // the value of an int, bool (0 / 1) or double
     std::vector<string> defTexts;
     std::vector<double> defNumbers;
@@ -202,7 +193,7 @@ public:
         return gate.join(folder, "settings.json");
     }
 
-    // Finds (or makes) the application's "config" folder and allows it in this store's own gate. "" on success, else why not.
+    // Makes the application's "config" folder if needed and allows it in this store's own gate. "" on success, else why not.
     string open(string appName) {
         if (isOpen()) {
             return "already open";
@@ -238,8 +229,7 @@ public:
         return indexOf(key) >= 0;
     }
 
-    // Declaring is possible until load() was called. false if the key is not a plain name, is declared already, there are too many, or the default
-    // does not fit the declaration.
+    // Declaring is possible until load() was called. False if the key is not a plainName, is declared already, there are 200 keys, or the default does not fit.
     bool addKey(string key, string kind) {
         if (loaded || !plainName(key) || indexOf(key) >= 0 || names.size() >= 200) {
             return false;
@@ -305,7 +295,7 @@ public:
         return true;
     }
 
-    // Checks `value` against what key number `i` was declared as and, if it fits, takes it. "" on success, else why not (the old value stays).
+    // Checks `value` against the declaration of key `i` and takes it if it fits. "" on success, else why not (the old value stays).
     string apply(int i, Item value) {
         string kind = kinds[i];
         string key = names[i];
@@ -356,9 +346,9 @@ public:
         return printUnformatted(n);
     }
 
-    // Reads settings.json (a missing file is not a problem: every key has its default). Nothing can be declared afterwards. Returns what was wrong
-    // in the file, "" if nothing; it is kept in `problem` too. A file that is not a JSON object, or a value that does not fit its declaration, is
-    // reported and the defaults stay; the file itself is only replaced by the next successful set().
+    // Reads settings.json (a missing file is fine: every key has its default); nothing can be declared afterwards. Returns what was wrong, "" if nothing, and
+    // keeps it in `problem`. A file that is not a JSON object, or a value that does not fit, is reported and the defaults stay; the file is replaced only by the
+    // next successful set().
     string load() {
         if (!isOpen() || loaded) {
             return "";
@@ -437,7 +427,7 @@ public:
         return numbers[i];
     }
 
-    // The value of a declared key as JSON (null for a key that is not declared).
+    // The value of a declared key as JSON (nullptr if not declared).
     Item valueItem(string key) {
         int i = indexOf(key);
         if (i < 0) {
@@ -454,7 +444,7 @@ public:
         return made;
     }
 
-    // Every declared setting as one object: {key: value, ...}
+    // Every declared setting as one object {key: value, ...}.
     Item allItem() {
         Item all = createObject();
         int i = 0;
@@ -467,9 +457,8 @@ public:
 
     // ---- writing ----
 
-    // Takes a new value for a declared key and saves the file. "" on success, else why not: "unknown_setting: ..." for a key nobody declared,
-    // "invalid_argument: ..." for a value that does not fit, "io_error: ..." if the file could not be written (the value is then changed in memory
-    // but not on disk).
+    // Takes a new value for a declared key and saves the file. "" on success, else "code: message": unknown_setting (not declared), invalid_argument (does not
+    // fit), not_ready (not open or not loaded), io_error (the file could not be written: the value is then changed in memory but not on disk).
     string set(string key, Item value) {
         if (!isOpen() || !loaded) {
             return "not_ready: the settings are not open";
@@ -506,7 +495,7 @@ public:
         return set(key, createNumber(value));
     }
 
-    // The file is written whole to settings.json.tmp, then swapped in.
+    // Writes the whole file to settings.json.tmp, then swaps it in.
     int save() {
         Item root = createObject();
         int i = 0;

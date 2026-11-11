@@ -23,15 +23,13 @@ int app_os_env(std::string name, std::string& out) {
     return 1;
 }
 
-// 0 nothing there, 1 a file (+4 if it can be executed), 2 a folder
 int app_os_path_kind(std::string path) {
     struct stat sb;
     if (path.find('\0') != std::string::npos || stat(path.c_str(), &sb) != 0) return 0;
     return S_ISDIR(sb.st_mode) ? 2 : S_ISREG(sb.st_mode) ? (access(path.c_str(), X_OK) == 0 ? 5 : 1) : 0;
 }
 
-// Runs `exe` in `cwd` with exactly the environment `env` (all of it already vetted by CeeLing: toolRunOk): no stdin, in its own process group so that everything it
-// starts dies with it. flags: 1 timed out, 2 stdout cut at max_bytes, 4 stderr cut.
+// No stdin; runs in its own process group so that everything it starts dies with it. `env` was vetted by CeeLing (toolRunOk). flags as in app_native.h.
 int app_proc_run(int handle, std::string call, std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env,
                  int timeout_ms, int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags) {
     out.clear(); err.clear(); exit_code = -1; flags = 0;
@@ -95,7 +93,7 @@ int app_proc_run(int handle, std::string call, std::string exe, std::vector<std:
         if (killed && Clock::now() - deadline > std::chrono::seconds(10)) break;
     }
     if (!exited) { killpg(pid, SIGKILL); waitpid(pid, &wstatus, 0); }
-    killpg(pid, SIGKILL);                            // anything that outlived the child in its group
+    killpg(pid, SIGKILL);
     close(outPipe[0]); close(errPipe[0]);
     if (execFailed) return execErr == ENOENT ? 2 : 4;
     if (flags & 9) exit_code = -1;

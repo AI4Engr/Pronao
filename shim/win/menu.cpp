@@ -10,7 +10,6 @@
 namespace {
 const UINT kFirstCommand = 1000;
 
-// splits the spec into its NUL-terminated fields
 std::vector<std::string> fieldsOf(const std::string& spec) {
     std::vector<std::string> f;
     std::string cur;
@@ -30,10 +29,10 @@ bool toNumber(const std::string& s, UINT& out) {
     out = v;
     return true;
 }
-}  // namespace
+}
 
 NativeMenu::~NativeMenu() {
-    if (root_) DestroyMenu(root_);                       // (this destroys the submenus too)
+    if (root_) DestroyMenu(root_);
 }
 
 std::unique_ptr<NativeMenu> NativeMenu::build(const std::string& spec, bool bar, std::string& error) {
@@ -115,7 +114,6 @@ UINT app_current_modifiers() {
 }
 
 namespace {
-// the browser engine hands the keys to this before the page sees them
 struct KeyHandler : ICoreWebView2AcceleratorKeyPressedEventHandler {
     std::function<bool(UINT, UINT, bool)> onKey;
     std::atomic<ULONG> refs{1};
@@ -140,14 +138,13 @@ struct KeyHandler : ICoreWebView2AcceleratorKeyPressedEventHandler {
         return S_OK;
     }
 };
-}  // namespace
+}
 
 void app_accelerators_install(void* controller, std::function<bool(UINT, UINT, bool)> onKey) {
     EventRegistrationToken token;
     static_cast<ICoreWebView2Controller*>(controller)->add_AcceleratorKeyPressed(new KeyHandler(std::move(onKey)), &token);
 }
 
-// ---- the menu bar of each window -----------------------------------------------------------------------------------------------------------------------
 #include <map>
 #include <mutex>
 
@@ -156,7 +153,7 @@ void app_accelerators_install(void* controller, std::function<bool(UINT, UINT, b
 
 namespace {
 std::mutex g_barsMutex;
-std::map<int, std::shared_ptr<NativeMenu>> g_bars;          // window handle -> its menu bar
+std::map<int, std::shared_ptr<NativeMenu>> g_bars;
 
 std::shared_ptr<NativeMenu> barOf(int handle) {
     std::lock_guard<std::mutex> lock(g_barsMutex);
@@ -170,7 +167,7 @@ void tell(int handle, const std::string& id) {
     record += '\0';
     app_push(handle, std::string(), record, 100);
 }
-}  // namespace
+}
 
 int app_menu_set(int handle, std::string spec) {
     std::shared_ptr<NativeMenu> fresh;
@@ -187,7 +184,7 @@ int app_menu_set(int handle, std::string spec) {
             old = g_bars.count(handle) ? g_bars[handle] : nullptr;
             if (fresh) g_bars[handle] = fresh; else g_bars.erase(handle);
         }
-        SetMenu(hwnd, fresh ? fresh->handle() : nullptr);        // (the old menu is destroyed after it is no longer the window's)
+        SetMenu(hwnd, fresh ? fresh->handle() : nullptr);
         DrawMenuBar(hwnd);
     });
     return ran ? 0 : 4;

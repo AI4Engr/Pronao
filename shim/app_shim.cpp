@@ -1,6 +1,5 @@
-// The window and the queue between the page and CeeLing (see app_native.h): a UI thread that creates the window and pumps its
-// messages (WebView2 requires the creating thread to pump), a queue of calls from JavaScript, and a handle table so CeeLing sees
-// small integers. CeeLing runs the loop (app_next_call, then app_return), so no callback ever crosses into CeeLing.
+// The window and the queue between the page and CeeLing (see app_native.h): a UI thread that creates the window and pumps its messages (WebView2 requires the creating
+// thread to pump), a queue of page calls, and a handle table so CeeLing sees small integers. CeeLing runs the loop: no callback crosses into CeeLing.
 #include "app_native.h"
 #include "app_shim_internal.h"
 #include "assets.h"
@@ -20,29 +19,28 @@
 
 namespace {
 struct App {
-    CallQueue calls;                   // closed when the message loop has ended
+    CallQueue calls;
     std::mutex m;                      // guards `w`, `ready` and `created`
     std::condition_variable cv;
     bool ready = false, created = false;
     webview::webview* w = nullptr;     // valid only while the loop runs, and only touched under `m`
     std::thread ui;
-    std::atomic<bool> guard{false};    // closing the window asks CeeLing instead of closing
-    std::atomic<bool> track{false};    // report where the window is after the user moves or resizes it (app_window_track)
-    bool moving = false;               // between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE (UI thread only)
-    std::atomic<void*> hwnd{nullptr};  // the native window (Windows), for the other windows' modal handling
-    // the layout switches (app_window_style); the first four are UI-thread business, the flags are read by reportPlacement
+    std::atomic<bool> guard{false};
+    std::atomic<bool> track{false};
+    bool moving = false;
+    std::atomic<void*> hwnd{nullptr};  // the native window (Windows), for modal handling
     std::atomic<bool> fullscreen{false};
 #ifdef _WIN32
-    LONG_PTR savedStyle = 0;           // the style and the rectangle a window had before it went full screen
+    LONG_PTR savedStyle = 0;
     RECT savedRect = {};
     bool savedMaximized = false;
 #endif
-    std::atomic<void*> controller{nullptr};   // the browser engine's controller (Windows), for what needs the engine rather than the window
-    std::atomic<int> themeMode{-1};    // app_window_theme: 0 follow the system, 1 light, 2 dark; -1 = never asked, and then no change is reported
-    std::atomic<int> systemTheme{-1};  // the system's scheme as last seen: 0 light, 1 dark
-    std::atomic<int> modalOwner{0};    // the window this one is modal for (its owner is disabled until this one closes)
+    std::atomic<void*> controller{nullptr};   // the browser engine's controller (Windows)
+    std::atomic<int> themeMode{-1};    // app_window_theme mode; -1 = never asked: no change is reported
+    std::atomic<int> systemTheme{-1};
+    std::atomic<int> modalOwner{0};    // the window this one is modal for
     std::atomic<int> maxRequest{16 << 20}, maxQueued{1000};
-    std::shared_ptr<NavRules> nav = std::make_shared<NavRules>();   // (nav->handle is set by app_open)
+    std::shared_ptr<NavRules> nav = std::make_shared<NavRules>();
     void* oldProc = nullptr;
 };
 
@@ -54,8 +52,7 @@ std::shared_ptr<App> lookup(int handle) {
     return (handle < 1 || static_cast<size_t>(handle) > g_table.size()) ? nullptr : g_table[static_cast<size_t>(handle) - 1];
 }
 
-// a modal window is gone, however it went (the user's close button: WM_DESTROY; the application's terminate(): the loop just ends): its owner may be used again.
-// Whichever comes first does it, the other finds nothing to do.
+// A modal window is gone (closed by the user, or its loop ended): its owner may be used again. Whichever path comes first does it.
 void releaseOwner(App* a) {
     const int owner = a->modalOwner.exchange(0);
     if (owner != 0) app_window_modal_ended(owner);
@@ -69,13 +66,11 @@ void ended(App* a, bool created) {
 }
 
 #ifdef _WIN32
-// where the window is, as the record "window" "placement" x y width height maximized, in SCREEN coordinates (the same ones app_monitors uses), and the
-// RESTORED rectangle: a maximized window keeps its normal size. (WINDOWPLACEMENT's own rectangle is in workspace coordinates, relative to the work area of
-// the primary monitor, which is why that is converted here and not handed on.)
+// Queues "window" "placement": the RESTORED rectangle in screen coordinates (WINDOWPLACEMENT's is in workspace coordinates, hence the offset when maximized).
 void reportPlacement(App* a, HWND h) {
     WINDOWPLACEMENT wp = {};
     wp.length = sizeof wp;
-    if (!a->track.load() || a->fullscreen.load() || !GetWindowPlacement(h, &wp) || wp.showCmd == SW_SHOWMINIMIZED) return;      // (full screen is not a place worth keeping)
+    if (!a->track.load() || a->fullscreen.load() || !GetWindowPlacement(h, &wp) || wp.showCmd == SW_SHOWMINIMIZED) return;
     RECT r = wp.rcNormalPosition;
     if (wp.showCmd == SW_SHOWMAXIMIZED) {
         MONITORINFO info = {};
@@ -92,8 +87,8 @@ void reportPlacement(App* a, HWND h) {
     a->calls.push(std::string(), record, 100);
 }
 
-// Windows says the colour scheme may have changed with WM_SETTINGCHANGE "ImmersiveColorSet" (and says it more than once). The webview library has just set the title bar to the
-// system's scheme in its own handler; a window the application fixed to light or dark gets its choice back. When the scheme really changed, the record "window" "theme" 0|1 is queued.
+// WM_SETTINGCHANGE "ImmersiveColorSet" means the colour scheme may have changed (it arrives more than once). The webview library has just set the title bar to the
+// system's scheme in its own handler; a window fixed to light or dark gets its choice back. A real change queues the record "window" "theme" 0|1.
 void themeSettingChanged(App* a, HWND h) {
     const int mode = a->themeMode.load();
     if (mode == 1 || mode == 2) app_theme_titlebar(h, mode == 2);
@@ -115,16 +110,16 @@ LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_COMMAND && HIWORD(wp) == 0 && lp == 0 && app_menu_command(a->nav->handle, LOWORD(wp))) return 0;      // a menu item (not a control, not an accelerator)
     if (msg == WM_ENTERSIZEMOVE) a->moving = true;
     if (msg == WM_EXITSIZEMOVE) { a->moving = false; reportPlacement(a, h); }
-    if (msg == WM_SIZE && !a->moving && (wp == SIZE_MAXIMIZED || wp == SIZE_RESTORED)) reportPlacement(a, h);     // (the maximize button, a double click on the title)
+    if (msg == WM_SIZE && !a->moving && (wp == SIZE_MAXIMIZED || wp == SIZE_RESTORED)) reportPlacement(a, h);
     if (msg == WM_CLOSE && a->guard.load()) {
         a->calls.push(std::string(), std::string("window\0close_requested\0", 23), 100);
         return 0;
     }
-    // The webview library ends a window's message loop only when the LAST window of the PROCESS is destroyed (a process-wide count), so with
-    // another window still open this window's thread would keep pumping nothing and its queue would never report that it closed.
+    // The webview library ends a window's message loop only when the LAST window of the PROCESS is destroyed, so with another window open this window's thread
+    // would keep pumping nothing and its queue would never report that it closed.
     if (msg == WM_DESTROY) {
         app_drop_forget(h);
-        releaseOwner(a);                                               // a modal window is gone: its owner may be used again
+        releaseOwner(a);
         PostQuitMessage(0);                                            // this window's own message loop ends (tests/run_multiwindow.sh removes this line as its control)
     }
     return CallWindowProcW(reinterpret_cast<WNDPROC>(a->oldProc), h, msg, wp, lp);
@@ -139,11 +134,11 @@ int onUi(int handle, std::function<void(webview::webview&)> op) {
     webview::webview* w = app->w;
     return w != nullptr && w->dispatch([w, op] { op(*w); }).ok() ? 1 : 0;
 }
-}  // namespace
+}
 
 int app_open(std::string title, int width, int height, std::string html, std::string url, std::string init_js, int debug) {
 #ifdef APP_RELEASE
-    debug = 0;      // a release build (scripts/build.sh with RELEASE=1) ignores the argument: no developer tools, no context menu, whatever the program asks
+    debug = 0;      // RELEASE=1 builds never open developer tools or the context menu
 #endif
     auto app = std::make_shared<App>();
     app->calls.setNotify(&waitSet());
@@ -166,7 +161,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
             }, nullptr);
 #ifdef _WIN32
             const std::string site = assetStore()->origin();
-            if (!site.empty()) raw->nav->prefixes.push_back(site + "/");        // (no lock needed yet: nothing else has the window)
+            if (!site.empty()) raw->nav->prefixes.push_back(site + "/");
             app_nav_install(w.browser_controller().value(), raw->nav, debug);
             app_assets_install(w.browser_controller().value(), assetStore());
             raw->controller = w.browser_controller().value();
@@ -178,7 +173,7 @@ int app_open(std::string title, int width, int height, std::string html, std::st
             HWND hwnd = static_cast<HWND>(w.window().value());
             SetPropW(hwnd, L"pronao", raw);
             raw->hwnd = hwnd;
-            // the program's icon (resource 1, from scripts/build.sh ICON=...) for the title bar, Alt+Tab and the taskbar; none linked in: the default stays
+            // the program's icon (resource 1, ICON= in scripts/build.sh) for the title bar, Alt+Tab and the taskbar
             for (int big = 0; big < 2; big++) {
                 const int cx = GetSystemMetrics(big ? SM_CXICON : SM_CXSMICON), cy = GetSystemMetrics(big ? SM_CYICON : SM_CYSMICON);
                 if (HANDLE icon = LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR))
@@ -230,7 +225,7 @@ int app_push(int handle, std::string id, std::string request, int max_queued) {
 
 int app_return(int handle, std::string id, int status, std::string json) {
     auto app = lookup(handle);
-    if (!app || !app->calls.answer(id)) return 0;     // (a page call is answered once: a late second answer is dropped)
+    if (!app || !app->calls.answer(id)) return 0;
     std::lock_guard<std::mutex> lock(app->m);
     // resolve() posts to the UI thread itself, so calling it from this thread is safe
     return app->w != nullptr && app->w->resolve(id, status, json).ok() ? 1 : 0;
@@ -241,8 +236,7 @@ int app_eval(int handle, std::string js) {
 }
 
 int app_terminate(int handle) {
-    // NOT terminate() from this thread: on Windows that is PostQuitMessage(0), which posts WM_QUIT to the CALLING thread's queue
-    // (the wrong one from here), so the UI loop would never stop. onUi runs it on the UI thread.
+    // Not terminate() from this thread: on Windows that is PostQuitMessage(0), which posts WM_QUIT to the CALLING thread, so the UI loop would never stop.
     return onUi(handle, [](webview::webview& w) { w.terminate(); });
 }
 
@@ -258,9 +252,9 @@ int app_window_state(int handle, int state) {
 #ifdef _WIN32
     return onUi(handle, [state](webview::webview& w) {
         HWND hwnd = static_cast<HWND>(w.window().value());
-        if (state == 3) { if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); }     // (a minimized window comes back first)
-        else if (state == 4) PostMessageW(hwnd, WM_CLOSE, 0, 0);       // as if the user pressed the X: the close guard, if any, is asked
-        else if (state == 5) ShowWindow(hwnd, SW_HIDE);                // hidden: not on screen and not on the taskbar; the window and its page keep running
+        if (state == 3) { if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); }
+        else if (state == 4) PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        else if (state == 5) ShowWindow(hwnd, SW_HIDE);
         else if (state == 6) { ShowWindow(hwnd, IsIconic(hwnd) ? SW_RESTORE : SW_SHOW); SetForegroundWindow(hwnd); }
         else ShowWindow(hwnd, state == 1 ? SW_MINIMIZE : state == 2 ? SW_MAXIMIZE : SW_RESTORE);
     });
@@ -282,7 +276,7 @@ int app_monitors(std::string& out) {
         ((info.dwFlags & MONITORINFOF_PRIMARY) ? c->primary : c->others) += one;
         return TRUE;
     }, reinterpret_cast<LPARAM>(&c));
-    out = c.primary + c.others;                                      // (the primary monitor first)
+    out = c.primary + c.others;
     return out.empty() ? 4 : 0;
 #else
     return (void)out, -1;
@@ -325,8 +319,8 @@ int app_window_placement(int handle, int x, int y, int width, int height, int ma
 #ifdef _WIN32
     return onUi(handle, [=](webview::webview& w) {
         HWND hwnd = static_cast<HWND>(w.window().value());
-        SetWindowPos(hwnd, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);      // the restored rectangle, in screen coordinates ...
-        if (maximized) ShowWindow(hwnd, SW_MAXIMIZE);                                         // ... which a maximized window goes back to when restored
+        SetWindowPos(hwnd, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);      // the RESTORED rectangle, in screen coordinates
+        if (maximized) ShowWindow(hwnd, SW_MAXIMIZE);
     });
 #else
     return (void)handle, (void)x, (void)y, (void)width, (void)height, (void)maximized, -1;
@@ -374,7 +368,7 @@ int app_window_style(int handle, int what, int on) {
     return onUi(handle, [=](webview::webview& w) {
         HWND hwnd = static_cast<HWND>(w.window().value());
         LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-        if (what == 1) {                                                          // full screen: no frame, over the whole monitor; back to what it was
+        if (what == 1) {
             if (on && !app->fullscreen.load()) {
                 WINDOWPLACEMENT wp = {};
                 wp.length = sizeof wp;
@@ -395,14 +389,14 @@ int app_window_style(int handle, int what, int on) {
                 SetWindowPos(hwnd, nullptr, app->savedRect.left, app->savedRect.top, app->savedRect.right - app->savedRect.left, app->savedRect.bottom - app->savedRect.top, SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
                 if (app->savedMaximized) ShowWindow(hwnd, SW_MAXIMIZE);
             }
-        } else if (what == 2) {                                                   // always on top
+        } else if (what == 2) {
             SetWindowPos(hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        } else if (what == 3) {                                                   // frameless: no title bar and no border line; the resize border stays if the window may be resized
+        } else if (what == 3) {
             if (app->fullscreen.load()) return;
             style = on ? (style & ~WS_CAPTION) : (style | WS_CAPTION);
             SetWindowLongPtrW(hwnd, GWL_STYLE, style);
             SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        } else if (what == 4) {                                                   // may the user resize it (and maximize it)
+        } else if (what == 4) {
             if (app->fullscreen.load()) return;
             style = on ? (style | WS_THICKFRAME | WS_MAXIMIZEBOX) : (style & ~(WS_THICKFRAME | WS_MAXIMIZEBOX));
             SetWindowLongPtrW(hwnd, GWL_STYLE, style);
@@ -536,7 +530,7 @@ int app_close(int handle) {
     if (!app) return 0;
     app_watch_stop_all(handle);
     app_menu_forget(handle);
-    app_tray_forget(handle);                       // (a tray: the icon is removed and its thread ends; anything else: nothing)
+    app_tray_forget(handle);
     app_terminate(handle);
     if (app->ui.joinable()) app->ui.join();
     app->calls.close();

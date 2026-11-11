@@ -9,7 +9,6 @@
 #include "menu_native.h"
 
 namespace {
-// one COM event handler that calls a function
 template <class H, class A>
 struct Handler : H {
     std::function<void(A*)> fn;
@@ -25,10 +24,10 @@ struct Handler : H {
     }
     HRESULT STDMETHODCALLTYPE Invoke(ICoreWebView2*, A* a) override { fn(a); return S_OK; }
 };
-}  // namespace
+}
 
 void app_nav_install(void* controller, std::shared_ptr<NavRules> rules, int debug) {
-    ICoreWebView2* view = nullptr;                                // (webview hands out the controller on Windows)
+    ICoreWebView2* view = nullptr;
     if (FAILED(static_cast<ICoreWebView2Controller*>(controller)->get_CoreWebView2(&view)) || !view) return;
     EventRegistrationToken token;
     // the same rule for the window itself and for every frame in it: an iframe pointing at a stranger's site would get the bridge too
@@ -45,11 +44,11 @@ void app_nav_install(void* controller, std::shared_ptr<NavRules> rules, int debu
                 for (const auto& p : rules->prefixes) ok = ok || uri.compare(0, p.size(), p) == 0;
                 if (ok) return;
                 a->put_Cancel(TRUE);
-                BOOL byUser = FALSE;                                   // a click, as opposed to a script setting location
+                BOOL byUser = FALSE;
                 a->get_IsUserInitiated(&byUser);
                 std::string record = "window"; record += '\0'; record += "navigation_blocked"; record += '\0'; record += uri.substr(0, 2100); record += '\0';
                 record += byUser ? "1" : "0"; record += '\0';
-                app_push(rules->handle, std::string(), record, 100);   // so the application can log it (or open it in the browser: App.openLinksInBrowser)
+                app_push(rules->handle, std::string(), record, 100);   // the application sees it (App.openLinksInBrowser can act on it)
             });
     };
     const int handle = rules->handle;

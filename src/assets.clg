@@ -1,10 +1,8 @@
-// pronao -- the application's own web files: which short addresses stand for which file, and what type each file is.
+// The application's own web files: which addresses stand for which file, and what type each is served as.
 //
-// The files are compiled into the program (scripts/build.sh, ASSETS=<folder>) and served to the window from memory under an address of
-// their own, like http://app.localhost/. A browser engine needs real addresses for that (a page made of hundreds of files, with its
-// scripts, styles, images, fonts and data, cannot be one string), and the right origin: a page loaded from nowhere has no
-// localStorage, no relative URLs and no sensible CORS identity. The native layer only looks an address up in the table below; every
-// decision, including which spellings reach which file, is made here.
+// The files are compiled in (scripts/build.sh, ASSETS=<folder>) and served from memory under an origin such as http://app.localhost/.
+// The native layer only looks an address up in its table; every decision, including which spellings reach which file, is made here.
+// See docs/manual/09-web-ui-and-shipping.md.
 #include "text.clh"
 
 ext_fn int app_asset_site(string origin, string csp);
@@ -14,8 +12,7 @@ ext_fn int app_asset_add_embedded(string path, string mime, int index);
 ext_fn int app_asset_add_text(string path, string mime, string text);
 ext_fn int app_asset_alias(string from, string to);
 
-// The type a file is served as, by its extension (lower case). An unknown extension is application/octet-stream, which the browser
-// will not run as script or style.
+// The type a file is served as, by its lower-case extension; unknown is application/octet-stream (never run as script or style).
 string mimeFor(string name) {
     int dot = -1;
     int i = 0;
@@ -83,8 +80,8 @@ bool assetNameOk(string name) {
     return true;
 }
 
-// Other addresses that stand for the same page, the way a static site is usually linked: "index.html" is "/"; "docs/index.html" is
-// "/docs/" and "/docs"; "local.html" is "/local" and "/local/". A name that is not a page has none.
+// Extra addresses for a page, as a static site is usually linked: "index.html" is "/"; "docs/index.html" is "/docs/" and "/docs";
+// "local.html" is "/local" and "/local/". A name that is not a page has none.
 std::vector<string> pageAliases(string name) {
     std::vector<string> aliases;
     if (!endsWithText(name, ".html")) {
@@ -106,7 +103,6 @@ std::vector<string> pageAliases(string name) {
     return aliases;
 }
 
-// the addresses registered so far
 class Seen {
 public:
     std::vector<string> items;
@@ -123,7 +119,6 @@ public:
     }
 };
 
-// What publishSite did: how many files it registered, how many names it refused, and the address to open first.
 struct SiteInfo {
 public:
     int files;
@@ -137,8 +132,8 @@ public:
 };
 
 // Registers every embedded file under `origin` (like "http://app.localhost", no trailing slash) with its type, and the page aliases
-// above where no real file of that name exists. `csp`, if not empty, is sent with every HTML file. The start address is
-// origin + "/" if there is an index.html, else the first page.
+// where no real file has that name. `csp`, if not empty, is sent with every HTML file. The start is origin + "/" if there is an
+// index.html, else the first page.
 SiteInfo publishSite(string origin, string csp) {
     SiteInfo info = new SiteInfo();
     // the native table takes the origin as given: http:// or https://, a host, no path

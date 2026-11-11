@@ -1,4 +1,4 @@
-// Windows: the system's colour scheme, the title bar's, and the page's (what the CSS media query prefers-color-scheme answers). See app_theme_system / app_window_theme in app_native.h.
+// Windows: the system's colour scheme, the title bar's, and the page's prefers-color-scheme (see app_theme_system / app_window_theme in app_native.h).
 #include "../app_native.h"
 #include "../app_shim_internal.h"
 #include <WebView2.h>
@@ -24,7 +24,7 @@ void app_theme_titlebar(void* nativeWindow, bool dark) {
 int app_theme_page(void* controller, int mode) {
     ICoreWebView2* view = nullptr;
     if (!controller || FAILED(static_cast<ICoreWebView2Controller*>(controller)->get_CoreWebView2(&view)) || !view) return 4;
-    ICoreWebView2_13* v13 = nullptr;                                   // (the profile is reached from here on; an older runtime does not have the interface)
+    ICoreWebView2_13* v13 = nullptr;                                   // (older runtimes lack this interface)
     if (FAILED(view->QueryInterface(IID_ICoreWebView2_13, reinterpret_cast<void**>(&v13))) || !v13) return 4;
     ICoreWebView2Profile* profile = nullptr;
     int rc = 4;

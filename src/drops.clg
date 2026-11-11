@@ -1,17 +1,15 @@
-// pronao -- Files dragged from the file manager onto a window. The page (src/bridge.js) sees the drag, hands the engine the files that were dropped, and the native layer
-// (app_drop_accept) queues the paths the engine names for them. WHAT becomes of the paths is decided here:
+// Files dragged from the file manager onto a window. The native layer (app_drop_accept) queues the paths the engine names; what
+// becomes of them is decided here:
 //
-//  * Nothing happens until the application asks (`App.enableFileDrop`). Until then the engine's default stays: a drop on the page does not reach the application, and the
-//    engine's attempt to open the file in the window is refused by the navigation guard.
-//  * Every path is granted to the file policy EXACTLY as a dialog pick would be: that file (or, if the application allows folders, that folder and what is in it), nothing
-//    next to it. The paths belong to File objects that the user put into the page by dropping them (or by choosing them in a file input of its own): a page cannot make a File
-//    that has a path. A page that holds one can ask for the same grant a drop gives, and nothing more. At most 256 grants exist at a time (`revokeGrants` clears them).
-//  * At most `maxFiles` paths are taken from one drop; the rest are counted in `skipped`, with those that are not plain text, are not files or folders, or that the policy
-//    would not grant.
+//  * Nothing happens until the application calls `App.enableFileDrop`.
+//  * Every path is granted to the file policy exactly as a dialog pick would be: that file (or, if folders are allowed, that folder and
+//    what is in it), nothing next to it. The paths belong to File objects the user put into the page; a page cannot make a File that
+//    has a path. At most 256 grants exist at a time (`revokeGrants` clears them).
+//  * At most `maxFiles` paths are taken from one drop; the rest, and any path that is not plain text, not a file or folder, or that the
+//    policy would not grant, are counted in `skipped`.
 //
-// What the page gets, sent to the window that was dropped on: `drop.files {x, y, files: [{path, kind: "file" | "folder"}], skipped}` (x and y in CSS pixels from the top left of
-// the page); the path is then reachable with the file commands under that name (fs.read {path} ...). The page itself raises drop.enter / drop.over / drop.leave while a drag of
-// files is over it (bridge.js; no round trip). A drag of text or a picture is not a drop of files and is left to the page.
+// The page gets `drop.files {x, y, files: [{path, kind: "file" | "folder"}], skipped}` (x, y in CSS pixels). drop.enter / drop.over /
+// drop.leave come from src/bridge.js with no round trip. See docs/manual/03-files-and-data.md.
 #include "cjson_item.clh"
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
@@ -27,8 +25,8 @@ class DropRules {
 public:
     bool on;           // enableFileDrop was called
     bool folders;      // a dropped folder is accepted (granted as a folder)
-    int maxFiles;      // how many paths of one drop are taken
-    FileGate gate;     // the file policy the dropped paths are granted to
+    int maxFiles;
+    FileGate gate;
 
     DropRules(FileGate files) {
         gate = files;
@@ -37,8 +35,8 @@ public:
         maxFiles = 32;
     }
 
-    // The payload of drop.files for the record "drop" "files" x y path... of one window; "" if there is nothing to tell. The paths are granted here, so the event never names
-    // a path the page cannot read.
+    // The drop.files payload for the record "drop" "files" x y path... of one window; "" if there is nothing to tell. The paths are
+    // granted here, so the event never names a path the page cannot read.
     string eventFor(std::vector<string> f) {
         if (!on || f.size() < 5 || f[1] != "files" || !isSignedNumber(f[2]) || !isSignedNumber(f[3])) {
             return "";
@@ -54,7 +52,7 @@ public:
                 skipped = skipped + 1;
                 continue;
             }
-            // what the path is NOW (grantFile alone would also accept a name that does not exist yet, which is for "save as", not for a drop)
+            // what the path is now (grantFile alone also accepts a name that does not exist yet, which is for "save as")
             int found = app_os_path_kind(path);
             string kind = "file";
             FsResult g = new FsResult(1, "");

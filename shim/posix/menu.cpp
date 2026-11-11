@@ -1,4 +1,4 @@
-// POSIX: no native menus yet (a GTK implementation belongs here). The menu primitives answer "not supported" and nothing is ever clicked.
+// POSIX: no native menus, tray, notifications, colour scheme, file drops or window layout: these primitives answer -1 and nothing is ever clicked.
 #include "../app_native.h"
 #include "../app_shim_internal.h"
 

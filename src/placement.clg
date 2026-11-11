@@ -1,12 +1,10 @@
-// pronao -- where a program's windows were the last time, and fitting that to the screens that exist now.
+// Where a program's windows were last time, fitted to the screens that exist now.
 //
-// A WindowMemory keeps, per window name, the restored rectangle and whether the window was maximized, in `windows.json` in the "config" folder next to
-// settings.json (its own file gate, so a page cannot reach it either; the page never sees these numbers). Windows are named
-// automatically: a program's first window is "main", another window is named by the page it starts on.
+// A WindowMemory keeps, per window name, the restored rectangle and the maximized flag in `windows.json` in the "config" folder next to settings.json, behind its
+// own file gate; a page never sees these numbers. A program's first window is named "main", another window by the page it starts on.
 //
-// The rectangle that comes back is FITTED (fitToMonitors): never smaller than 200 x 150, never larger than the biggest monitor, and wholly inside the work
-// area of the monitor it overlaps most (or centred on the first monitor when it overlaps none: the monitor it was on is gone). A window that spanned two
-// monitors is pulled onto one. What a monitor is, and where, comes from the system (app_monitors); if it says nothing only the size is limited.
+// fitToMonitors makes a rectangle fit: at least 200 x 150, at most the biggest monitor, wholly inside the work area of the monitor it overlaps most (centred on the
+// first monitor when it overlaps none). Monitors come from app_monitors; without them only the size is limited.
 #include "cjson_item.clh"
 #include "cjson_api.clh"
 #include "cjson_parse.clh"
@@ -17,7 +15,7 @@
 
 ext_fn int app_monitors(ref string out);
 
-// an optional minus sign and up to 9 digits; 0 for anything else
+// An optional minus sign and up to 9 digits; 0 for anything else.
 int signedInt(string s) {
     if (s.length() == 0 || s.length() > 10) {
         return 0;
@@ -37,7 +35,7 @@ int signedInt(string s) {
     return v;
 }
 
-// an optional minus sign and 1 to 9 digits
+// An optional minus sign and 1 to 9 digits.
 bool isSignedNumber(string s) {
     if (s.length() > 1 && s[0] == '-') {
         return isDigits(s.substr(1, s.length() - 1));
@@ -45,7 +43,7 @@ bool isSignedNumber(string s) {
     return isDigits(s);
 }
 
-// the work area of every monitor as left, top, right, bottom ...; empty if the system does not say
+// The work area of every monitor as left, top, right, bottom, ...; empty if the system does not say.
 std::vector<int> monitorList() {
     std::vector<int> out;
     string raw = "";
@@ -64,7 +62,6 @@ std::vector<int> monitorList() {
     return out;
 }
 
-// the larger of two numbers
 int larger(int a, int b) {
     if (a > b) {
         return a;
@@ -79,7 +76,7 @@ int smaller(int a, int b) {
     return b;
 }
 
-// How much of the rectangle x, y, w, h lies inside the monitor number m of the list (0 if none).
+// The area of the rectangle x, y, w, h that lies inside monitor m of the list (0 if none).
 double overlapWith(std::vector<int> monitors, int m, int x, int y, int w, int h) {
     int overlapW = smaller(monitors[m * 4 + 2], x + w) - larger(monitors[m * 4], x);
     int overlapH = smaller(monitors[m * 4 + 3], y + h) - larger(monitors[m * 4 + 1], y);
@@ -165,7 +162,7 @@ public:
         return gate.join(folder, "windows.json");
     }
 
-    // The application's "config" folder, like SettingsStore.open, and reads windows.json. "" on success, else why not.
+    // Opens the application's "config" folder like SettingsStore.open and reads windows.json. "" on success, else why not.
     string open(string appName) {
         if (isOpen()) {
             return "already open";
@@ -206,8 +203,7 @@ public:
         return v != nullptr && isNumber(v) && v.valuedouble >= low && v.valuedouble <= high && v.valuedouble == double(int(v.valuedouble));
     }
 
-    // Reads windows.json: an entry that is not {x, y, w, h, max} with sane numbers is skipped, so is everything after the 16th; a missing or bad file is
-    // an empty memory.
+    // Reads windows.json. An entry that is not {x, y, w, h, max} with sane numbers is skipped, as is everything after the 16th; a missing or bad file is an empty memory.
     void load() {
         FsResult r = gate.read(filePath(), 65536);
         if (r.status != 0) {
@@ -236,8 +232,7 @@ public:
         }
     }
 
-    // Takes where a window is now and writes the file (through a temporary file). false if the numbers are not sane, there are 16 names already, or the
-    // file could not be written.
+    // Records where a window is and writes the file through a temporary file. False if the numbers are not sane, 16 names exist already, or the write failed.
     bool remember(string key, int x, int y, int w, int h, int maximized) {
         if (!isOpen() || key.length() == 0 || key.length() > 100 || !rectOk(x, y, w, h)) {
             return false;

@@ -17,7 +17,7 @@ int app_shell_open(std::string target, int mode) {
     const pid_t first = fork();
     if (first < 0) return 4;
     if (first == 0) {
-        if (fork() != 0) _exit(0);                            // (the grandchild is not ours to wait for)
+        if (fork() != 0) _exit(0);
         setsid();
         execlp("xdg-open", "xdg-open", target.c_str(), static_cast<char*>(nullptr));
         _exit(127);

@@ -1,11 +1,11 @@
-// The clock CeeLing code reads (see app_native.h).
+// Release flag, clock, sleep and the cancel registry (see app_native.h).
 #include <chrono>
 #include <thread>
 
 #include "app_native.h"
 #include "cancel.h"
 
-// 1 in a build made with RELEASE=1 (-DAPP_RELEASE): there the program refuses to load a development server (see App.openDevServer)
+// 1 in a RELEASE=1 build (-DAPP_RELEASE): App.openDevServer in src/app.clg then refuses a development server
 int app_release_build() {
 #ifdef APP_RELEASE
     return 1;

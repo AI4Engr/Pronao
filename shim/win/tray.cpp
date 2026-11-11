@@ -1,7 +1,6 @@
 // Windows: the tray (notification area) icon and its menu (see app_tray_open in app_native.h).
-// The icon belongs to a hidden window with its own thread and message loop; it has a handle in the same table as the windows, with only a queue, so the one
-// main loop of the program waits for it together with the windows. What reaches the queue: "tray" click | double, and "menu" id for a chosen item of the tray
-// menu (an id the application gave). What the menu contains, and every limit on it, is decided in src/menu.clg.
+// The icon belongs to a hidden window with its own thread and message loop, and has a queue-only handle in the window table, so the program's main loop waits for it
+// together with the windows. Records: "tray" click | double, "menu" id. What a menu may contain is decided in src/menu.clg.
 #include <windows.h>
 #include <shellapi.h>
 
@@ -17,11 +16,11 @@
 #include "util.h"
 
 namespace {
-const UINT kCallback = WM_APP + 1;         // the shell's messages about the icon
-const UINT kUpdate = WM_APP + 2;           // the application changed the tooltip
-const UINT kArm = WM_APP + 3;              // a notification was shown by a notification-only icon: start the timer that takes the icon away (a timer belongs to the thread of its window)
-const UINT_PTR kHideTimer = 1;             // a notification-only icon goes away this long after its notification was shown
-const UINT kHideAfterMs = 15000;
+const UINT kCallback = WM_APP + 1;
+const UINT kUpdate = WM_APP + 2;
+const UINT kArm = WM_APP + 3;              // start the hide timer (a timer belongs to its window's thread)
+const UINT_PTR kHideTimer = 1;
+const UINT kHideAfterMs = 15000;   // a notification-only icon is removed this long after its notification was shown
 const wchar_t* kClass = L"pronao-tray";
 
 struct Tray {
@@ -33,8 +32,8 @@ struct Tray {
     bool started = false;
     bool added = false;
     bool transient = false;                // a notification-only icon: it is in the notification area only while a notification is up
-    std::atomic<bool> shown{false};        // the icon is in the notification area now
-    std::string notifyId;                  // what the application called the notification that is up
+    std::atomic<bool> shown{false};
+    std::string notifyId;
     std::wstring tooltip;
     std::shared_ptr<NativeMenu> menu;
     UINT taskbarCreated = 0;
@@ -157,14 +156,14 @@ void run(Tray* t) {
     wc.lpfnWndProc = trayProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = kClass;
-    RegisterClassW(&wc);                                                // (already registered by an earlier tray: fine)
+    RegisterClassW(&wc);
     t->hwnd = CreateWindowExW(0, kClass, L"pronao tray", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, wc.hInstance, nullptr);
     bool ok = false;
     if (t->hwnd) {
         SetWindowLongPtrW(t->hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(t));
         t->taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
         if (t->transient) {
-            ok = true;                                                  // (the icon is added when there is something to say)
+            ok = true;                                                  // (the icon is added when a notification is shown)
         } else {
             NOTIFYICONDATAW d = dataFor(t);
             ok = Shell_NotifyIconW(NIM_ADD, &d) != FALSE;
@@ -181,7 +180,7 @@ void run(Tray* t) {
         DispatchMessageW(&msg);
     }
 }
-}  // namespace
+}
 
 namespace {
 int openTray(std::string tooltip, std::shared_ptr<NativeMenu> menu, bool transient, int& handle) {
@@ -206,7 +205,7 @@ int openTray(std::string tooltip, std::shared_ptr<NativeMenu> menu, bool transie
     handle = t->handle;
     return 0;
 }
-}  // namespace
+}
 
 int app_tray_open(std::string tooltip, std::string menuSpec, int& handle) {
     handle = 0;
@@ -267,7 +266,6 @@ int app_tray_item(int handle, std::string id, int enabled, int checked) {
     return menu && menu->update(id, enabled, checked, std::string()) ? 0 : 5;
 }
 
-// the tray is closed with app_close (the icon is removed first, then the thread ends)
 void app_tray_forget(int handle) {
     std::shared_ptr<Tray> t;
     {

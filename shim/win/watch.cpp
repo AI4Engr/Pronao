@@ -10,7 +10,7 @@ std::string slashes(const std::wstring& w) {
     for (auto& c : s) if (c == '\\') c = '/';
     return s;
 }
-}  // namespace
+}
 
 void watchMain(std::shared_ptr<Watch> w) {
     HANDLE dir = CreateFileW(widen(w->root).c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
@@ -18,7 +18,7 @@ void watchMain(std::shared_ptr<Watch> w) {
     if (dir == INVALID_HANDLE_VALUE) { markArmed(*w); pushEvent(*w, "stopped", "failed", ""); w->finished = true; return; }
     OVERLAPPED ov = {};
     ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    std::vector<DWORD> storage(65536 / sizeof(DWORD));      // DWORD-aligned, as FILE_NOTIFY_INFORMATION needs
+    std::vector<DWORD> storage(65536 / sizeof(DWORD));
     const DWORD filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_CREATION;
     std::wstring renamedFrom;
     bool reading = false;
@@ -28,7 +28,7 @@ void watchMain(std::shared_ptr<Watch> w) {
             ResetEvent(ov.hEvent);
             if (!ReadDirectoryChangesW(dir, storage.data(), static_cast<DWORD>(storage.size() * sizeof(DWORD)), w->recursive, filter, nullptr, &ov, nullptr)) { markArmed(*w); why = "failed"; break; }
             reading = true;
-            markArmed(*w);                                   // (the first time: from here on the kernel queues every change)
+            markArmed(*w);
         }
         HANDLE waits[2] = {ov.hEvent, w->stopEvent};
         const DWORD got = WaitForMultipleObjects(2, waits, FALSE, w->dropped.load() ? kQuietMs : INFINITE);

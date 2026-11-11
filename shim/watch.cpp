@@ -1,5 +1,5 @@
-// Watching a folder (see app_native.h): the threads and their bookkeeping. What an event means and which watches may exist is
-// decided in src/app.clg; the loops that talk to the OS are in win/watch.cpp and posix/watch.cpp.
+// Watching a folder (see app_native.h): the threads and their bookkeeping. What an event means is decided in src/watches.clg and which watches may exist in src/app.clg;
+// the loops that talk to the OS are in win/watch.cpp and posix/watch.cpp.
 #include "watch.h"
 
 #include <chrono>
@@ -12,15 +12,13 @@
 namespace {
 const int kMaxQueued = 2000;                // records waiting for the main loop, per window; beyond this they are dropped
 
-// Every live watch. A function-local static, so that it is built after the shim's own tables and torn down BEFORE them: at process
-// exit it stops and joins whatever is still running (a joinable std::thread that is destroyed calls std::terminate), and those
-// threads may still be queueing records until they have stopped.
+// Every live watch. A function-local static, so it is destroyed BEFORE the shim's own tables: at process exit it stops and joins whatever still runs (a destroyed
+// joinable std::thread calls std::terminate), and those threads may still be queueing records.
 struct Registry {
     std::mutex m;
     std::vector<std::shared_ptr<Watch>> all;
     int nextId = 1;
     ~Registry() { stop([](Watch&) { return true; }); }
-    // stops and joins every watch `pick` selects; how many there were
     template <class F> int stop(F pick) {
         std::vector<std::shared_ptr<Watch>> gone;
         {
@@ -35,7 +33,7 @@ struct Registry {
     }
 };
 Registry& registry() { static Registry r; return r; }
-}  // namespace
+}
 
 void pushEvent(Watch& w, const std::string& kind, const std::string& path, const std::string& from) {
     const bool urgent = kind == "stopped" || kind == "overflow";      // these two must get through
@@ -62,10 +60,10 @@ int app_watch_start(int handle, std::string root, int recursive, int& watch_id) 
     }
     w->thread = std::thread(watchMain, w);
     {
-        // wait (a few seconds at most) until the loop has armed the watch: a change made right after fs.watch answers must not be lost
+        // wait (at most 5 s) until the loop has armed the watch
         std::unique_lock<std::mutex> lock(w->armMutex);
 #if defined(__SANITIZE_THREAD__)
-        // (GCC 11's ThreadSanitizer does not intercept pthread_cond_clockwait, which a steady_clock wait uses: it would report a double lock that is not there; see queue.h)
+        // (TSan workaround: see queue.h)
         w->armCv.wait_until(lock, std::chrono::system_clock::now() + std::chrono::seconds(5), [&] { return w->armed; });
 #else
         w->armCv.wait_for(lock, std::chrono::seconds(5), [&] { return w->armed; });

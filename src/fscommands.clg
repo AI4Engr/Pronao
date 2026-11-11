@@ -1,5 +1,5 @@
-// pronao -- Helpers of the file commands (fs.read, fs.write, ...): status numbers to error codes, the shape of a directory entry, what a dialog filter extension or a
-// proposed file name may look like, and the write modes. The policy itself is FileGate (files.clg).
+// Helpers of the file commands (fs.read, fs.write, ...): status numbers to error codes, the shape of a directory entry, what a
+// dialog filter extension or a proposed file name may look like, and the write modes. The policy itself is FileGate (files.clg).
 
 #include "cjson_item.clh"
 #include "cjson_api.clh"
@@ -8,10 +8,6 @@
 #include "text.clh"
 #include "core.clh"
 #include "files.clh"
-
-// ---- file commands --------------------------------------------------------------------------------
-// The allowed folders and every check on a path live in FileGate (files.clg), which decides on what the operating system
-// actually opened. These helpers only map its status codes to error codes and shape the JSON.
 
 string fsCodeFor(int status) {
     if (status == 1) { return "forbidden"; }
@@ -50,11 +46,8 @@ Item entryItem(string kind, string size, string modified, string name) {
     return e;
 }
 
-// ---- dialog commands ------------------------------------------------------------------------------
-// The user's choice in a native dialog is a grant: exactly the file (or folder) they picked becomes reachable through
-// the file commands, and nothing around it. A page cannot reach a file it has not been given, by the app or by the
-// user; and a dialog is the only way the user can give one. What a dialog may say is decided here: the native layer shows
-// whatever it is handed.
+// A dialog pick is a grant: exactly the file or folder picked becomes reachable, nothing around it. What a dialog may say is
+// decided here; the native layer shows whatever it is handed.
 
 bool extensionOk(string e) {
     if (e.length() == 0 || e.length() > 16) {
@@ -106,7 +99,6 @@ int writeMode(Item args) {
     return 0;
 }
 
-// the folders above `path` that do not exist yet (inside an allowed place, like everything else)
 void makeParents(FileGate files, string path) {
     FsResult n = files.normalize(path, true, true);
     fsCheck(n.status, "cannot write " + path);

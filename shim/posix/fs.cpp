@@ -28,7 +28,7 @@ int mapErrno(int e) {
         default: return 4;
     }
 }
-}  // namespace
+}
 
 int app_os_windows() { return 0; }
 

@@ -1,5 +1,4 @@
-// pronao -- text helpers shared by the other modules: UTF-8 checking and repair, splitting, small parsers.
-// Everything here is plain CeeLing (bounds-checked); none of it needs the operating system.
+// Text helpers shared by the other modules: UTF-8 checking and repair, splitting, small parsers. Plain CeeLing, no operating-system calls.
 
 // The byte at i as 0..255 (a char may be signed).
 int charCode(string s, int i) {
@@ -10,8 +9,7 @@ int charCode(string s, int i) {
     return b;
 }
 
-// Length of the well-formed UTF-8 sequence that starts at i (1 for ASCII), or 0 if there is none: no overlong forms, no
-// surrogates, nothing above U+10FFFF, no truncated tail.
+// Length of the well-formed UTF-8 sequence at i (1 for ASCII), or 0 if there is none: no overlong forms, surrogates, values above U+10FFFF or truncated tails.
 int utf8SequenceLength(string s, int i) {
     int n = s.length();
     int c = charCode(s, i);
@@ -65,8 +63,7 @@ bool isUtf8(string s) {
     return true;
 }
 
-// `s` with every ill-formed byte replaced by U+FFFD (a program's output is not always text, and it travels to the page
-// inside a JSON string). Well-formed input is returned unchanged.
+// `s` with every ill-formed byte replaced by U+FFFD, so it can travel to the page inside a JSON string. Well-formed input is returned unchanged.
 string cleanUtf8(string s) {
     if (isUtf8(s)) {
         return s;
@@ -142,7 +139,7 @@ bool isDigits(string s) {
     return true;
 }
 
-// The NUL-terminated fields of a packed record, as a vector (the form the native layer hands records over in).
+// The NUL-terminated fields of a packed record, the form the native layer hands records over in.
 std::vector<string> splitFields(string records) {
     std::vector<string> parts;
     string current = "";
@@ -211,7 +208,7 @@ bool plainText(string s, int maxBytes) {
     return s.length() <= maxBytes && indexOfChar(s, char(0)) < 0 && isUtf8(s);
 }
 
-// Two fields, each followed by a NUL: the form of a record the main loop gets from a worker or from the native layer.
+// Two NUL-terminated fields: the form of a record the main loop gets from a worker or the native layer.
 string packRecord(string first, string second) {
     string record = first;
     record.push_back(char(0));
@@ -224,7 +221,7 @@ bool endsWithText(string text, string suffix) {
     return text.length() >= suffix.length() && text.substr(text.length() - suffix.length(), suffix.length()) == suffix;
 }
 
-// the index of `needle` in `text` at or after `from`, or -1
+// The index of `needle` in `text` at or after `from`, or -1.
 int indexOfText(string text, string needle, int from) {
     int i = from;
     while (i + needle.length() <= text.length()) {
@@ -240,7 +237,7 @@ bool containsText(string text, string needle) {
     return indexOfText(text, needle, 0) >= 0;
 }
 
-// spaces, tabs, CR and LF removed from both ends
+// `s` without spaces, tabs, CR and LF at both ends.
 string trimText(string s) {
     int a = 0;
     int b = s.length();
@@ -274,7 +271,7 @@ std::vector<string> splitLines(string text) {
     return lines;
 }
 
-// ---- base64 (standard alphabet, padded): file contents travel through JSON as text ----------------------------------------
+// ---- base64 (standard alphabet, padded) ----
 
 string base64Alphabet() {
     return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -312,7 +309,7 @@ string base64Encode(string bytes) {
     return out;
 }
 
-// the value of a base64 character, or -1
+// The value of a base64 character, or -1.
 int base64Value(int c) {
     if (c >= 65 && c <= 90) {
         return c - 65;
@@ -332,7 +329,7 @@ int base64Value(int c) {
     return -1;
 }
 
-// true if `text` is well-formed padded base64 (no whitespace, length a multiple of 4)
+// True if `text` is padded base64 (no whitespace, length a multiple of 4).
 bool isBase64(string text) {
     int n = text.length();
     if (n % 4 != 0) {
@@ -355,7 +352,7 @@ bool isBase64(string text) {
     return true;
 }
 
-// The bytes `text` stands for ("" if it is not base64; check isBase64 first when the difference matters).
+// The bytes `text` stands for; "" if it is not base64 (check isBase64 first to tell that from empty data).
 string base64Decode(string text) {
     string out = "";
     if (!isBase64(text)) {
@@ -388,7 +385,7 @@ string base64Decode(string text) {
     return out;
 }
 
-// nothing but spaces, tabs and line ends
+// Nothing but spaces, tabs and line ends.
 bool isBlank(string s) {
     string trimmed = trimText(s);
     return trimmed.length() == 0;

@@ -1,5 +1,5 @@
-// shim-internal: the queue between the threads that produce calls (UI thread, watchers, workers) and the one that consumes them
-// (CeeLing's main loop). Header-only, so the real window and the test double share this very code and the sanitizer runs cover it.
+// shim-internal: the queue between the threads that produce calls (UI thread, watchers, workers) and the one that consumes them (CeeLing's main loop).
+// Header-only, so the real window and the test double share this code and the sanitizer runs cover it.
 #pragma once
 #include <chrono>
 #include <condition_variable>
@@ -19,9 +19,8 @@ inline const char* refusalJson(int code) {
                      : "{\"code\":\"busy\",\"message\":\"the application has too many requests waiting\"}";
 }
 
-// Lets one thread wait for "something happened in ANY window's queue". Every queue bumps a generation counter after it changes; a waiter reads
-// the generation BEFORE it looks at the queues and sleeps only while the generation is still the one it read, so a change that happens
-// between the look and the sleep is never lost.
+// Lets one thread wait for a change in ANY window's queue. Every queue bumps a generation counter after it changes; a waiter reads it BEFORE looking at the
+// queues and sleeps only while it is unchanged, so a change between the look and the sleep is not lost.
 class WaitSet {
     std::mutex m_;
     std::condition_variable cv_;
@@ -35,7 +34,7 @@ public:
         std::lock_guard<std::mutex> lock(m_);
         return gen_;
     }
-    // true if the generation moved on from `seen` (timeout_ms < 0 waits for as long as it takes)
+    // true if the generation moved on from `seen`
     bool waitChange(unsigned long seen, int timeout_ms) {
         std::unique_lock<std::mutex> lock(m_);
         auto changed = [&] { return gen_ != seen; };
@@ -61,7 +60,7 @@ class CallQueue {
     std::condition_variable cv_;
     std::deque<std::pair<std::string, std::string>> q_;
     bool closed_ = false;
-    std::set<std::string> pending_;     // page calls that have not been answered yet
+    std::set<std::string> pending_;     // page calls not answered yet
     bool closedReported_ = false;       // pop has told its caller (by returning 0) that the queue is closed and drained
     WaitSet* notify_ = nullptr;         // bumped after every change, for waitAny (set before the queue is visible to other threads)
 public:
@@ -76,7 +75,6 @@ public:
         std::lock_guard<std::mutex> lock(m_);
         return closed_ && q_.empty() && closedReported_;
     }
-    // 1 queued, 0 if `max_queued` are already waiting
     int push(std::string id, std::string request, int max_queued) {
         {
             std::lock_guard<std::mutex> lock(m_);
@@ -103,8 +101,7 @@ public:
         if (notify_) notify_->bump();
         return 0;
     }
-    // A page call is answered ONCE: true the first time for an id that is waiting for an answer, false for a second answer, an unknown id
-    // or one made up by a worker. The window's promise then settles exactly once, whatever the jobs do.
+// A page call is answered ONCE: true the first time for an id that is waiting, false for a second answer, an unknown id or a worker's.
     bool answer(const std::string& id) { std::lock_guard<std::mutex> l(m_); return pending_.erase(id) > 0; }
     bool waiting(const std::string& id) { std::lock_guard<std::mutex> l(m_); return pending_.count(id) > 0; }
     // 1 got one, 0 closed and drained, 2 timed out (timeout_ms < 0 waits forever)
@@ -114,9 +111,8 @@ public:
         if (timeout_ms < 0) {
             cv_.wait(lock, ready);
         } else {
-            // Under ThreadSanitizer only, the deadline is a system_clock one: GCC 11's TSan does not intercept
-            // pthread_cond_clockwait (what a steady_clock wait compiles to), so it misses the unlock/relock inside the wait and
-            // reports a "double lock" and races that are not there. Normal builds use wait_for unchanged.
+            // Under ThreadSanitizer only: GCC 11's TSan does not intercept pthread_cond_clockwait (what a steady_clock wait compiles to) and reports a double lock
+            // that is not there, so the deadline is a system_clock one.
 #if defined(__SANITIZE_THREAD__)
             if (!cv_.wait_until(lock, std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms), ready)) return 2;
 #else
@@ -143,11 +139,9 @@ public:
     }
 };
 
-// Waits until one of the windows in `handles` has a call or record to take, or has closed. `lookup(handle)` returns the window's App (null if
-// it is gone). A caller serves only ITS windows: other applications in the same process (the tests start several) have queues of their own.
-// `last` makes the scan start after the window served last, so one busy window cannot starve the others.
-// 1 and `handle` set: that window is ready (take with its own pop(0, ...), which reports a close by returning 0); 2 timed out;
-// 0 none of the windows has anything more to say (all gone, or closed and already reported).
+// Waits until one of the windows in `handles` has a call or record to take, or has closed. `lookup(handle)` returns its App (null if gone). Serves only ITS windows:
+// other applications in the process (the tests start several) have queues of their own. `last` starts the scan after the window served last, so one busy window
+// cannot starve the others. 1 and `handle` set: take it with pop(0, ...), which reports a close by returning 0; 2 timed out; 0 none has anything more to say.
 template <typename AppT, typename Lookup>
 int waitAny(const std::vector<int>& handles, Lookup lookup, std::atomic<int>& last, int timeout_ms, int& handle) {
     WaitSet& ws = waitSet();
@@ -155,7 +149,7 @@ int waitAny(const std::vector<int>& handles, Lookup lookup, std::atomic<int>& la
     const int n = static_cast<int>(handles.size());
     if (n == 0) return 0;
     while (true) {
-        const unsigned long seen = ws.generation();      // BEFORE looking: a change after this makes waitChange return at once
+        const unsigned long seen = ws.generation();      // BEFORE looking: a later change makes waitChange return at once
         bool anyLive = false;
         for (int k = 0; k < n; ++k) {
             const int idx = (last.load() + k) % n;

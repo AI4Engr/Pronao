@@ -8,7 +8,7 @@ std::shared_ptr<AssetStore> assetStore() {
     return store;
 }
 
-// provided by the generated file (scripts/build.sh), or by the stub that says there are none
+// provided by the file scripts/pack_assets.sh generates, or by its stub when there are none
 int embeddedCount();
 const char* embeddedName(int index);
 const char* embeddedData(int index, unsigned long& size);

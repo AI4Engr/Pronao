@@ -19,7 +19,7 @@ int run(const wchar_t* file, const wchar_t* params) {
     info.nShow = SW_SHOWNORMAL;
     return ShellExecuteExW(&info) ? 0 : 4;
 }
-}  // namespace
+}
 
 int app_shell_open(std::string target, int mode) {
     if (target.empty() || target.find('\0') != std::string::npos) return 5;

@@ -25,7 +25,7 @@ int mapError(DWORD e) {
 bool get(int h, HANDLE& out) { return g_handles.get(h, out); }
 long long unixSeconds(long long ft) { return ft / 10000000LL - 11644473600LL; }
 std::string kindLetter(DWORD attrs) { return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? "l" : (attrs & FILE_ATTRIBUTE_DIRECTORY) ? "d" : "f"; }
-}  // namespace
+}
 
 int app_os_windows() { return 1; }
 
@@ -117,7 +117,7 @@ int app_fs_write(int h, std::string data, int append) {
 int app_fs_list(int h, std::string& out) {
     HANDLE f;
     if (!get(h, f)) return 4;
-    std::vector<DWORD> buf(16384);                       // DWORD-aligned, as FILE_ID_BOTH_DIR_INFO needs
+    std::vector<DWORD> buf(16384);
     std::string result;
     for (bool first = true;; first = false) {
         if (!GetFileInformationByHandleEx(f, first ? FileIdBothDirectoryRestartInfo : FileIdBothDirectoryInfo, buf.data(), static_cast<DWORD>(buf.size() * sizeof(DWORD)))) {
