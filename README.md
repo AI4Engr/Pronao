@@ -85,6 +85,44 @@ try { await pronao.invoke('fail'); }
 catch (e) { console.log(e); }                       // {code: "command_failed", message: "this command always fails"}
 ```
 
+<details>
+<summary><b>Or write the commands in C++</b> (click to expand)</summary>
+
+Pronao is written in CeeLing and compiled to C++, so the framework is also a C++ library: write the program in plain C++, include the headers the compiler generated, and call it. Use this when a command needs a C++ library, or when your team already writes C++. Three of the same commands:
+
+```cpp
+#include "app.h"
+#include "cjson_item.h"
+#include "core.h"
+
+int main() {
+    auto app = std::make_shared<App>();
+
+    app->command("add", makeCommand([](std::shared_ptr<Item> args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    }));
+    app->command("greet", makeCommand([](std::shared_ptr<Item> args) {
+        return createString("hello, " + requiredString(args, "name"));
+    }));
+    app->command("fail", makeCommand([](std::shared_ptr<Item>) -> std::shared_ptr<Item> {
+        throw std::runtime_error("this command always fails");   // reaches the page as command_failed
+    }));
+
+    if (!app->openPage("My app", 640, 420, false)) return 1;
+    app->run();
+    app->close();
+    return 0;
+}
+```
+
+```
+PAGE=examples/cpp/index.html bash scripts/build.sh examples/cpp/main.cpp out/cpp.exe
+```
+
+The page is the same, and so are the framework's limits: the file gate, the program list, the command lists and the request limits are still checked CeeLing, and a page reaches only what you allowed. What changes is that the commands you write in C++ are ordinary C++: the CeeLing compiler does not check them for dangling references or use after move, and inserts no bounds or null checks. Keep those commands in CeeLing if you want the guarantee. The complete program is [examples/cpp](examples/cpp/), with a headless check, and the rules are in [appendix C](docs/manual/appendix-cpp.md) of the manual.
+
+</details>
+
 ## Compared with Tauri and Electron
 
 The same program in each: the four commands above and a page that calls them. Measured on 2026-11-11 on one Windows 11 machine with 32 cores.
