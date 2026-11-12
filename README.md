@@ -52,8 +52,9 @@ Against Tauri 2.12.5 (Rust 1.98, MSVC), the same two commands and the same page,
 |---|---|---|---|
 | executable | **1.2 MB** | 8.6 MB | 3.1 MB |
 | build from nothing | **14 s** | 56 s | 85 s |
+| after editing the program itself, rebuild | 12 s | 13 s | 47 s |
 
-All three were launched and stayed running for five seconds. Read the comparison for what it is: one trivial program, one machine (32 cores), one build of each; start-up time and memory were not measured. The Pronao program is smaller partly because it has less in it: Tauri's runtime brings a plugin system, a permission system and its own event and asset machinery. Electron ships a copy of Chromium and Node and is far larger; I did not build one.
+All three were launched and stayed running for five seconds. The size and the clean build are where Pronao is clearly ahead; for the edit-and-rebuild loop it is about level with Tauri's default release build (Tauri's debug profile, which `tauri dev` uses, was not measured). Read the comparison for what it is: one trivial program, one machine (32 cores), one build of each; start-up time and memory were not measured. The Pronao program is smaller partly because it has less in it: Tauri's runtime brings a plugin system, a permission system and its own event and asset machinery. Electron ships a copy of Chromium and Node and is far larger; I did not build one.
 
 > **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
 
