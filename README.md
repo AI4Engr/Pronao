@@ -168,7 +168,7 @@ CeeLing checks the command table and everything the commands do with their own d
 
 ## FAQ
 
-**Is it an alternative to Electron or Tauri?** For small programs, in one way: it is much smaller, and the backend is checked. It has far fewer features, no installer or auto-update, and has been tried only on Windows. If you need those, use Tauri or Electron.
+**Is it an alternative to Electron or Tauri?** For small programs, in one way: it is much smaller, and the backend is checked. It has far fewer features, no installer or auto-update, and a window only on Windows (on Linux the files, programs and watching run under the tests, but there is no window yet). If you need those, use Tauri or Electron.
 
 **Who is it for?** People who want to write the backend of a desktop program in CeeLing and have the compiler reject its memory errors, and who want one small `.exe` to hand to someone.
 
