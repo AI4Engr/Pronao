@@ -16,6 +16,7 @@ Each folder is a complete program for one part of the [manual](../docs/manual/RE
 | [background](background/) | an async command on a worker: progress events, a deadline, cancelling | [7](../docs/manual/07-background-work.md) |
 | [limits](limits/) | request size and flood limits, a command list | [8](../docs/manual/08-security.md) |
 | [site](site/) | a front end of several files served from memory, and a release build | [9](../docs/manual/09-web-ui-and-shipping.md), [10](../docs/manual/10-distribution.md) |
+| [cpp](cpp/) | the same kind of program written in C++ against the generated headers | [C](../docs/manual/appendix-cpp.md) |
 | [template](template/) | what `scripts/new_project.sh` copies for a project of your own | [1](../docs/manual/01-getting-started.md) |
 
 Build one from the repository root (the exact line is in each README), for example:
@@ -24,4 +25,4 @@ Build one from the repository root (the exact line is in each README), for examp
 PAGE=examples/files/index.html EXTRA=examples/files/commands.clg bash scripts/build.sh examples/files/main.clg out/files.exe
 ```
 
-`bash tests/run_examples.sh` builds every example and runs every check (182 checks, about 8 minutes: each example is compiled twice). The pages' scripts are only checked for syntax, and what a real window shows (a menu bar, a toast, a tray click, a drag from the file manager) is not tested here; the real-window scripts in `tests/` cover part of that.
+`bash tests/run_examples.sh` builds every example and runs every check (196 checks, about 8 minutes: each example is compiled twice). The pages' scripts are only checked for syntax, and what a real window shows (a menu bar, a toast, a tray click, a drag from the file manager) is not tested here; the real-window scripts in `tests/` cover part of that.

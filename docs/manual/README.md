@@ -16,6 +16,7 @@ Each chapter says what the application writes in CeeLing, what the page calls in
 | 10 | [Giving a program to someone else](10-distribution.md) | the runtime check, the release build, signing, a checklist |
 | A | [One command, from the page to the reply](appendix-command-journey.md) | `fs.read` with the generated C++ beside the CeeLing |
 | B | [Compile errors you will meet](appendix-compile-errors.md) | what each CeeLing message meant and the fix |
+| C | [Writing the program in C++](appendix-cpp.md) | build a `.cpp` main against the generated headers; the rules a C++ command follows; what is not checked |
 | | [Source map](source-map.md) | where things are in the repository |
 
 What the language did to this program, with counts: [chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-pronao.md).

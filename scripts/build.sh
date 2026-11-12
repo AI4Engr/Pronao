@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build an pronao program.
-#   scripts/build.sh <main.clg> <out.exe> [--headless]
+# Build a Pronao program.
+#   scripts/build.sh <main.clg or main.cpp> <out.exe> [--headless]
+# A main.cpp is plain C++ that includes the generated headers (app.h, core.h, cjson_item.h ...) and calls the framework directly; it is compiled with -I <work dir>.
 # Every .clg (cjson-cling's library, src/*.clg, the main) is transpiled to its own .cpp/.h, compiled separately and linked
 # with the native layer in shim/ (shim/win or shim/posix for the OS). --headless links the test doubles in tests/doubles
 # instead of the window and the dialogs (no webview, no window).
@@ -37,8 +38,13 @@ for f in cjson_item cjson_api cjson_parse cjson_print; do sync "$CJSON/src/$f.cl
 SRC="${SRC:-$HERE/src}"      # (tests/negative_controls.sh builds from a doctored copy)
 for f in $MODULES; do sync "$SRC/$f.clg" "$WORK/$f.clg"; done
 for x in ${EXTRA:-}; do sync "$x" "$WORK/$(basename "$x")"; done
-MAIN_NAME="$(basename "$MAIN" .clg)"
-sync "$MAIN" "$WORK/$MAIN_NAME.clg"
+CPP_MAIN=""; case "$MAIN" in *.cpp) CPP_MAIN=1 ;; esac
+if [ -n "$CPP_MAIN" ]; then
+    MAIN_NAME=""            # (a C++ main is compiled as it is, below: nothing to transpile)
+else
+    MAIN_NAME="$(basename "$MAIN" .clg)"
+    sync "$MAIN" "$WORK/$MAIN_NAME.clg"
+fi
 
 # the page and the bridge script are compiled in as two strings (raw literals), so a program is one file
 EMBED="$WORK/embedded.cpp"
@@ -109,6 +115,10 @@ for f in $ALL_MODULES; do
     OBJS+=("$WORK/$f.o")
     spawn cc "$WORK/$f.cpp" "$WORK/$f.o" $CXXFLAGS
 done
+if [ -n "$CPP_MAIN" ]; then
+    OBJS+=("$WORK/main_cpp.o")
+    spawn cc "$MAIN" "$WORK/main_cpp.o" $CXXFLAGS -I "$WORK"
+fi
 
 # the native layer: shared files, the OS's files, and either the window or the test doubles
 SHIM="${SHIM:-$HERE/shim}"      # (tests/negative_controls.sh builds against a doctored copy)

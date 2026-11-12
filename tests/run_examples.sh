@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds and checks every example in examples/ that has a headless check (tests/examples/<name>_check.clg):
+# Builds and checks every example in examples/ that has a headless check (tests/examples/<name>_check.clg, or _check.cpp for an example written in C++):
 #   1. the real program (examples/<name>/main.clg) must compile and link against the test doubles;
 #   2. the check program drives the example's commands through the real dispatcher and must print PASS lines only.
 #   bash tests/run_examples.sh [name ...]        (no names: every example)
@@ -15,8 +15,8 @@ export APP_PROC_ECHO="$W/proc_helper.exe"
 
 names=("$@")
 if [ ${#names[@]} -eq 0 ]; then
-    for c in "$HERE"/tests/examples/*_check.clg; do
-        [ -f "$c" ] && names+=("$(basename "$c" _check.clg)")
+    for c in "$HERE"/tests/examples/*_check.clg "$HERE"/tests/examples/*_check.cpp; do
+        [ -f "$c" ] && { n="$(basename "$c")"; names+=("${n%_check.*}"); }
     done
 fi
 
@@ -29,15 +29,19 @@ for name in "${names[@]}"; do
     assets=""; [ -d "$d/dist" ] && assets="$d/dist"
     page=""; [ -f "$d/index.html" ] && page="$d/index.html"
 
+    # an example is written in CeeLing (main.clg + check.clg) or in C++ (main.cpp + check.cpp, commands in commands.h)
+    main="$d/main.clg"; check="$HERE/tests/examples/${name}_check.clg"; support="$HERE/tests/support.clg $mod"
+    if [ -f "$d/main.cpp" ]; then main="$d/main.cpp"; check="$HERE/tests/examples/${name}_check.cpp"; support=""; fi
+
     # 1. the real program compiles
     if ! ( PAGE="$page" ASSETS="$assets" EXTRA="$mod" WORK="$W/$name.main.work" OPT=-O0 \
-           bash "$HERE/scripts/build.sh" "$d/main.clg" "$W/$name.main.exe" --headless > "$W/$name.main.log" 2>&1 ); then
+           bash "$HERE/scripts/build.sh" "$main" "$W/$name.main.exe" --headless > "$W/$name.main.log" 2>&1 ); then
         echo "FAIL $name: main.clg does not build"; tail -5 "$W/$name.main.log"; OK=0; continue
     fi
 
     # 2. the check
-    if ! ( ASSETS="$assets" EXTRA="$HERE/tests/support.clg $mod" WORK="$W/$name.check.work" OPT=-O0 \
-           bash "$HERE/scripts/build.sh" "$HERE/tests/examples/${name}_check.clg" "$W/$name.check.exe" --headless > "$W/$name.check.log" 2>&1 ); then
+    if ! ( ASSETS="$assets" EXTRA="$support" WORK="$W/$name.check.work" OPT=-O0 \
+           bash "$HERE/scripts/build.sh" "$check" "$W/$name.check.exe" --headless > "$W/$name.check.log" 2>&1 ); then
         echo "FAIL $name: the check does not build"; tail -5 "$W/$name.check.log"; OK=0; continue
     fi
     mkdir -p "$W/$name.run"

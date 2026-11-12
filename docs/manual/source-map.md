@@ -10,7 +10,7 @@ Where things are in the repository.
 | `src/assets.clg` | the program's own web files: types, names, page aliases, `publishSite` |
 | `src/menu.clg` | menus: `Menu` (the rules for ids, labels, shortcuts) and the flat spec the native layer builds a menu from |
 | `scripts/sign.ps1`, `scripts/check_signature.ps1` | sign an exe with a certificate file or a certificate in the store; say what the signature of an exe is |
-| `docs/manual/` | the user manual: ten chapters, the command journey and the compile errors |
+| `docs/manual/` | the user manual: ten chapters, the command journey, the compile errors and writing the program in C++ |
 | `scripts/make_icon.py` | a placeholder `.ico` (the build option `ICON=`) |
 | `src/theme.clg` | the colour scheme: `ThemeState` (system / light / dark), its event and commands |
 | `src/drops.clg` | files dragged onto a window: `DropRules` (the grants, the limit) |

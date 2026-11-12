@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>C++ commands</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  pre { background: #f4f4f4; padding: 1em; min-height: 6em; }
+</style></head>
+<body>
+<h1>Commands written in C++</h1>
+<button id="add">add 2 + 3</button>
+<button id="mean">mean of 4, 8, 12</button>
+<button id="greet">greet Ada</button>
+<button id="fail">fail</button>
+<button id="save">save a note</button>
+<button id="outside">read ../outside.txt</button>
+<pre id="out"></pre>
+<script>
+  const out = document.getElementById('out');
+  const run = async (label, call) => {
+    try {
+      out.textContent = label + ' -> ' + JSON.stringify(await call());
+    } catch (e) {
+      out.textContent = label + ' rejected (' + e.code + '): ' + e.message;
+    }
+  };
+  const on = (id, label, call) => { document.getElementById(id).onclick = () => run(label, call); };
+  on('add', 'add', () => pronao.invoke('add', [2, 3]));
+  on('mean', 'mean', () => pronao.invoke('mean', [4, 8, 12]));
+  on('greet', 'greet', () => pronao.invoke('greet', { name: 'Ada' }));
+  on('fail', 'fail', () => pronao.invoke('fail'));
+  on('save', 'write', () => pronao.fs.write({ path: 'note.txt', text: 'written from the page', mode: 'replace' }));
+  on('outside', 'read', () => pronao.fs.read({ path: '../outside.txt' }));
+</script>
+</body>
+</html>
