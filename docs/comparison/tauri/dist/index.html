@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>My app</title></head>
+<body>
+<h1>My app</h1>
+<pre id="out">(results appear here)</pre>
+<script>
+  const invoke = window.__TAURI__.core.invoke;
+  const out = document.getElementById('out');
+  (async () => {
+    const lines = [];
+    lines.push('add 2 + 3 = ' + await invoke('add', { a: 2, b: 3 }));
+    lines.push('mean = ' + await invoke('mean', { values: [4, 8, 12] }));
+    lines.push(await invoke('greet', { name: 'Ada' }));
+    try { await invoke('fail'); } catch (e) { lines.push('fail -> ' + JSON.stringify(e)); }
+    out.textContent = lines.join('\n');
+  })();
+</script>
+</body>
+</html>

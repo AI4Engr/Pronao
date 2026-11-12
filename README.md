@@ -2,9 +2,28 @@
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Status: prototype](https://img.shields.io/badge/status-prototype-orange.svg)
 
-**Desktop apps with a web UI and a [CeeLing](https://github.com/AI4Engr/CeeLing) backend, in the spirit of Wails and Tauri.** The window is the system WebView (WebView2 on Windows), the page is HTML and JavaScript, and the commands the page calls are CeeLing code: checked for dangling references and use after move, compiled to plain C++.
+**Desktop apps with a web UI and a checked CeeLing backend.**
 
-A complete program: four commands and a window. There are eleven more in [examples/](examples/), one for each part below.
+Pronao is a framework for building small desktop programs: the window is the system's WebView, the page is HTML and JavaScript, and the commands the page calls are written in [CeeLing](https://github.com/AI4Engr/CeeLing), a memory-safe dialect of C++. The compiler rejects dangling references and use after move in your commands, and the page can reach only what the program chose to allow: a folder, a list of programs, a list of commands.
+
+A program is one `.exe` with no installer. The one below is **1.2 MB** and builds from nothing in 14 seconds; the same four commands in Tauri are 3.1 to 8.6 MB and in Electron 110 MB ([measurements and how to repeat them](docs/comparison/README.md)).
+
+> **Status: prototype.** Windows is the only platform with a window. There are no releases: build from source.
+
+## Quick start
+
+On Windows with MinGW-w64, the [CeeLing compiler](https://github.com/AI4Engr/CeeLing) and [cJSON-cling](https://github.com/AI4Engr/cJSON-cling) checked out next to this repository:
+
+```bash
+bash scripts/fetch.sh                      # once: webview and WebView2 headers, pinned and hash-checked
+bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh
+```
+
+That builds `out/my-app.exe`: a page, a `main.clg` with one command, and a build script. To try what is here first, `PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe`.
+
+## A complete program
+
+Four commands and a window. There are eleven more programs in [examples/](examples/), one for each part below.
 
 ```
 #include "app.clh"
@@ -55,21 +74,23 @@ try { await pronao.invoke('fail'); }
 catch (e) { console.log(e); }                       // {code: "command_failed", message: "this command always fails"}
 ```
 
-The commands are CeeLing, so the compiler checks them: a dangling reference or a use after move in a command is a compile error, not a crash in front of a user. The page can call only what the program registered.
+## What it does
 
-## Small
+Everything is off until the program turns it on, and a page can ask only for what the program allowed.
 
-The program above, built for release, is one **1.2 MB** `.exe`: no installer, no DLLs, and it uses the WebView that Windows already has. Measured on one 32-core Windows machine, the same four commands and the same page in each framework:
+* **Commands and events:** named commands with checked arguments, events from CeeLing to the page, errors as `{code, message}`.
+* **Files:** an allowed-folder policy decided on the open handle, not on the text of a path; read, write, list, stat, remove.
+* **Settings and folders:** per-user data folders and a declared, typed settings file.
+* **Dialogs and drag and drop:** a pick or a drop becomes a grant for exactly that file.
+* **Watching folders:** change events, merged and re-checked against the permission.
+* **Programs and links:** a fixed list of programs with typed slots and no shell; addresses and files opened by the system.
+* **Windows:** title, size, position, full screen, frameless, modal, several windows, remembered places, one running copy, an icon.
+* **Menus and tray:** menu bar and shortcuts, tray icon, pop-up menus, notifications, light and dark.
+* **Background work:** async commands on a worker pool, with cancelling and deadlines.
+* **Limits on a page:** request size and flood limits, a navigation guard, command lists, release builds without developer tools.
+* **A front end of many files and shipping:** a site served from memory, a development server, a release `.exe`, version information, signing.
 
-| | Pronao | Tauri 2.12 (`--release`) | Tauri, size-tuned | Electron 45 (one portable `.exe`) |
-|---|---|---|---|---|
-| program | **1.2 MB** (2.0 MB if it prints with `std::cout`) | 8.6 MB | 3.1 MB | 110 MB (373 MB unpacked) |
-| build from nothing | 14 s | 56 s | 93 s | 103 s |
-| edit one command, rebuild | 12 s | 13 to 16 s | 51 s | 103 s |
-
-Electron has no compile step, but turning the app into a single `.exe` (electron-builder, `portable`, default compression) compresses a copy of Chromium and Node, and it takes the same 103 s every time. Packaging only the folder (`@electron/packager`) took 4 s and gives 373 MB of files, not an `.exe`. Pronao and Tauri need Microsoft's WebView2 Runtime; Electron brings its own browser. One trivial program, one machine, one build of each; start-up time and memory were not measured. Tauri brings more runtime (plugins, a permission system) than Pronao does, which is part of the size.
-
-> **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
+Each has a chapter in the [manual](docs/manual/README.md) and a program in [examples/](examples/README.md).
 
 ## How it works
 
@@ -80,62 +101,41 @@ CeeLing main thread:  app_next_call()  <-- blocks on the queue
                       app_return(id, status, json) --> resolves / rejects the page's promise
 ```
 
-Two layers, and the line between them is the point:
+* **`src/`** is CeeLing, checked by the compiler. Every decision is here: which files a page may reach, which programs it may start, what a dialog may say.
+* **`shim/`** is hand-written C++ and is trusted, not checked (2,409 lines of code for Windows, 1,363 for Linux, counted by `scripts/shim_lines.sh`). It opens the window, queues calls, opens files and runs programs, as small primitives. It holds no application logic.
 
-* **`src/`** is CeeLing, checked by the compiler. Every decision is here: which files a page may reach, which programs it may start, what a dialog may say, what a folder watch reports.
-* **`shim/`** is hand-written C++ and is trusted, not checked (2,409 lines of code for a Windows build, 1,363 for Linux, counted by `scripts/shim_lines.sh`). It opens the window, queues calls, opens files, runs programs and shows dialogs, as small primitives that take and return numbers and strings. **It holds no application logic.**
+CeeLing runs the loop, so no callback has to cross into CeeLing. [How it works](docs/manual/02-how-it-works.md) has the details.
 
-CeeLing runs the loop, so no callback ever has to cross into CeeLing. The page never touches the operating system: it can only call the commands the application registered, and each command checks its own arguments. [How it works](docs/manual/02-how-it-works.md) has the details; [what is checked and what is trusted](docs/manual/08-security.md) says exactly where the guarantee stops.
+## Platforms
 
-## Quick start
-
-Windows with MinGW-w64, the [CeeLing compiler](https://github.com/AI4Engr/CeeLing) and [cJSON-cling](https://github.com/AI4Engr/cJSON-cling) checked out next to this repository:
-
-```bash
-bash scripts/fetch.sh            # webview 0.12.0 and WebView2.h (pinned, sha256-checked) into third_party/
-PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
-./hello.exe                      # a window with three buttons
-
-bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh      # a project of your own: a page, a main.clg, a build script
-bash tests/run_headless.sh       # ~20 s, 17 programs, 982 checks, no window needed
-```
-
-[Getting started](docs/manual/01-getting-started.md) lists every test script and what each one proves.
-
-## What it can do
-
-Everything below is off until the application turns it on, and a page can ask only for what the application allowed.
-
-| Area | What | Manual | Example |
-|---|---|---|---|
-| Commands and events | named commands with checked arguments, events from CeeLing to the page, structured errors | [2](docs/manual/02-how-it-works.md) | [commands](examples/commands/) |
-| Files | an allowed-folder policy checked against the open handle, not the path text; read, write, list, stat, remove | [3](docs/manual/03-files-and-data.md) | [files](examples/files/) |
-| Settings, folders | per-user data folders and a declared, typed settings file | [3](docs/manual/03-files-and-data.md) | [settings](examples/settings/) |
-| Dialogs, drag and drop | open, save, folder, message; a pick or a drop becomes a grant for exactly that file | [3](docs/manual/03-files-and-data.md) | [dialogs](examples/dialogs/) |
-| Watching folders | change events, merged and re-checked against the permission | [3](docs/manual/03-files-and-data.md) | [watch](examples/watch/) |
-| Programs and links | a fixed list of programs with typed slots, no shell; links and files opened by the system | [4](docs/manual/04-programs-and-links.md) | [programs](examples/programs/) |
-| Windows | title, size, position, full screen, always on top, frameless, modal, several windows, remembered places, one running copy, an icon | [5](docs/manual/05-windows.md) | [windows](examples/windows/) |
-| Menus and tray | menu bar and shortcuts, tray icon, pop-up menus, notifications, light and dark | [6](docs/manual/06-menus-tray-notifications.md) | [menus](examples/menus/) |
-| Background work | async commands on a worker pool, cancelling, deadlines, `Channel` and pumps | [7](docs/manual/07-background-work.md) | [background](examples/background/) |
-| Limits on a page | request size and flood limits, navigation guard, command lists, release builds without developer tools | [8](docs/manual/08-security.md) | [limits](examples/limits/) |
-| A front end of many files, shipping | a site served from memory, a dev server, a release exe, signing | [9](docs/manual/09-web-ui-and-shipping.md) | [site](examples/site/) |
-
-Every example is a complete program with a headless check that includes the inputs it must refuse (`bash tests/run_examples.sh`: 182 checks). They are listed in [examples/README.md](examples/README.md).
+| | |
+|---|---|
+| Windows 10 and 11 | the platform: the headless suite, real-window tests, a release build, signing. Needs the WebView2 Runtime (Windows 11 has it; `app.checkRuntime` says so on a computer without it) |
+| Linux | files, programs, folder watching and opening links are implemented and run under the headless suite and the sanitizers (WSL); no window, dialogs, menu or tray |
+| macOS | not tried |
 
 ## What is and is not checked
 
-CeeLing checks the command table and everything the commands do with their own data: no dangling references, no use after move, no raw pointers, bounds and null checks at run time. For threads the claim is narrow: in the CeeLing code that was checked, a spawned job can reach only its own copies and its own allocations, so there are no data races through `spawn`. **Not checked, and trusted:** the native layer (`shim/`), the `webview` library, the browser engine, every `ext_fn` declaration (a wrong signature is silently believed) and any other C++ you link in. Nothing here is "thread-safe".
+CeeLing checks the command table and everything the commands do with their own data: no dangling references, no use after move, no raw pointers, bounds and null checks at run time. For threads the claim is narrow: in the CeeLing code that was checked, a spawned job can reach only its own copies and its own allocations, so there are no data races through `spawn`. **Not checked, and trusted:** the native layer (`shim/`), the `webview` library, the browser engine, every `ext_fn` declaration (a wrong signature is silently believed) and any other C++ you link in. Nothing here is "thread-safe". What needs a real screen (how a menu is drawn, a toast, a real mouse drag) is not seen by the automated tests; each manual chapter says what its tests do and do not see.
 
-Behaviour that needs a real screen (how a menu is drawn, a toast, a real mouse drag) cannot be seen by the automated tests. Each manual chapter says what its tests do see and what they do not.
+## FAQ
+
+**Is it an alternative to Electron or Tauri?** For small programs, in one way: it is much smaller, and the backend is checked. It has far fewer features, no installer or auto-update, and has been tried only on Windows. If you need those, use Tauri or Electron.
+
+**Who is it for?** People who want to write the backend of a desktop program in CeeLing and have the compiler reject its memory errors, and who want one small `.exe` to hand to someone.
+
+**Why "Pronao"?** The *pronaos* is the porch in front of a Greek temple's inner room. The page stands in the porch and may ask; what happens inside is decided by checked code.
 
 ## Documentation
 
-* **[User manual](docs/manual/README.md)**: ten chapters and two appendices, from getting started to shipping.
-* [Giving a program to someone else](docs/manual/10-distribution.md): the runtime check, the release build, signing, a checklist.
-* [One command, from the page to the reply](docs/manual/appendix-command-journey.md): `fs.read` with the generated C++ beside the CeeLing.
-* [Compile errors you will meet](docs/manual/appendix-compile-errors.md) and the fix for each.
+* **[User manual](docs/manual/README.md):** ten chapters and two appendices, from getting started to shipping, including [what a command does from the page to the reply](docs/manual/appendix-command-journey.md) and [the compile errors you will meet](docs/manual/appendix-compile-errors.md).
+* **[Examples](examples/README.md)** and the [comparison with Tauri and Electron](docs/comparison/README.md).
 * [Source map](docs/manual/source-map.md): where things are in the repository.
 * [Chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-pronao.md): what the language did to this program, with counts of the checks it inserted and what they cost.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -1,0 +1,32 @@
+{
+  "name": "electron-hello",
+  "version": "0.1.0",
+  "main": "main.js",
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.example.hello",
+    "productName": "electron-hello",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "compression": "normal"
+  },
+  "scripts": {
+    "dist": "electron-builder --win portable --x64"
+  }
+}

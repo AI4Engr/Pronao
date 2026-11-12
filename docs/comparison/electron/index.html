@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>My app</title></head>
+<body>
+<h1>My app</h1>
+<pre id="out">(results appear here)</pre>
+<script>
+  const out = document.getElementById('out');
+  (async () => {
+    const lines = [];
+    lines.push('add 2 + 3 = ' + await app.invoke('add', 2, 3));
+    lines.push('mean = ' + await app.invoke('mean', [4, 8, 12]));
+    lines.push(await app.invoke('greet', 'Ada'));
+    try { await app.invoke('fail'); } catch (e) { lines.push('fail -> ' + e.message); }
+    out.textContent = lines.join('\n');
+  })();
+</script>
+</body>
+</html>

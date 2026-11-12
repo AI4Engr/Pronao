@@ -1,0 +1,36 @@
+#include "app.clh"
+
+int main() {
+    App app = new App();
+
+    app.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    app.command("mean", closure Command [] (Item args) {
+        int n = getArraySize(args);
+        if (n == 0) {
+            throw "invalid_argument: give at least one number";
+        }
+        double total = 0.0;
+        int i = 0;
+        while (i < n) {
+            total = total + numberAt(args, i);
+            i = i + 1;
+        }
+        return createNumber(total / n);
+    });
+    app.command("greet", closure Command [] (Item args) {
+        string name = requiredString(args, "name");
+        return createString("hello, " + name);
+    });
+    app.command("fail", closure Command [] (Item args) {
+        throw "this command always fails";
+    });
+
+    if (!app.openPage("My app", 640, 420, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}
