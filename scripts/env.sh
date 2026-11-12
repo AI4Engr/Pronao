@@ -11,7 +11,7 @@ if [ -z "${CLING:-}" ]; then
     done
 fi
 if [ -z "${CLING:-}" ] && command -v cling >/dev/null 2>&1; then CLING="$(command -v cling)"; fi
-[ -n "${CLING:-}" ] && [ -f "$CLING" ] || pronao_fail "the CeeLing compiler was not found. Build CeeLing (dev.bat build / ./dev.sh build) in a folder next to pronao, or set CLING=<path to cling.exe>."
+[ -n "${CLING:-}" ] && [ -f "$CLING" ] || pronao_fail "the CeeLing compiler was not found. Build CeeLing (cmake -S . -B build && cmake --build build) in a folder next to pronao, or set CLING=<path to cling.exe>."
 
 if [ -z "${CJSON:-}" ]; then
     for candidate in "$PRONAO_PARENT/cJSON-cling" "$PRONAO_PARENT/cjson-cling"; do

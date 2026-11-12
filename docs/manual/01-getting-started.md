@@ -5,7 +5,7 @@ Fetch the dependencies, build the example, make a project of your own, run the t
 ## Build and test
 
 ```
-bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 1.0.1150.38 (pinned, sha256-checked) into third_party/
+bash scripts/fetch.sh                 # downloads webview 0.12.0 and the WebView2 SDK 1.0.2210.55 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
 bash tests/run_headless.sh            # ~20 s, 17 programs, about 1,000 checks (982 on 2026-11-09); each prints "N passed, 0 failed" (SLOW=1: build at -O1)
@@ -26,7 +26,7 @@ bash tests/negative_controls.sh       # ~65 s: removes one check at a time from 
 ```
 
 Requirements: the CeeLing compiler, cJSON-cling, a C++ compiler (MinGW-w64 on Windows), the WebView2 runtime for window runs, WSL with
-g++ for the sanitizers. Windows is the only platform tried. The scripts find the tools themselves when CeeLing, cJSON-cling and Pronao
+g++ for the sanitizers. Windows is the only platform with a window; Linux runs the headless suite and the sanitizers (see the README's Platforms table). The scripts find the tools themselves when CeeLing, cJSON-cling and Pronao
 sit side by side (`../CeeLing/build/cling.exe`, `../cJSON-cling`) and `g++` is on `PATH`; otherwise set `CLING`, `CJSON`, `CXX`
 (`scripts/env.sh` says what is missing). `WSL_DISTRO` picks the WSL distribution for the sanitizer run (default: WSL's default);
 `TMPDIR` is where the test scripts work.

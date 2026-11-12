@@ -6,24 +6,33 @@
 
 Pronao is a framework for building small desktop programs: the window is the system's WebView, the page is HTML and JavaScript, and the commands the page calls are written in [CeeLing](https://github.com/AI4Engr/CeeLing), a memory-safe dialect of C++, or directly in C++ ([both shown below](#or-write-it-in-c)). For commands written in CeeLing the compiler rejects dangling references and use after move, and the page can reach only what the program chose to allow: a folder, a list of programs, a list of commands.
 
-A program is one `.exe` with no installer. The one below is **1.2 MB** and builds from nothing in 14 seconds; the same four commands in Tauri are 3.1 to 8.6 MB and in Electron 110 MB ([measurements and how to repeat them](docs/comparison/README.md)).
+A program is one `.exe` with no installer. The example program below is **1.2 MB** and builds from nothing in 14 seconds; the same four commands in Tauri are 3.1 to 8.6 MB and in Electron 110 MB ([measurements and how to repeat them](docs/comparison/README.md)).
 
-> **Status: prototype.** Windows is the only platform with a window. There are no releases: build from source.
+> **Status: prototype.** The API is not stable and may break before 1.0. Windows is the only platform with a window. There are no releases: build from source.
+>
+> **What the guarantees cover:** only CeeLing code compiled and checked by the CeeLing compiler. The native layer (`shim/`), the WebView and browser engine, any C++ library you link, commands you write in C++ and every `ext_fn` declaration are trusted, not checked. Nothing here is "thread-safe".
 
 ## Quick start
 
-On Windows with MinGW-w64, the [CeeLing compiler](https://github.com/AI4Engr/CeeLing) and [cJSON-cling](https://github.com/AI4Engr/cJSON-cling) checked out next to this repository:
+You need these, and all the scripts are `bash` (Git Bash or MSYS2 on Windows; PowerShell is not used or tried):
+
+| Needed | Why | Notes |
+|---|---|---|
+| Windows 10 or 11 | the window | the WebView2 Runtime (Windows 11 has it) |
+| MinGW-w64 (`g++` on `PATH`), `curl`, Python 3 | compile the program; `fetch.sh` downloads and unpacks | no particular version is pinned; developed with the MSYS2 MinGW-w64 toolchain |
+| [CeeLing](https://github.com/AI4Engr/CeeLing) | the compiler | clone it next to this repository and build it (`cmake -S . -B build && cmake --build build`), so that `../CeeLing/build/cling.exe` exists; or set `CLING=` |
+| [cJSON-cling](https://github.com/AI4Engr/cJSON-cling) | the JSON the commands receive | clone it next to this repository (`../cJSON-cling`); or set `CJSON=` |
 
 ```bash
-bash scripts/fetch.sh                      # once: webview and WebView2 headers, pinned and hash-checked
+bash scripts/fetch.sh                      # once: webview 0.12.0 and the WebView2 SDK 1.0.2210.55 into third_party/ (pinned, SHA-256 checked, not committed)
 bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh
 ```
 
-That builds `out/my-app.exe`: a page, a `main.clg` with one command, and a build script. To try what is here first, `PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe`.
+That builds `out/my-app.exe`: a page, a `main.clg` with one command, and a build script; run it from there. To try what is here first, `PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe`. `scripts/env.sh` says what is missing.
 
 ## A complete program
 
-Four commands and a window. There are twelve more programs in [examples/](examples/), one for each part below and one written in C++ (see [Or write it in C++](#or-write-it-in-c)).
+Four commands and a window. More programs are in [examples/](examples/), one for each part below and one written in C++ (see [Or write it in C++](#or-write-it-in-c)).
 
 ```
 #include "app.clh"
@@ -76,7 +85,7 @@ catch (e) { console.log(e); }                       // {code: "command_failed", 
 
 ## Or write it in C++
 
-Pronao is CeeLing compiled to C++, so the framework is also a C++ library: write the program in plain C++, include the headers the compiler generated, and call it. Use this when a command needs a C++ library, or when your team already writes C++. Three of the same commands:
+Pronao is written in CeeLing and compiled to C++, so the framework is also a C++ library: write the program in plain C++, include the headers the compiler generated, and call it. Use this when a command needs a C++ library, or when your team already writes C++. Three of the same commands:
 
 ```cpp
 #include "app.h"
@@ -142,6 +151,8 @@ Each has a chapter in the [manual](docs/manual/README.md) and a program in [exam
 
 ## How it works
 
+A simplified flow (it leaves out events, worker threads and windows):
+
 ```
 page JS --pronao.invoke--> webview bind callback [UI thread] --> mutex queue (shim)
 CeeLing main thread:  app_next_call()  <-- blocks on the queue
@@ -161,6 +172,10 @@ CeeLing runs the loop, so no callback has to cross into CeeLing. [How it works](
 | Windows 10 and 11 | the platform: the headless suite, real-window tests, a release build, signing. Needs the WebView2 Runtime (Windows 11 has it; `app.checkRuntime` says so on a computer without it) |
 | Linux | files, programs, folder watching and opening links are implemented and run under the headless suite and the sanitizers (WSL); no window, dialogs, menu or tray |
 | macOS | not tried |
+
+## Not a good fit (yet)
+
+Pronao is not a good choice today if you need a window on macOS or Linux, an installer or auto-update, a plugin ecosystem, a stable API, or a track record: it is a prototype, and its window has been tried on one platform.
 
 ## What is and is not checked
 
@@ -183,7 +198,14 @@ CeeLing checks the command table and everything the commands do with their own d
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). To run the tests from the repository root:
+
+```bash
+bash tests/run_headless.sh       # about 20 s, no window; runs on Windows and under Linux/WSL
+bash tests/run_examples.sh       # builds and checks every example (several minutes)
+bash tests/run_sanitizers.sh     # AddressSanitizer, UBSan, ThreadSanitizer; needs WSL with g++
+bash tests/run_window_selftest.sh   # a real WebView2 window; Windows only (more real-window scripts: tests/run_*_window.sh)
+```
 
 ## License
 
