@@ -4,19 +4,38 @@
 
 **Desktop apps with a web UI and a [CeeLing](https://github.com/AI4Engr/CeeLing) backend, in the spirit of Wails and Tauri.** The window is the system WebView (WebView2 on Windows), the page is HTML and JavaScript, and the commands the page calls are CeeLing code: checked for dangling references and use after move, compiled to plain C++.
 
-A complete program (`examples/hello` has a fuller one with a page; build it with the Quick start below):
+A complete program: four commands and a window.
 
 ```
 #include "app.clh"
 
 int main() {
     App app = new App();
+
     app.command("add", closure Command [] (Item args) {
         return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    app.command("mean", closure Command [] (Item args) {
+        int n = getArraySize(args);
+        if (n == 0) {
+            throw "invalid_argument: give at least one number";
+        }
+        double total = 0.0;
+        int i = 0;
+        while (i < n) {
+            total = total + numberAt(args, i);
+            i = i + 1;
+        }
+        return createNumber(total / n);
+    });
+    app.command("greet", closure Command [] (Item args) {
+        string name = requiredString(args, "name");
+        return createString("hello, " + name);
     });
     app.command("fail", closure Command [] (Item args) {
         throw "this command always fails";
     });
+
     if (!app.openPage("My app", 640, 420, false)) {
         return 1;
     }
@@ -26,35 +45,29 @@ int main() {
 }
 ```
 
-and the page it shows (`PAGE=index.html`), calling those commands:
+and the page it shows, calling them:
 
 ```js
-const sum = await pronao.invoke('add', [2, 3]);                 // 5
-try { await pronao.invoke('fail'); } catch (e) { console.log(e) }   // {code: "command_failed", message: "this command always fails"}
+await pronao.invoke('add', [2, 3]);                 // 5
+await pronao.invoke('mean', [4, 8, 12]);            // 8
+await pronao.invoke('greet', { name: 'Ada' });      // "hello, Ada"
+try { await pronao.invoke('fail'); }
+catch (e) { console.log(e); }                       // {code: "command_failed", message: "this command always fails"}
 ```
 
 The commands are CeeLing, so the compiler checks them: a dangling reference or a use after move in a command is a compile error, not a crash in front of a user. The page can call only what the program registered.
 
-## Small, and quick to build
+## Small
 
-The program above, built with `RELEASE=1`, is **one 1.2 MB `.exe`**: no installer, no runtime of its own, no DLLs next to it. The window is the system's WebView, so the program carries only your commands and the native layer, linked statically with unused code dropped. The only thing it needs from the computer is the Microsoft WebView2 Runtime (Windows 11 has it; an older Windows 10 may not, and `app.checkRuntime` says so with a message box instead of failing silently).
+The program above, built for release, is one **1.2 MB** `.exe`: no installer, no DLLs, and it uses the WebView that Windows already has. Measured on one 32-core Windows machine, the same four commands and the same page in each framework:
 
-| | Measured on 2026-11-11 (the program above) |
-|---|---|
-| `RELEASE=1`: windowed, symbols stripped | **1.2 MB** (1,238,016 bytes) |
-| default build (`-O1`, symbols kept for a debugger) | 2.9 MB |
-| a build from nothing: CeeLing to C++ to `g++`, all 20 modules and the native layer | **about 14 s** (three runs: 13.8, 14.0, 13.8) on a 32-core machine |
-| the same with a warm object cache | 11.7 s (the CeeLing step and the link are not cached) |
+| | Pronao | Tauri 2.12 (`--release`) | Tauri, size-tuned | Electron 45 |
+|---|---|---|---|---|
+| program | **1.2 MB** | 8.6 MB | 3.1 MB | 249 MB (373 MB with its files) |
+| build from nothing | 14 s | 56 s | 93 s | 4 s (package) |
+| edit one command, rebuild | 12 s | 13 to 16 s | 51 s | none (it is JavaScript) |
 
-Against Tauri 2.12.5 (Rust 1.98, MSVC), the same two commands and the same page, same machine, built from an empty target folder, dependencies already downloaded (420 crates compiled):
-
-| | Pronao | Tauri, default `--release` | Tauri, size-tuned (`opt-level = "s"`, `lto`, `codegen-units = 1`, `panic = "abort"`, `strip`) |
-|---|---|---|---|
-| executable | **1.2 MB** | 8.6 MB | 3.1 MB |
-| build from nothing | **14 s** | 56 s | 85 s |
-| after editing the program itself, rebuild | 12 s | 13 s | 47 s |
-
-All three were launched and stayed running for five seconds. The size and the clean build are where Pronao is clearly ahead; for the edit-and-rebuild loop it is about level with Tauri's default release build (Tauri's debug profile, which `tauri dev` uses, was not measured). Read the comparison for what it is: one trivial program, one machine (32 cores), one build of each; start-up time and memory were not measured. The Pronao program is smaller partly because it has less in it: Tauri's runtime brings a plugin system, a permission system and its own event and asset machinery. Electron ships a copy of Chromium and Node and is far larger; I did not build one.
+Electron has nothing to compile: packaging copies a prebuilt Chromium and Node, which is why it builds fast and weighs a quarter of a gigabyte. Pronao and Tauri need Microsoft's WebView2 Runtime; Electron brings its own browser. One trivial program, one machine, one build of each; start-up time and memory were not measured. Tauri brings more runtime (plugins, a permission system) than Pronao does, which is part of the size.
 
 > **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
 
