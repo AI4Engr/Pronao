@@ -20,7 +20,7 @@ concatenation.
 
 Errors reach the page as a rejected promise carrying `{code, message}`: `bad_request` (not JSON, not an array, command
 name not a string), `unknown_command`, `command_failed` (the handler threw, e.g. through `numberAt`/`stringAt`/`fieldOf`
-when the page sent the wrong shape). A malformed request never stops the application.
+when the page sent the wrong shape). A malformed request never stops the application. A handler can choose its own code: throwing `"out_of_stock: only 3 left"` rejects the promise with `{code: "out_of_stock", message: "only 3 left"}` (a thrown string with no `code: ` prefix is `command_failed`). See [examples/commands](../../examples/commands/).
 
 ## Events: CeeLing to the page
 

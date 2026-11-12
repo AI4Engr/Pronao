@@ -32,5 +32,5 @@ Where things are in the repository.
 | `scripts/ptr_table.py` | compares the pointer kinds and function bodies of two builds (used to check that a refactor did not change what the compiler inferred) |
 | `src/bridge.js` | defines `window.pronao.*`; embedded into the program at build time |
 | `shim/` | the native layer: `app_native.h` lists every primitive; `app_shim.cpp` window and queue; `win/` and `posix/` the OS parts |
-| `examples/hello/` | window with three buttons |
+| `examples/` | one complete program per part of the manual, each with a headless check in `tests/examples/` (see [examples/README.md](../../examples/README.md)) |
 | `tests/` | headless suites, real-window self-test, queue stress test, sanitizer and negative-control scripts; `tests/doubles/` stands in for the window and the dialogs |

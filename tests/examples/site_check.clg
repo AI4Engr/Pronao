@@ -1,0 +1,83 @@
+// examples/site: the addresses the program serves, through the same table lookup the real window uses (the test double calls it).
+// Built with ASSETS=examples/site/dist; APP_SITE_DIR is that folder, to compare the bodies with the files.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_os_env(string name, ref string out);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_fetch(string method, string url, ref int status, ref string headers, ref string body);
+ext_fn int app_test_take_window_log(int handle, ref string line);
+
+// one GET: the status (mine is 0 when the address is not the site's, so the network would get it), headers and body
+class Fetched {
+public:
+    int mine;
+    int status;
+    string headers;
+    string body;
+    Fetched(string url) {
+        status = 0;
+        headers = "";
+        body = "";
+        mine = app_test_fetch("GET", url, status, headers, body);
+    }
+    bool header(string line) {
+        return containsText(headers, line + "\r\n");
+    }
+};
+
+string fileText(string dir, string name) {
+    string text = "";
+    app_test_read_raw(dir + "/" + name, text);
+    return text;
+}
+
+int main() {
+    string dir = "";
+    if (app_os_env("APP_SITE_DIR", dir) != 1) {
+        std::cout << "FAIL APP_SITE_DIR is not set" << std::endl;
+        return 2;
+    }
+    string site = "http://app.localhost";
+    App app = new App();
+    installSite(app);
+    check("openSite takes the origin the manual shows", app.openSite("site example", 800, 560, false, site, ""));
+    string log = "";
+    check("the window opens on the site's first page", app_test_take_window_log(app.handle, log) == 1 && log == "open|http://app.localhost/");
+
+    Fetched index = new Fetched(site + "/");
+    check("/ is index.html", index.status == 200 && index.body == fileText(dir, "index.html") && index.header("Content-Type: text/html; charset=utf-8"));
+    check("the page links its script and stylesheet", containsText(index.body, "src=\"/app.js\"") && containsText(index.body, "href=\"/style.css\""));
+    Fetched script = new Fetched(site + "/app.js");
+    check("app.js is javascript, served as it is", script.status == 200 && script.body == fileText(dir, "app.js") && script.header("Content-Type: text/javascript; charset=utf-8"));
+    Fetched css = new Fetched(site + "/style.css");
+    check("style.css is css", css.status == 200 && css.body == fileText(dir, "style.css") && css.header("Content-Type: text/css; charset=utf-8"));
+    Fetched about = new Fetched(site + "/about.html");
+    check("the other page is html", about.status == 200 && about.body == fileText(dir, "about.html") && about.header("Content-Type: text/html; charset=utf-8"));
+    Fetched alias = new Fetched(site + "/about");
+    Fetched aliasSlash = new Fetched(site + "/about/");
+    check("/about and /about/ are the same page without .html", alias.status == 200 && alias.body == about.body && aliasSlash.status == 200 && aliasSlash.body == about.body);
+    check("nothing is cached", index.header("Cache-Control: no-store") && script.header("Cache-Control: no-store"));
+
+    Fetched missing = new Fetched(site + "/missing");
+    check("an unknown address is a 404, never the network", missing.mine == 1 && missing.status == 404);
+    Fetched hidden = new Fetched(site + "/commands.clg");
+    check("the program's own source is not in the folder, so not served", hidden.mine == 1 && hidden.status == 404);
+    Fetched escape = new Fetched(site + "/../main.clg");
+    check("dot-dot finds nothing", escape.mine == 1 && escape.status == 404);
+    Fetched other = new Fetched("http://example.com/index.html");
+    check("another origin is left to the network", other.mine == 0);
+
+    check("greet answers", roundTrip(app, "g1", "[\"greet\",{\"name\":\"Ada\"}]") == "0 \"hello, Ada\"");
+    check("greet without a name is invalid_argument", failedWith(roundTrip(app, "g2", "[\"greet\",{}]"), "invalid_argument"));
+    check("sum adds the numbers", roundTrip(app, "s1", "[\"sum\",[1,2,3,4,5,6,7,8,9,10]]") == "0 55");
+    check("sum of nothing is 0", roundTrip(app, "s2", "[\"sum\",[]]") == "0 0");
+    check("an unregistered command is unknown_command", failedWith(roundTrip(app, "u1", "[\"nothing\"]"), "unknown_command"));
+
+    app.close();
+    return 0;
+}

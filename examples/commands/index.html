@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Commands</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  pre { background: #f4f4f4; padding: 1em; min-height: 6em; }
+</style></head>
+<body>
+<h1>Commands</h1>
+<button id="add">add 2 + 3</button>
+<button id="order">order 2 tea</button>
+<button id="many">order 99 tea</button>
+<button id="gold">order gold</button>
+<button id="bad">order with no item</button>
+<button id="count">count down from 3</button>
+<pre id="out"></pre>
+<script>
+  const out = document.getElementById('out');
+  const line = text => { out.textContent += text + '\n'; };
+  // a rejected call carries {code, message}: the page switches on the code
+  const run = async (label, call) => {
+    try {
+      line(label + ' -> ' + JSON.stringify(await call()));
+    } catch (e) {
+      const advice = { invalid_argument: 'fix the input', out_of_stock: 'try later' }[e.code] || 'unexpected';
+      line(label + ' refused (' + e.code + '): ' + e.message + ' [' + advice + ']');
+    }
+  };
+  pronao.on('tick', t => line('tick ' + t.left));
+  const click = (id, label, call) => { document.getElementById(id).onclick = () => run(label, call); };
+  click('add', 'add', () => pronao.invoke('add', [2, 3]));
+  click('order', 'order', () => pronao.invoke('order', { item: 'tea', quantity: 2 }));
+  click('many', 'order', () => pronao.invoke('order', { item: 'tea', quantity: 99 }));
+  click('gold', 'order', () => pronao.invoke('order', { item: 'gold', quantity: 1 }));
+  click('bad', 'order', () => pronao.invoke('order', { quantity: 1 }));
+  click('count', 'countdown', () => pronao.invoke('countdown', [3]));
+</script>
+</body>
+</html>

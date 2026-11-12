@@ -1,0 +1,19 @@
+// examples/site -- the two commands the site's app.js calls.
+#include "app.clh"
+
+void installSite(App app) {
+    app.command("greet", closure Command [] (Item args) {
+        string name = requiredString(args, "name");
+        return createString("hello, " + name);
+    });
+    app.command("sum", closure Command [] (Item args) {
+        int n = getArraySize(args);
+        double total = 0.0;
+        int i = 0;
+        while (i < n) {
+            total = total + numberAt(args, i);
+            i = i + 1;
+        }
+        return createNumber(total);
+    });
+}

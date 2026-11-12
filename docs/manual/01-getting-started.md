@@ -9,6 +9,7 @@ bash scripts/fetch.sh                 # downloads webview 0.12.0 and WebView2.h 
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
 bash tests/run_headless.sh            # ~20 s, 17 programs, about 1,000 checks (982 on 2026-11-09); each prints "N passed, 0 failed" (SLOW=1: build at -O1)
+bash tests/run_examples.sh           # ~8 min: builds each program in examples/ and runs its 14 to 23 headless checks (182 in all)
 bash tests/run_distribution.sh       # release build: windowed program, version and icon in the exe, the runtime check with a box, bad version values refused
 bash tests/run_signing.sh            # signing with a throwaway certificate: signed, runs, a changed file is caught, refusals
 bash tests/run_layout_window.sh       # a real window: full screen, always on top, no title bar, fixed size, a place fitted to the monitors, a modal window; two controls that must fail
@@ -34,4 +35,4 @@ sit side by side (`../CeeLing/build/cling.exe`, `../cJSON-cling`) and `g++` is o
 (`--release`, `--headless`) and a README; `cd ../my-app && bash build.sh` builds `out/my-app.exe`. `tests/run_template.sh` checks that
 a fresh project builds in all three ways and its window starts.
 
-`third_party/` is not committed; `fetch.sh` recreates it. The window build links statically. Sizes of the hello example: 4.3 MB before, 4.1 MB with unused code dropped (`--gc-sections`, now always on), 1.6 MB with `RELEASE=1` (which also strips the symbols; `STRIP=1` strips without the other release switches). A stripped program has no function names for a debugger or a backtrace, so keep a plain build for debugging.
+`third_party/` is not committed; `fetch.sh` recreates it. The window build links statically. Sizes, measured on 2026-11-11: the program in the README (four commands, no `std::cout`) is 1.2 MB with `RELEASE=1` (which also strips the symbols; `STRIP=1` strips without the other release switches); `examples/hello`, which prints with `std::cout`, is 2.0 MB, because `iostream` brings about 0.8 MB with it, and 4.9 MB without `RELEASE=1`. Unused code is always dropped (`--gc-sections`). A stripped program has no function names for a debugger or a backtrace, so keep a plain build for debugging.

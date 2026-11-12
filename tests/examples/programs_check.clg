@@ -1,0 +1,86 @@
+// examples/programs: the program list and the link rules, through the real dispatcher. hostname and git really run; the system (browser) is a
+// test double that records what it was asked, so a refused address shows as "asked for nothing".
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_test_dialog_take_request(ref string request);
+ext_fn int app_test_sleep_ms(int ms);
+
+// what the system was last asked to do ("" if nothing)
+string lastAsked() {
+    string one = "";
+    string got = "";
+    while (app_test_dialog_take_request(one) == 1) {
+        got = one;
+    }
+    return got;
+}
+
+Item urlArgs(string u) {
+    Item o = createObject();
+    addStringToObject(o, "url", u);
+    return o;
+}
+
+// {"program": name, "args": args}
+string runRequest(string program, Item args) {
+    Item o = createObject();
+    addStringToObject(o, "program", program);
+    addItemToObject(o, "args", args);
+    return requestText("proc.run", o);
+}
+
+Item logArgs(int count, string repo) {
+    Item o = createObject();
+    addNumberToObject(o, "count", double(count));
+    addStringToObject(o, "repo", repo);
+    return o;
+}
+
+int main() {
+    App bare = new App();
+    bare.open("bare", 100, 100, "<html></html>", "", false);
+    check("without installPrograms there is no proc.run", failedWith(roundTrip(bare, "n1", requestText("proc.run", createObject())), "unknown_command"));
+
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installPrograms(app);
+
+    string host = roundTrip(app, "p1", runRequest("hostname", createObject()));
+    check("hostname runs and answers with its output", ok(host) && containsText(host, "\"exitCode\":0") && !containsText(host, "\"stdout\":\"\"") && containsText(host, "\"timedOut\":false"));
+    check("the page cannot add an argument the template does not have", failedWith(roundTrip(app, "p2", runRequest("hostname", logArgs(1, "."))), "invalid_argument"));
+    check("a program that is not on the list is unknown", failedWith(roundTrip(app, "p3", runRequest("cmd", createObject())), "unknown_program"));
+    check("a path is just an unknown name", failedWith(roundTrip(app, "p4", runRequest("C:/Windows/System32/hostname.exe", createObject())), "unknown_program"));
+    check("the program name must be given", failedWith(roundTrip(app, "p5", requestText("proc.run", createObject())), "invalid_argument"));
+
+    // the typed slots of git.log (registered only if git is installed)
+    string first = roundTrip(app, "g1", runRequest("git.log", logArgs(3, ".")));
+    bool haveGit = !failedWith(first, "unknown_program");
+    check("git.log runs (a folder that is not a repository is a result, a non-zero exit code)", !haveGit || (ok(first) && containsText(first, "\"exitCode\":")));
+    check("an int slot above its range is refused", !haveGit || failedWith(roundTrip(app, "g2", runRequest("git.log", logArgs(500, "."))), "invalid_argument"));
+    check("an int slot below its range is refused", !haveGit || failedWith(roundTrip(app, "g3", runRequest("git.log", logArgs(0, "."))), "invalid_argument"));
+    check("a folder slot outside the allowed folders is forbidden", !haveGit || failedWith(roundTrip(app, "g4", runRequest("git.log", logArgs(2, "C:/Windows"))), "forbidden") || failedWith(roundTrip(app, "g4b", runRequest("git.log", logArgs(2, "/etc"))), "forbidden"));
+    Item missingSlot = createObject();
+    addNumberToObject(missingSlot, "count", 2.0);
+    check("every slot is required", !haveGit || failedWith(roundTrip(app, "g5", runRequest("git.log", missingSlot)), "invalid_argument"));
+
+    // links
+    check("shell.openUrl opens an https address", roundTrip(app, "l1", requestText("shell.openUrl", urlArgs("https://example.com/docs"))) == "0 null" && lastAsked() == "shell|0|https://example.com/docs");
+    app_test_sleep_ms(350);
+    check("javascript: is refused and the system is asked for nothing", failedWith(roundTrip(app, "l2", requestText("shell.openUrl", urlArgs("javascript:alert(1)"))), "invalid_argument") && lastAsked() == "");
+    check("file: is refused", failedWith(roundTrip(app, "l3", requestText("shell.openUrl", urlArgs("file:///C:/Windows/System32/notepad.exe"))), "invalid_argument") && lastAsked() == "");
+    check("http was not allowed by the application", failedWith(roundTrip(app, "l4", requestText("shell.openUrl", urlArgs("http://example.com/"))), "invalid_argument") && lastAsked() == "");
+    check("a user name in front of the host is refused", failedWith(roundTrip(app, "l5", requestText("shell.openUrl", urlArgs("https://good.example@evil.example/"))), "invalid_argument") && lastAsked() == "");
+    check("a second open at once is held back", roundTrip(app, "l6", requestText("shell.openUrl", urlArgs("https://example.com/a"))) == "0 null" && failedWith(roundTrip(app, "l7", requestText("shell.openUrl", urlArgs("https://example.com/b"))), "too_many"));
+    app_test_sleep_ms(350);
+    lastAsked();
+    check("mailto is allowed", roundTrip(app, "l8", requestText("shell.openUrl", urlArgs("mailto:a@example.com"))) == "0 null" && lastAsked() == "shell|0|mailto:a@example.com");
+    string openFile = roundTrip(app, "l9", requestText("shell.openFile", pathArgs("x.pdf")));
+    check("shell.openFile opens nothing: no file type was allowed", !ok(openFile) && lastAsked() == "");
+    app.gate.clear();
+    return 0;
+}

@@ -1,0 +1,60 @@
+// examples/menus -- a menu bar with shortcuts, a pop-up menu the page asks for by name, a notification and the theme.
+// setMenu needs an open window, so main calls installMenus after openPage.
+#include "app.clh"
+
+void installMenus(App app) {
+    Menu bar = new Menu();
+    bar.begin("&File");
+    bar.item("file.save", "&Save", "Ctrl+S");
+    bar.separator();
+    bar.item("file.quit", "&Quit", "Ctrl+Q");
+    bar.end();
+    bar.begin("&View");
+    bar.check("view.grid", "&Grid", "F5", false);        // a tick; the user's click toggles it, the program can too (setChecked)
+    bar.item("view.reset", "&Reset the grid", "");
+    bar.end();
+    app.setMenu(bar);
+
+    Menu ctx = new Menu();
+    ctx.item("ctx.copy", "&Copy", "");
+    ctx.item("ctx.paste", "&Paste", "");
+    app.allowPopup("ctx", ctx);                          // the page can ask for "ctx" by name and for nothing else
+    app.enablePopupCommand();
+
+    Menu trayMenu = new Menu();                          // the tray icon (the program's icon, ICON= in build.sh); its menu goes to the same onMenu
+    trayMenu.item("tray.show", "&Show window", "");
+    trayMenu.item("tray.quit", "&Quit", "");
+    app.openTray("Menus example", trayMenu);             // 0 if the icon could not be made
+    app.onTray(closure TrayAction [app] (string kind) {
+        app.showWindow(app.handle);
+    });
+
+    app.enableNotifications("Menus example");            // without a tray icon this makes a notification-only icon; with one it changes nothing
+    app.enableNotificationCommand();                     // notification.show {title, text, kind?, id?}
+    app.setNotificationGap(500);                         // the least time between two notifications
+
+    app.setTheme("system");
+    app.enableThemeCommands(true);                       // theme.get and theme.set {mode}
+
+    app.menuEventsToPage(true);                          // the page also gets menu.click {id}
+    app.onMenu(closure MenuAction [app] (string id) {    // the same handler for the bar and for the pop-up
+        Window w = app.windows.get(app.handle);
+        if (id == "file.save") {
+            app.notify("Saved", "Nothing was saved: this is an example", "info", "saved");
+        }
+        if (id == "view.reset") {
+            w.setChecked("view.grid", false);
+        }
+        if (id == "tray.show") {
+            app.showWindow(app.handle);
+        }
+        if (id == "file.quit" || id == "tray.quit") {
+            app.quit();
+        }
+    });
+    app.onNotificationClick(closure NotificationAction [app] (string id) {
+        Item e = createObject();
+        addStringToObject(e, "id", id);
+        app.emit("note.clicked", printUnformatted(e));
+    });
+}

@@ -1,0 +1,10 @@
+// examples/files: one folder the page may reach, and the file commands.
+#include "app.clh"
+
+void installFiles(App app) {
+    // %LOCALAPPDATA%\pronao-files (XDG: ~/.local/share/pronao-files): made if missing, and the only place fs.* can reach
+    if (!app.allowAppFolder("pronao-files", "data")) {
+        std::cout << "the data folder could not be made" << std::endl;
+    }
+    app.enableFileCommands(1024 * 1024);      // fs.read refuses a file larger than 1 MB
+}

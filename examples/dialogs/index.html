@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Dialogs</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  #zone { border: 2px dashed #999; padding: 1em; margin: 1em 0; }
+  #zone.over { border-color: #06c; background: #eef5ff; }
+  pre { background: #f4f4f4; padding: 1em; white-space: pre-wrap; }
+</style></head>
+<body>
+<h1>Dialogs and dropped files</h1>
+<button id="open">Open a text file...</button>
+<button id="neighbour">Try the file next to it</button>
+<div id="zone">Drop text files here</div>
+<pre id="out">(results appear here)</pre>
+<script>
+  const out = document.getElementById('out'), zone = document.getElementById('zone');
+  const log = (line) => { out.textContent += '\n' + line; };
+  const code = (e) => (e && e.code) || String(e);
+  let picked = null;
+
+  document.getElementById('open').onclick = async () => {
+    const r = await pronao.dialog.open({ title: 'Open a text file', filters: [{ name: 'Text', extensions: ['txt', 'md'] }, { name: 'Everything' }] });
+    if (!r) { log('cancelled'); return; }
+    picked = r.path;
+    try { log(picked + ': ' + JSON.stringify((await pronao.fs.read({ path: picked })).text)); }
+    catch (e) { log('read failed: ' + code(e)); }
+  };
+  document.getElementById('neighbour').onclick = async () => {
+    if (!picked) { log('open a file first'); return; }
+    const other = picked.replace(/[^\/]*$/, 'neighbour.txt');
+    try { await pronao.fs.read({ path: other }); log('read ' + other + ' (this should not happen)'); }
+    catch (e) { log(other + ' refused: ' + code(e)); }
+  };
+
+  pronao.onDragEnter(() => zone.classList.add('over'));
+  pronao.onDragLeave(() => zone.classList.remove('over'));
+  pronao.onDrop(async ({ x, y, files, skipped }) => {
+    zone.classList.remove('over');
+    log('drop at ' + x + ',' + y + ': ' + files.length + ' file(s), ' + skipped + ' skipped');
+    for (const f of files) {
+      try { log(f.path + ': ' + (await pronao.fs.read({ path: f.path })).text.length + ' characters'); }
+      catch (e) { log(f.path + ' read failed: ' + code(e)); }
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+// Drives the commands of examples/commands through the real dispatcher (headless window double).
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+Item orderArgs(string item, int quantity) {
+    Item o = createObject();
+    addStringToObject(o, "item", item);
+    addNumberToObject(o, "quantity", quantity);
+    return o;
+}
+
+Item textQuantity() {
+    Item o = createObject();
+    addStringToObject(o, "item", "tea");
+    addStringToObject(o, "quantity", "two");
+    return o;
+}
+
+Item fraction() {
+    Item o = createObject();
+    addStringToObject(o, "item", "tea");
+    addNumberToObject(o, "quantity", 1.5);
+    return o;
+}
+
+Item numbers(double a, double b) {
+    Item arr = createArray();
+    addItemToArray(arr, createNumber(a));
+    addItemToArray(arr, createNumber(b));
+    return arr;
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installCommands(app);
+
+    check("add", roundTrip(app, "a1", requestText("add", numbers(2, 3))) == "0 5");
+    check("add refuses a text argument", failedWith(roundTrip(app, "a2", requestText("add", createString("x"))), "command_failed"));
+    Item words = createArray();
+    addItemToArray(words, createString("2"));
+    addItemToArray(words, createNumber(3));
+    check("add names the argument that is not a number", roundTrip(app, "a3", requestText("add", words)) == "1 {\"code\":\"command_failed\",\"message\":\"argument 0 must be a number\"}");
+
+    check("order reads a struct", roundTrip(app, "o1", requestText("order", orderArgs("tea", 2))) == "0 {\"item\":\"tea\",\"total\":6}");
+    check("order refuses a quantity out of range", failedWith(roundTrip(app, "o2", requestText("order", orderArgs("tea", 99))), "invalid_argument"));
+    check("order has a code of its own", roundTrip(app, "o3", requestText("order", orderArgs("gold", 1))) == "1 {\"code\":\"out_of_stock\",\"message\":\"there is no gold left\"}");
+    Item noItem = createObject();
+    addNumberToObject(noItem, "quantity", 1);
+    check("order refuses a missing field", failedWith(roundTrip(app, "o4", requestText("order", noItem)), "invalid_argument"));
+    check("order refuses a field of the wrong type", failedWith(roundTrip(app, "o5", requestText("order", textQuantity())), "invalid_argument"));
+    check("order refuses a fraction as a whole number", failedWith(roundTrip(app, "o6", requestText("order", fraction())), "invalid_argument"));
+
+    string js = "";
+    while (app_test_take_eval(app.handle, js) == 1) {
+    }
+    Item three = createArray();
+    addItemToArray(three, createNumber(3));
+    check("countdown answers", roundTrip(app, "c1", requestText("countdown", three)) == "0 3");
+    string first = "";
+    string second = "";
+    string third = "";
+    string fourth = "";
+    app_test_take_eval(app.handle, first);
+    app_test_take_eval(app.handle, second);
+    app_test_take_eval(app.handle, third);
+    check("countdown sent three events in order", first == "window.__pronao_emit([\"tick\",{\"left\":3}]);" && second == "window.__pronao_emit([\"tick\",{\"left\":2}]);" && third == "window.__pronao_emit([\"tick\",{\"left\":1}]);");
+    check("and no more", app_test_take_eval(app.handle, fourth) == 0);
+    Item nine = createArray();
+    addItemToArray(nine, createNumber(9));
+    check("countdown refuses 9 and sends nothing", failedWith(roundTrip(app, "c2", requestText("countdown", nine)), "invalid_argument") && app_test_take_eval(app.handle, fourth) == 0);
+    check("an unknown command is refused", failedWith(roundTrip(app, "u1", requestText("nope", createArray())), "unknown_command"));
+    return 0;
+}

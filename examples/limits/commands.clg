@@ -1,0 +1,33 @@
+// examples/limits -- what a page may send and which commands it may call (manual chapter 8).
+#include "app.clh"
+
+void installLimits(App app) {
+    // 8 KiB per call, 16 calls waiting; the defaults are 4 MiB and 256. Applies to windows opened afterwards, so call this before openPage.
+    if (!app.setRequestLimits(8192, 16)) {
+        throw "invalid_argument: the request limits are not sensible";
+    }
+    app.allowNavigation("http://localhost:5173/");      // the only address besides the program's own page that the window may load
+
+    app.command("ping", closure Command [] (Item args) {
+        return createString("pong");
+    });
+    app.command("echo", closure Command [] (Item args) {
+        string text = requiredString(args, "text");
+        return createString(text);
+    });
+    app.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+    app.command("reset", closure Command [] (Item args) {
+        return createString("everything was deleted");
+    });
+
+    // reset is registered but not listed: the page is told forbidden, exactly as for a name that does not exist
+    std::vector<string> allowed;
+    allowed.push_back("ping");
+    allowed.push_back("echo");
+    allowed.push_back("add");
+    if (!app.allowOnlyCommands(allowed)) {
+        throw "invalid_argument: a name in the command list is not registered";
+    }
+}

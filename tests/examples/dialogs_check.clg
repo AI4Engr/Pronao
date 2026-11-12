@@ -1,0 +1,86 @@
+// examples/dialogs: the file dialog, the grant a pick gives, and dropped files, through the real dispatcher with the headless window double.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_dialog_push(string answer);
+ext_fn int app_test_push_internal(int handle, string request);
+ext_fn int app_test_drop(int handle, string kind, int x, int y, string paths);
+
+string nul(string a) {
+    string r = a;
+    r.push_back(char(0));
+    return r;
+}
+
+// every script the page was sent, concatenated
+string pageEvents(App app) {
+    string all = "";
+    string one = "";
+    while (app_test_take_eval(app.handle, one) == 1) {
+        all = all + one;
+    }
+    return all;
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installDialogs(app);
+    string base = "";
+    app_test_make_temp_dir(base);
+    string picked = base + "/picked.txt";
+    string neighbour = base + "/neighbour.txt";
+    string dropped = base + "/dropped.txt";
+    app_test_write_raw(picked, "chosen");
+    app_test_write_raw(neighbour, "other");
+    app_test_write_raw(dropped, "dragged in");
+
+    check("nothing is reachable before the user picks", failedWith(roundTrip(app, "a1", requestText("fs.read", pathArgs(picked))), "forbidden"));
+
+    app_test_dialog_push("cancel");
+    check("cancel answers null", roundTrip(app, "a2", requestText("dialog.open", createObject())) == "0 null");
+    check("and grants nothing", failedWith(roundTrip(app, "a3", requestText("fs.read", pathArgs(picked))), "forbidden"));
+
+    Item openArgs = createObject();
+    addStringToObject(openArgs, "title", "Open a text file");
+    app_test_dialog_push("path:" + picked);
+    string pick = roundTrip(app, "a4", requestText("dialog.open", openArgs));
+    check("a pick answers the path", ok(pick) && containsText(pick, "picked.txt"));
+    check("the picked file is readable", roundTrip(app, "a5", requestText("fs.read", pathArgs(picked))) == "0 {\"text\":\"chosen\"}");
+    check("its neighbour is not", failedWith(roundTrip(app, "a6", requestText("fs.read", pathArgs(neighbour))), "forbidden"));
+    check("neither is a listing of the folder", failedWith(roundTrip(app, "a7", requestText("fs.list", pathArgs(base))), "forbidden"));
+    Item overwrite = pathArgs(neighbour);
+    addStringToObject(overwrite, "text", "x");
+    check("nor can the page write beside it", failedWith(roundTrip(app, "a8", requestText("fs.write", overwrite)), "forbidden"));
+
+    Item badFilters = createObject();
+    addStringToObject(badFilters, "filters", "txt");
+    check("filters must be an array", failedWith(roundTrip(app, "a9", requestText("dialog.open", badFilters)), "invalid_argument"));
+
+    // files dropped on the window: the same grant, and the page is told
+    pageEvents(app);
+    app_test_drop(app.handle, "files", 11, 22, nul(dropped));
+    app.serveOne(50);
+    string events = pageEvents(app);
+    check("a drop is reported to the page", containsText(events, "\"drop.files\",{\"x\":11,\"y\":22,\"files\":[{\"path\":") && containsText(events, "dropped.txt") && containsText(events, "\"skipped\":0"));
+    check("the dropped file is readable", roundTrip(app, "b1", requestText("fs.read", pathArgs(dropped))) == "0 {\"text\":\"dragged in\"}");
+    app_test_drop(app.handle, "files", 1, 2, nul("relative.txt") + nul(base + "/gone.txt"));
+    app.serveOne(50);
+    events = pageEvents(app);
+    check("a relative or missing path is skipped, not granted", containsText(events, "\"files\":[],\"skipped\":2"));
+
+    app.revokeGrants();
+    check("revoking withdraws the pick", failedWith(roundTrip(app, "c1", requestText("fs.read", pathArgs(picked))), "forbidden"));
+    check("and the drop", failedWith(roundTrip(app, "c2", requestText("fs.read", pathArgs(dropped))), "forbidden"));
+
+    app.gate.clear();
+    app_test_remove_tree(base);
+    return 0;
+}

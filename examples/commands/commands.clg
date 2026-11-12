@@ -1,0 +1,46 @@
+// examples/commands: named commands, checked arguments, structured errors and an event to the page.
+#include "app.clh"
+
+// The page sends {item: "tea", quantity: 2}. The compiler writes decodeOrderArgs because this is a struct.
+struct OrderArgs {
+public:
+    string item;
+    int quantity;
+    OrderArgs(string i, int q) { item = i; quantity = q; }
+};
+
+void installCommands(App app) {
+    // positional arguments: pronao.invoke('add', [2, 3])
+    app.command("add", closure Command [] (Item args) {
+        return createNumber(numberAt(args, 0) + numberAt(args, 1));
+    });
+
+    // named arguments read into a struct; a wrong shape is refused as invalid_argument before this code runs
+    app.command("order", closure Command [] (Item args) {
+        OrderArgs order = decodeOrderArgs(args);
+        if (order.quantity < 1 || order.quantity > 10) {
+            throw "invalid_argument: quantity must be 1 to 10";
+        }
+        if (order.item == "gold") {
+            throw "out_of_stock: there is no gold left";
+        }
+        Item receipt = createObject();
+        addStringToObject(receipt, "item", order.item);
+        addNumberToObject(receipt, "total", order.quantity * 3);
+        return receipt;
+    });
+
+    // an event from CeeLing to the page: the page listens with pronao.on('tick', ...)
+    app.command("countdown", closure Command [app] (Item args) {
+        int n = int(numberAt(args, 0));
+        if (n < 1 || n > 5) {
+            throw "invalid_argument: count from 1 to 5";
+        }
+        int left = n;
+        while (left > 0) {
+            app.emit("tick", "{\"left\":" + intToString(left) + "}");
+            left = left - 1;
+        }
+        return createNumber(n);
+    });
+}

@@ -1,0 +1,108 @@
+// examples/menus through the real dispatcher, with the headless window and menu doubles. The native bar, the shortcuts and the toast are not drawn here.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_menu_click(int handle, string id);
+ext_fn int app_test_tray_event(int handle, string kind);
+ext_fn int app_test_popup_answer(string id);
+ext_fn int app_test_notification_click(int handle, string id);
+ext_fn int app_test_system_theme(int dark);
+ext_fn int app_test_sleep_ms(int ms);
+
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        all = all + one + ";";
+    }
+    return all;
+}
+
+// every script the program has sent to the page since the last call
+string pageEvents(int handle) {
+    string all = "";
+    string js = "";
+    while (app_test_take_eval(handle, js) == 1) {
+        all = all + js + "\n";
+    }
+    return all;
+}
+
+void click(App app, int handle, string id) {
+    app_test_menu_click(handle, id);
+    app.serveOne(100);
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    int h = app.handle;
+    windowLog(h);
+    installMenus(app);
+    int tray = app.trays[0];
+    string shown = windowLog(h);
+    check("the menu bar reached the window with its shortcuts", containsText(shown, "menu|set|b|sub0|&File|") && containsText(shown, "i|file.save|&Save|Ctrl+S|83|1|0|") && containsText(shown, "c|view.grid|&Grid|F5|116|0|0|"));
+    pageEvents(h);
+    windowLog(tray);
+
+    click(app, h, "file.save");
+    check("a chosen item reaches the page as menu.click", containsText(pageEvents(h), "[\"menu.click\",{\"id\":\"file.save\"}]"));
+    check("and the program's handler showed a notification", containsText(windowLog(tray), "tray|notify|0|Saved|Nothing was saved: this is an example|saved;"));
+    click(app, h, "not.an.item");
+    check("an id the menu does not have does nothing", pageEvents(h) == "");
+    click(app, h, "view.reset");
+    check("the program unticks the check item itself", containsText(windowLog(h), "menu|item|view.grid|-1|0;"));
+    pageEvents(h);
+
+    // the pop-up menu: by name only
+    app_test_popup_answer("ctx.copy");
+    check("the page asks for a menu by name and gets the item chosen", roundTrip(app, "p1", "[\"menu.popup\",{\"name\":\"ctx\"}]") == "0 \"ctx.copy\"");
+    check("the registered menu was shown", containsText(windowLog(h), "menu|popup|i|ctx.copy|&Copy|"));
+    app.serveOne(100);
+    check("the chosen item ran the program's handler and told the page", containsText(pageEvents(h), "[\"menu.click\",{\"id\":\"ctx.copy\"}]"));
+    check("a dismissed menu answers null", roundTrip(app, "p2", "[\"menu.popup\",{\"name\":\"ctx\"}]") == "0 null");
+    windowLog(h);
+    check("a name the program did not register is unknown_menu and nothing is shown", failedWith(roundTrip(app, "p3", "[\"menu.popup\",{\"name\":\"secret\"}]"), "unknown_menu") && windowLog(h) == "");
+    check("items sent by the page are ignored", roundTrip(app, "p4", "[\"menu.popup\",{\"name\":\"ctx\",\"items\":[{\"id\":\"evil\",\"label\":\"Evil\"}]}]") == "0 null" && !containsText(windowLog(h), "evil"));
+
+    // notifications the page asks for
+    app_test_sleep_ms(520);
+    string asking = "[\"notification.show\",{\"title\":\"Hello\",\"text\":\"sent by the page\",\"id\":\"from-page\"}]";
+    windowLog(tray);
+    check("the page shows a notification", roundTrip(app, "n1", asking) == "0 null" && windowLog(tray) == "tray|notify|0|Hello|sent by the page|from-page;");
+    check("a second one too soon is refused", failedWith(roundTrip(app, "n2", asking), "too_many"));
+    app_test_sleep_ms(520);
+    check("an unknown kind is refused", failedWith(roundTrip(app, "n3", "[\"notification.show\",{\"title\":\"t\",\"text\":\"x\",\"kind\":\"loud\"}]"), "invalid_argument"));
+    check("so is an empty title", failedWith(roundTrip(app, "n4", "[\"notification.show\",{\"title\":\"\",\"text\":\"x\"}]"), "invalid_argument") && windowLog(tray) == "");
+    pageEvents(h);
+    app_test_notification_click(tray, "saved");
+    app.serveOne(100);
+    check("a click on the program's notification runs onNotificationClick", containsText(pageEvents(h), "[\"note.clicked\",{\"id\":\"saved\"}]"));
+
+    // theme
+    app_test_system_theme(1);
+    check("theme.get", roundTrip(app, "t1", "[\"theme.get\",{}]") == "0 {\"mode\":\"system\",\"system\":\"dark\"}");
+    check("theme.set", roundTrip(app, "t2", "[\"theme.set\",{\"mode\":\"light\"}]") == "0 null" && roundTrip(app, "t3", "[\"theme.get\",{}]") == "0 {\"mode\":\"light\",\"system\":\"dark\"}");
+    check("a mode that is not one of the three is refused", failedWith(roundTrip(app, "t4", "[\"theme.set\",{\"mode\":\"purple\"}]"), "invalid_argument"));
+
+    // the tray
+    windowLog(h);
+    app_test_tray_event(tray, "click");
+    app.serveOne(100);
+    check("a click on the tray icon shows the window", windowLog(h) == "state|6;");
+    click(app, tray, "tray.show");
+    check("so does its Show item", windowLog(h) == "state|6;");
+
+    // the menu cannot be changed by the page, and Quit ends the program
+    check("the page has no command to change the menu", failedWith(roundTrip(app, "x1", "[\"menu.set\",{\"items\":[]}]"), "unknown_command"));
+    click(app, h, "file.quit");
+    check("File > Quit closes the window", app.serveOne(100) == 0 && app.windows.count() == 0);
+    app.close();
+    return 0;
+}

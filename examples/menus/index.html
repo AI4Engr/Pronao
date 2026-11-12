@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>menus</title>
+<style>
+  body { font-family: sans-serif; margin: 1.5em; }
+  pre { background: #f4f4f4; padding: 1em; }
+  @media (prefers-color-scheme: dark) { body { background: #222; color: #eee; } pre { background: #333; } }
+</style></head>
+<body>
+<h1>menus</h1>
+<p>Use the menu bar (Ctrl+S, F5, Ctrl+Q), right-click this page, or press a button.</p>
+<p><button id="note">show a notification</button> <button id="theme">theme?</button>
+   <button id="dark">dark</button> <button id="system">system</button> <button id="bad">menu "secret"</button></p>
+<pre id="log">(events appear here)</pre>
+<script>
+  const log = (text) => { const el = document.getElementById('log'); el.textContent = text + '\n' + el.textContent; };
+  const fail = (label) => (e) => log(label + ' rejected: ' + e.code);
+  const $ = (id) => document.getElementById(id);
+  pronao.on('menu.click', (e) => log('menu item ' + e.id));
+  pronao.on('note.clicked', (e) => log('notification clicked: ' + e.id));
+  pronao.onNotificationClick((id) => log('the notification this page asked for was clicked: ' + id));
+  pronao.theme.onChange((t) => log('theme ' + t.mode + ' (system: ' + t.system + ')'));
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    pronao.menu.popup('ctx').then((id) => log('pop-up answered ' + id), fail('pop-up'));
+  });
+  $('bad').onclick = () => pronao.menu.popup('secret').then((id) => log('?'), fail('pop-up'));
+  $('note').onclick = () => pronao.notify('Hello', 'sent by the page', { kind: 'info', id: 'from-page' }).catch(fail('notify'));
+  $('theme').onclick = () => pronao.theme.get().then((t) => log('theme ' + t.mode + ' (system: ' + t.system + ')'));
+  $('dark').onclick = () => pronao.theme.set('dark').catch(fail('theme'));
+  $('system').onclick = () => pronao.theme.set('system').catch(fail('theme'));
+</script>
+</body>
+</html>

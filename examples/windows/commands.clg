@@ -1,0 +1,19 @@
+// examples/windows -- what a page may do with its window, and what only the application decides.
+#include "app.clh"
+
+void installWindows(App app) {
+    app.enableWindowCommands();                                   // window.setTitle, setSize, minimize, ..., setDirty
+    app.confirmClose("Unsaved work", "Close without saving?");    // asked when the X is pressed after setDirty(true); the text is the application's
+    app.enableWindowLayoutCommands(false, false);                 // getBounds and setBounds only: no full screen, no always on top
+    app.enableWindowOpenCommand(2);                               // the page may open a window of the site, at most 2 windows in all
+
+    // A fixed size is the application's decision (setResizable); the page can only ask through this command of the program's own.
+    CallContext who = app.dispatcher.caller;
+    WindowBook book = app.windows;
+    app.command("app.lockSize", closure Command [who, book] (Item args) {
+        bool locked = optionalBool(args, "locked", true);
+        Window w = book.needed(who.handle);
+        w.setResizable(!locked);
+        return createBool(locked);
+    });
+}

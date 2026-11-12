@@ -1,0 +1,14 @@
+// examples/files: see README.md
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installFiles(app);
+    if (!app.openPage("Files", 640, 420, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

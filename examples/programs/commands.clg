@@ -1,0 +1,27 @@
+// installPrograms -- the commands of the programs example (docs/manual/04-programs-and-links.md): a fixed list of programs, and what may leave the window.
+#include "app.clh"
+
+void installPrograms(App app) {
+    // The page picks a program by name and fills the slots; it never writes a command line.
+    std::vector<string> hostTemplate;
+    app.allowProgram("hostname", "hostname", hostTemplate, 5000, 10000);
+
+    // A slot with a type: count must be a whole number from 1 to 20, repo a folder the file commands reach (the first allowed folder is ".").
+    // Skipped when git is not installed: allowProgram answers false and registers nothing.
+    app.allowFolder(".");
+    std::vector<string> logTemplate;
+    logTemplate.push_back("log");
+    logTemplate.push_back("-n");
+    logTemplate.push_back("{count:int:1:20}");
+    logTemplate.push_back("--format=%h %s");
+    logTemplate.push_back("@cwd={repo:folder}");
+    app.allowProgram("git.log", "git", logTemplate, 10000, 100000);
+    app.enableProcessCommands();
+
+    // Links: only https and mailto, and only through shell.openUrl. file:, javascript: and data: are never opened.
+    std::vector<string> schemes;
+    schemes.push_back("https");
+    schemes.push_back("mailto");
+    app.allowLinkSchemes(schemes);
+    app.enableShellCommands();
+}

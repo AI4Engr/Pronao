@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Programs</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  pre { background: #f4f4f4; padding: 1em; white-space: pre-wrap; }
+</style></head>
+<body>
+<h1>Programs and links</h1>
+<button id="host">Run hostname</button>
+<button id="log">git log, 3 commits</button>
+<button id="toomany">git log, 500 commits</button>
+<button id="https">Open https://example.com</button>
+<button id="js">Open javascript:</button>
+<button id="file">Open file:</button>
+<pre id="out">(results appear here)</pre>
+<script>
+  const out = document.getElementById('out');
+  const log = (line) => { out.textContent += '\n' + line; };
+  const show = (label, p) => p.then(v => log(label + ' -> ' + JSON.stringify(v)), e => log(label + ' refused: ' + JSON.stringify(e)));
+  const click = (id, fn) => { document.getElementById(id).onclick = fn; };
+
+  click('host', () => show('hostname', pronao.proc.run({ program: 'hostname' })));
+  click('log', () => show('git.log', pronao.proc.run({ program: 'git.log', args: { count: 3, repo: '.' } })));
+  click('toomany', () => show('git.log 500', pronao.proc.run({ program: 'git.log', args: { count: 500, repo: '.' } })));
+  click('https', () => show('https', pronao.shell.openUrl({ url: 'https://example.com/' })));
+  click('js', () => show('javascript:', pronao.shell.openUrl({ url: 'javascript:alert(1)' })));
+  click('file', () => show('file:', pronao.shell.openUrl({ url: 'file:///C:/Windows/System32/notepad.exe' })));
+</script>
+</body>
+</html>

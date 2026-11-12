@@ -1,0 +1,95 @@
+// examples/background through the real dispatcher: results, progress events, refused arguments, cancelling and the deadline.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_sleep_ms(int ms);
+
+Item limitArgs(double limit) {
+    Item o = createObject();
+    addNumberToObject(o, "limit", limit);
+    return o;
+}
+
+string pageEvents(int handle) {
+    string all = "";
+    string js = "";
+    while (app_test_take_eval(handle, js) == 1) {
+        all = all + js + "\n";
+    }
+    return all;
+}
+
+int countOf(string text, string part) {
+    int n = 0;
+    int at = 0;
+    while (at + part.length() <= text.length()) {
+        if (text.substr(at, part.length()) == part) {
+            n = n + 1;
+            at = at + part.length();
+        } else {
+            at = at + 1;
+        }
+    }
+    return n;
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installBackground(app);
+    int h = app.handle;
+    pageEvents(h);
+
+    check("primes up to 100", roundTrip(app, "a1", requestText("primes.count", limitArgs(100.0))) == "0 {\"limit\":100,\"primes\":25}");
+    string events = pageEvents(h);
+    check("ten progress events came first, the last one complete", countOf(events, "[\"progress\",{") == 10 && containsText(events, "[\"progress\",{\"done\":100,\"of\":100}]"));
+    check("primes up to 10000", roundTrip(app, "a2", requestText("primes.count", limitArgs(10000.0))) == "0 {\"limit\":10000,\"primes\":1229}");
+    pageEvents(h);
+
+    check("a limit below 10 is refused", failedWith(roundTrip(app, "r1", requestText("primes.count", limitArgs(5.0))), "invalid_argument"));
+    check("a limit above 5000000 is refused", failedWith(roundTrip(app, "r2", requestText("primes.count", limitArgs(99999999.0))), "invalid_argument"));
+    Item text = createObject();
+    addStringToObject(text, "limit", "100");
+    check("a limit that is text is refused", failedWith(roundTrip(app, "r3", requestText("primes.count", text)), "invalid_argument"));
+    check("a missing limit is refused", failedWith(roundTrip(app, "r4", requestText("primes.count", createObject())), "invalid_argument"));
+    check("a refused call started no job and sent no progress", pageEvents(h) == "");
+    check("the page cannot start anything the program did not register", failedWith(roundTrip(app, "r5", requestText("proc.run", createObject())), "unknown_command"));
+
+    // the page gives up: its promise is rejected at once and the job stops by itself
+    app_test_inject(h, "c1", "[\"primes.count\",{\"limit\":5000000},\"tag-1\"]");
+    app.serveOne(100);
+    app_test_inject(h, "c2", "[\"$cancel\",\"tag-1\"]");
+    int waits = 0;
+    while (app_test_response_ready(h) == 0 && waits < 200) {
+        app.serveOne(20);
+        waits = waits + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    app_test_take_response(h, gotId, status, json);
+    check("$cancel is answered at once", gotId == "c2" && status == 0);
+    int quiet = 0;
+    while (app.serveOne(20) != 0 && quiet < 5) {
+        quiet = quiet + 1;
+    }
+    app_test_sleep_ms(300);
+    pageEvents(h);
+    app_test_sleep_ms(300);
+    check("and the job stopped: no progress and no answer after it", pageEvents(h) == "" && app_test_response_ready(h) == 0);
+
+    // the deadline
+    check("a deadline is a sensible number", !app.setAsyncTimeout("primes.count", 10) && app.setAsyncTimeout("primes.count", 200));
+    check("a call over its deadline is answered timed_out", failedWith(roundTrip(app, "d1", requestText("primes.count", limitArgs(5000000.0))), "timed_out"));
+    app_test_sleep_ms(300);
+    pageEvents(h);
+    app_test_sleep_ms(300);
+    check("the job stopped there too, and its late answer is not delivered", pageEvents(h) == "" && app_test_response_ready(h) == 0);
+    app.close();
+    return 0;
+}

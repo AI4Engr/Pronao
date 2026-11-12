@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Files</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  pre { background: #f4f4f4; padding: 1em; min-height: 6em; }
+</style></head>
+<body>
+<h1>Files</h1>
+<p>A relative path means "inside the allowed folder".</p>
+<input id="text" value="buy milk">
+<button id="write">write note.txt</button>
+<button id="read">read it</button>
+<button id="list">list the folder</button>
+<button id="remove">remove it</button>
+<button id="outside">read ../outside.txt</button>
+<pre id="out"></pre>
+<script>
+  const out = document.getElementById('out');
+  const run = async (label, call) => {
+    try {
+      out.textContent = label + ' -> ' + JSON.stringify(await call());
+    } catch (e) {
+      out.textContent = label + ' refused (' + e.code + '): ' + e.message;     // forbidden, not_found, ...
+    }
+  };
+  const on = (id, label, call) => { document.getElementById(id).onclick = () => run(label, call); };
+  on('write', 'write', () => pronao.fs.write({ path: 'note.txt', text: document.getElementById('text').value, mode: 'replace' }));
+  on('read', 'read', () => pronao.fs.read({ path: 'note.txt' }));
+  on('list', 'list', () => pronao.fs.list({ path: '.' }));
+  on('remove', 'remove', () => pronao.fs.remove({ path: 'note.txt' }));
+  on('outside', 'read', () => pronao.fs.read({ path: '../outside.txt' }));
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+// Drives the commands of examples/files through the real dispatcher and file gate (headless window double).
+// The per-user folders are pointed at a scratch folder first, so nothing outside it is touched.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_test_setenv(string name, string value);
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_exists(string path);
+ext_fn int app_test_mkdir_raw(string path);
+
+Item writeArgs(string path, string text) {
+    Item o = pathArgs(path);
+    addStringToObject(o, "text", text);
+    addStringToObject(o, "mode", "replace");
+    return o;
+}
+
+int main() {
+    string base = "";
+    app_test_make_temp_dir(base);
+    string local = base + "/local";
+    app_test_mkdir_raw(local);
+    app_test_mkdir_raw(base + "/home");
+    app_test_setenv("LOCALAPPDATA", local);
+    app_test_setenv("HOME", base + "/home");
+    app_test_setenv("XDG_DATA_HOME", base + "/xdg");
+    app_test_mkdir_raw(base + "/xdg");
+    app_test_write_raw(local + "/outside.txt", "secret");      // what "../outside.txt" names, on Windows
+    app_test_write_raw(base + "/xdg/outside.txt", "secret");   // and elsewhere
+    string folder = appFolderPath("data", "pronao-files");
+    string outsideFile = base + "/seed.txt";
+    app_test_write_raw(outsideFile, "secret");
+
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    check("before installFiles the page reaches nothing", failedWith(roundTrip(app, "z1", requestText("fs.read", pathArgs("note.txt"))), "unknown_command"));
+    installFiles(app);
+    check("the data folder was made", app_test_exists(folder) == 1);
+
+    check("write a note", roundTrip(app, "w1", requestText("fs.write", writeArgs("note.txt", "buy milk"))) == "0 null");
+    check("it is in the allowed folder", app_test_exists(folder + "/note.txt") == 1);
+    check("read it back", roundTrip(app, "r1", requestText("fs.read", pathArgs("note.txt"))) == "0 {\"text\":\"buy milk\"}");
+    string listed = roundTrip(app, "l1", requestText("fs.list", pathArgs(".")));
+    check("list shows it", ok(listed) && listed.find("\"name\":\"note.txt\"") != std::string::npos);
+    check("replace overwrites", roundTrip(app, "w2", requestText("fs.write", writeArgs("note.txt", "buy tea"))) == "0 null" && roundTrip(app, "r2", requestText("fs.read", pathArgs("note.txt"))) == "0 {\"text\":\"buy tea\"}");
+
+    check("a path with .. is refused", failedWith(roundTrip(app, "o1", requestText("fs.read", pathArgs("../outside.txt"))), "forbidden"));
+    check("an absolute path outside is refused", failedWith(roundTrip(app, "o2", requestText("fs.read", pathArgs(outsideFile))), "forbidden"));
+    check("writing outside is refused and writes nothing", failedWith(roundTrip(app, "o3", requestText("fs.write", writeArgs("../new.txt", "x"))), "forbidden") && app_test_exists(local + "/new.txt") == 0 && app_test_exists(base + "/xdg/new.txt") == 0);
+    check("the file outside is untouched", app_test_exists(outsideFile) == 1);
+    check("a request without a path is refused", failedWith(roundTrip(app, "o4", requestText("fs.read", createObject())), "invalid_argument"));
+    check("a missing note is not_found", failedWith(roundTrip(app, "o5", requestText("fs.read", pathArgs("nothing.txt"))), "not_found"));
+
+    check("remove the note", roundTrip(app, "d1", requestText("fs.remove", pathArgs("note.txt"))) == "0 null" && app_test_exists(folder + "/note.txt") == 0);
+    check("it is gone", failedWith(roundTrip(app, "d2", requestText("fs.read", pathArgs("note.txt"))), "not_found"));
+    check("the allowed folder itself cannot be removed", failedWith(roundTrip(app, "d3", requestText("fs.remove", pathArgs(folder))), "forbidden") && app_test_exists(folder) == 1);
+
+    app.gate.clear();
+    app_test_remove_tree(base);
+    return 0;
+}

@@ -1,0 +1,49 @@
+// examples/background -- an async command: copy the arguments into plain values, spawn a job, report progress, answer later, stop when abandoned.
+#include "app.clh"
+
+// {limit: 3000000}; the compiler writes decodeCountArgs because this is a struct
+struct CountArgs {
+public:
+    int limit;
+    CountArgs(int l) { limit = l; }
+};
+
+void installBackground(App app) {
+    app.setAsyncTimeout("primes.count", 20000);          // after 20 s the page is answered {code: "timed_out"} and the job sees callCancelled
+    app.asyncCommand("primes.count", closure AsyncCommand [] (Item args, string id, int handle) {
+        CountArgs a = decodeCountArgs(args);
+        if (a.limit < 10 || a.limit > 5000000) {
+            throw "invalid_argument: limit must be 10 to 5000000";   // before spawning: the call is answered once, here
+        }
+        int limit = a.limit;                              // plain values only: the compiler refuses an Item in the capture list
+        spawn(closure Job [limit, id, handle] () {
+            int step = limit / 10;
+            int found = 0;
+            int n = 2;
+            bool stopped = false;
+            while (n <= limit && !stopped) {
+                bool prime = true;
+                int d = 2;
+                while (d * d <= n && prime) {
+                    if (n % d == 0) {
+                        prime = false;
+                    }
+                    d = d + 1;
+                }
+                if (prime) {
+                    found = found + 1;
+                }
+                if (n % 1000 == 0 && callCancelled(handle, id)) {
+                    stopped = true;                       // the page gave up (AbortController) or the deadline passed
+                }
+                if (n % step == 0) {
+                    emitEvent(handle, "progress", "{\"done\":" + intToString(n) + ",\"of\":" + intToString(limit) + "}");
+                }
+                n = n + 1;
+            }
+            if (!stopped) {
+                replyOk(handle, id, "{\"limit\":" + intToString(limit) + ",\"primes\":" + intToString(found) + "}");
+            }
+        });
+    });
+}

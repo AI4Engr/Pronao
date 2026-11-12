@@ -1,0 +1,16 @@
+// examples/site -- a front end of several files, packed into the program and served from memory. See README.md.
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installSite(app);
+    // the origin the window loads; no Content-Security-Policy
+    if (!app.openSite("site example", 800, 560, false, "http://app.localhost", "")) {
+        std::cout << "could not open the window" << std::endl;
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

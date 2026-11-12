@@ -31,7 +31,7 @@ RELEASE=1 ICON=app.ico APP_VERSION=1.4.0 APP_NAME="My app" APP_COMPANY="Example 
 - **`ICON=app.ico`** is the icon in Explorer, the title bar and the taskbar (see [windows](05-windows.md#the-programs-icon)). `scripts/make_icon.py` makes a placeholder.
 - **`APP_VERSION`** (numbers and dots, like `1.4.0`) and **`APP_NAME`, `APP_COMPANY`, `APP_DESCRIPTION`, `APP_COPYRIGHT`** become the version resource that Explorer shows under
   Properties > Details. An exe with no version information and no signature is what virus scanners and SmartScreen are most suspicious of; fill them in. Letters, digits, spaces and `. , _ - ( )` only.
-- Size: about 1.6 MB for a small program with `RELEASE=1` ([getting started](01-getting-started.md) has the numbers).
+- Size: 1.2 MB for the smallest program with `RELEASE=1`, 2.0 MB for one that prints with `std::cout` or serves several web files ([getting started](01-getting-started.md) has the numbers).
 
 ## Signing the exe
 

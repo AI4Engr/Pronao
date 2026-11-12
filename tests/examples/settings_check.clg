@@ -1,0 +1,77 @@
+// Drives the commands of examples/settings through the real dispatcher and the settings store (headless window double).
+// The per-user folders are pointed at a scratch folder first, so nothing outside it is touched.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_test_setenv(string name, string value);
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_read_raw(string path, ref string out);
+ext_fn int app_test_mkdir_raw(string path);
+
+Item keyArgs(string key) {
+    Item o = createObject();
+    addStringToObject(o, "key", key);
+    return o;
+}
+
+Item setText(string key, string value) {
+    Item o = keyArgs(key);
+    addStringToObject(o, "value", value);
+    return o;
+}
+
+Item setNumber(string key, double value) {
+    Item o = keyArgs(key);
+    addNumberToObject(o, "value", value);
+    return o;
+}
+
+int main() {
+    string base = "";
+    app_test_make_temp_dir(base);
+    app_test_mkdir_raw(base + "/roaming");
+    app_test_mkdir_raw(base + "/home");
+    app_test_mkdir_raw(base + "/xdg");
+    app_test_setenv("APPDATA", base + "/roaming");
+    app_test_setenv("HOME", base + "/home");
+    app_test_setenv("XDG_CONFIG_HOME", base + "/xdg");
+
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installSettings(app);
+    string file = appFolderPath("config", "pronao-settings") + "/settings.json";
+    string ev = "";
+
+    check("getAll gives the defaults", roundTrip(app, "g1", requestText("settings.getAll", createObject())) == "0 {\"theme\":\"light\",\"fontSize\":12,\"compact\":false}");
+    check("get one key", roundTrip(app, "g2", requestText("settings.get", keyArgs("fontSize"))) == "0 12");
+    check("set a string", roundTrip(app, "s1", requestText("settings.set", setText("theme", "dark"))) == "0 null");
+    check("set sent the event", app_test_take_eval(app.handle, ev) == 1 && ev == "window.__pronao_emit([\"settings.changed\",{\"key\":\"theme\",\"value\":\"dark\"}]);");
+    check("get sees the new value", roundTrip(app, "g3", requestText("settings.get", keyArgs("theme"))) == "0 \"dark\"");
+    check("set a number", roundTrip(app, "s2", requestText("settings.set", setNumber("fontSize", 14))) == "0 null" && roundTrip(app, "g4", requestText("settings.get", keyArgs("fontSize"))) == "0 14");
+    while (app_test_take_eval(app.handle, ev) == 1) {
+    }
+    string disk = "";
+    app_test_read_raw(file, disk);
+    check("the values are saved in settings.json", disk.find("\"dark\"") != std::string::npos && disk.find("14") != std::string::npos);
+
+    check("a value out of range is refused", failedWith(roundTrip(app, "b1", requestText("settings.set", setNumber("fontSize", 99))), "invalid_argument"));
+    check("a value of the wrong type is refused", failedWith(roundTrip(app, "b2", requestText("settings.set", setText("fontSize", "big"))), "invalid_argument"));
+    check("a text that is too long is refused", failedWith(roundTrip(app, "b3", requestText("settings.set", setText("theme", "a very long theme name"))), "invalid_argument"));
+    check("a refused set changed nothing", roundTrip(app, "g5", requestText("settings.get", keyArgs("fontSize"))) == "0 14" && app_test_take_eval(app.handle, ev) == 0);
+    check("a key that was not declared is unknown_setting", failedWith(roundTrip(app, "u1", requestText("settings.get", keyArgs("secret"))), "unknown_setting"));
+    check("and cannot be set", failedWith(roundTrip(app, "u2", requestText("settings.set", setText("secret", "x"))), "unknown_setting"));
+
+    check("the page cannot read settings.json with fs.read", failedWith(roundTrip(app, "f1", requestText("fs.read", pathArgs(file))), "unknown_command"));
+    app.enableFileCommands(1048576);
+    check("even with the file commands on, settings.json is forbidden", failedWith(roundTrip(app, "f2", requestText("fs.read", pathArgs(file))), "forbidden"));
+
+    app.gate.clear();
+    app_test_remove_tree(base);
+    return 0;
+}

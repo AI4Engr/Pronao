@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Watch</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  pre { background: #f4f4f4; padding: 1em; white-space: pre-wrap; }
+</style></head>
+<body>
+<h1>Watching a folder</h1>
+<button id="start">Start watching</button>
+<button id="write">Write a file</button>
+<button id="stop">Stop</button>
+<pre id="out">(events appear here)</pre>
+<script>
+  const out = document.getElementById('out');
+  const log = (line) => { out.textContent += '\n' + line; };
+  const code = (e) => (e && e.code) || String(e);
+  let watchId = null, count = 0;
+
+  pronao.fs.onChange((e) => log('event: ' + JSON.stringify(e)));
+
+  document.getElementById('start').onclick = async () => {
+    try {
+      if (watchId === null) { watchId = (await pronao.fs.watch({ path: '.', recursive: true })).id; }
+      log('watching, id ' + watchId);
+    } catch (e) { log('watch failed: ' + code(e)); }
+  };
+  document.getElementById('write').onclick = async () => {
+    count += 1;
+    try { await pronao.fs.write({ path: 'note' + count + '.txt', text: 'note ' + count + '\n', mode: 'replace' }); }
+    catch (e) { log('write failed: ' + code(e)); }
+  };
+  document.getElementById('stop').onclick = async () => {
+    if (watchId === null) { return; }
+    try { await pronao.fs.unwatch({ id: watchId }); log('stopped watching'); watchId = null; }
+    catch (e) { log('unwatch failed: ' + code(e)); }
+  };
+</script>
+</body>
+</html>

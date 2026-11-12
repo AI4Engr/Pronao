@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>limits</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  table { border-collapse: collapse; }
+  td { padding: 2px 12px 2px 0; }
+  .answered { color: #0a7a0a; } .forbidden, .too_large, .busy { color: #b00020; }
+</style></head>
+<body>
+<h1>limits</h1>
+<p>The program allows <b>ping</b>, <b>echo</b> and <b>add</b>, limits a call to 8 KiB and 16 waiting calls. <b>reset</b> is registered but not listed.</p>
+<button id="go">try every command</button>
+<table id="out"></table>
+<script>
+  const rows = [
+    ['ping', 'ping', null],
+    ['echo, 100 bytes', 'echo', { text: 'x'.repeat(100) }],
+    ['echo, 20000 bytes', 'echo', { text: 'x'.repeat(20000) }],
+    ['add 2 + 3', 'add', [2, 3]],
+    ['reset (registered, not listed)', 'reset', null],
+    ['nothing (not registered)', 'nothing', null],
+  ];
+  const line = (label, cls, text) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td></td><td></td>';
+    tr.cells[0].textContent = label;
+    tr.cells[1].textContent = text;
+    tr.cells[1].className = cls;
+    document.getElementById('out').appendChild(tr);
+  };
+  document.getElementById('go').onclick = async () => {
+    document.getElementById('out').innerHTML = '';
+    for (const [label, name, args] of rows) {
+      try { line(label, 'answered', 'answered: ' + JSON.stringify(await pronao.invoke(name, args))); }
+      catch (e) { line(label, e.code, e.code + ': ' + e.message); }
+    }
+    const calls = [];
+    for (let i = 0; i < 300; i++) calls.push(pronao.invoke('ping').then(() => 'ok', e => e.code));
+    const results = await Promise.all(calls);
+    const busy = results.filter(r => r === 'busy').length;
+    line('300 calls at once', busy ? 'busy' : 'answered', (300 - busy) + ' answered, ' + busy + ' busy');
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+// examples/commands: see README.md
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installCommands(app);
+    if (!app.openPage("Commands", 640, 420, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

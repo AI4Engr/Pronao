@@ -1,0 +1,98 @@
+// examples/watch: the watch commands over the program's data folder, through the real dispatcher, the file gate and a real watcher thread
+// of the headless build. The data folder is made if it is missing and removed again if this program made it.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn double app_now_ms();
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_remove_tree(string path);
+ext_fn int app_test_exists(string path);
+ext_fn int app_test_push_internal(int handle, string request);
+
+// {"path": p, "text": t, "mode": "create"}
+Item writeArgs(string p, string t) {
+    Item o = pathArgs(p);
+    addStringToObject(o, "text", t);
+    addStringToObject(o, "mode", "create");
+    return o;
+}
+
+Item idArgs(int n) {
+    Item o = createObject();
+    addNumberToObject(o, "id", double(n));
+    return o;
+}
+
+// serves the loop and gathers every script sent to the page until `needle` has appeared (or maxMs have passed)
+string awaitEvals(App app, string needle, int maxMs) {
+    string all = "";
+    string one = "";
+    double began = app_now_ms();
+    while (!containsText(all, needle) && app_now_ms() - began < double(maxMs)) {
+        app.serveOne(25);
+        while (app_test_take_eval(app.handle, one) == 1) {
+            all = all + one;
+        }
+    }
+    return all;
+}
+
+int main() {
+    string folder = appFolderPath("data", "pronao-watch");
+    bool existed = app_test_exists(folder) == 1;
+
+    // without the install the page has no watch command
+    App bare = new App();
+    bare.open("bare", 100, 100, "<html></html>", "", false);
+    check("without installWatch there is no fs.watch", failedWith(roundTrip(bare, "n1", requestText("fs.watch", pathArgs("."))), "unknown_command"));
+
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installWatch(app);
+
+    string watchReply = roundTrip(app, "w1", requestText("fs.watch", pathArgs(".")));
+    check("the page watches its data folder", ok(watchReply) && startsWithText(bodyOf(watchReply), "{\"id\":"));
+    check("a folder that does not exist is not_found", failedWith(roundTrip(app, "w2", requestText("fs.watch", pathArgs("missing"))), "not_found"));
+    check("the parent folder cannot be watched", failedWith(roundTrip(app, "w3", requestText("fs.watch", pathArgs(".."))), "forbidden"));
+    string elsewhere = "";
+    app_test_make_temp_dir(elsewhere);
+    check("neither can another folder", failedWith(roundTrip(app, "w4", requestText("fs.watch", pathArgs(elsewhere))), "forbidden"));
+    check("fs.watch needs a path", failedWith(roundTrip(app, "w5", requestText("fs.watch", createObject())), "invalid_argument"));
+
+    string name = "pronao-watch-check.txt";
+    check("a file is written through the file commands", roundTrip(app, "f1", requestText("fs.write", writeArgs(name, "hello"))) == "0 null");
+    string events = awaitEvals(app, "\"kind\":\"created\",\"path\":\"" + name + "\"", 10000);
+    check("the page is told of the new file", containsText(events, "window.__pronao_emit([\"fs.change\",{\"watch\":") && containsText(events, "\"kind\":\"created\",\"path\":\"" + name + "\""));
+    check("the event has a relative path, not where the folder is", !containsText(events, folder) && !containsText(events, "LOCALAPPDATA"));
+
+    check("the page cannot write outside the data folder", failedWith(roundTrip(app, "f2", requestText("fs.write", writeArgs(elsewhere + "/x.txt", "x"))), "forbidden"));
+
+    string idText = bodyOf(watchReply);
+    idText = idText.substr(6, idText.length() - 7);
+    int watchId = int(decimalValue(idText));
+    check("unwatch with an id nobody has is not_found", failedWith(roundTrip(app, "u1", requestText("fs.unwatch", idArgs(999999))), "not_found"));
+    check("unwatch ends the watch", roundTrip(app, "u2", requestText("fs.unwatch", idArgs(watchId))) == "0 null");
+    string left = "";
+    while (app_test_take_eval(app.handle, left) == 1) { }
+    Item second = pathArgs(name + ".second");
+    addStringToObject(second, "text", "x");
+    addStringToObject(second, "mode", "create");
+    roundTrip(app, "f3", requestText("fs.write", second));
+    events = awaitEvals(app, "second", 600);
+    check("after unwatch no event arrives", !containsText(events, "second"));
+
+    roundTrip(app, "r1", requestText("fs.remove", pathArgs(name)));
+    roundTrip(app, "r2", requestText("fs.remove", pathArgs(name + ".second")));
+    app.gate.clear();
+    app_test_remove_tree(elsewhere);
+    if (!existed) {
+        app_test_remove_tree(folder);
+    }
+    check("the data folder is back as it was", (app_test_exists(folder) == 1) == existed);
+    return 0;
+}

@@ -1,0 +1,15 @@
+// examples/programs -- a page that runs a program from the application's list and opens an address in the browser.
+//   PAGE=examples/programs/index.html EXTRA=examples/programs/commands.clg bash scripts/build.sh examples/programs/main.clg out/programs.exe
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installPrograms(app);
+    if (!app.openPage("Programs", 640, 420, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

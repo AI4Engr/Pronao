@@ -1,0 +1,18 @@
+// examples/windows -- window commands, layout commands, a second window and the application's own Window calls.
+//   ASSETS=examples/windows/dist EXTRA=examples/windows/commands.clg bash scripts/build.sh examples/windows/main.clg out/windows.exe
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installWindows(app);
+    // a second window needs a site: the files of ASSETS are served from memory under one origin
+    if (!app.openSite("Windows", 640, 420, false, "http://app.localhost", "")) {
+        return 1;
+    }
+    Window w = app.windows.get(app.handle);
+    w.setBounds(120, 80, 760, 480);         // fitted to the monitors that exist
+    app.run();
+    app.close();
+    return 0;
+}

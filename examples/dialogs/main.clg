@@ -1,0 +1,15 @@
+// examples/dialogs -- a page that opens a file dialog and reads the file the user picked.
+//   PAGE=examples/dialogs/index.html EXTRA=examples/dialogs/commands.clg bash scripts/build.sh examples/dialogs/main.clg out/dialogs.exe
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installDialogs(app);
+    if (!app.openPage("Dialogs", 640, 420, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

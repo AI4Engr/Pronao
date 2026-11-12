@@ -1,0 +1,90 @@
+// examples/limits through the real dispatcher: the allowed commands answer, the command left out of the list and an unregistered name are both
+// forbidden, a call over the size limit is too_large, a flood past the queue limit is busy, and cancelling is always allowed.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+string repeatedText(string piece, int times) {
+    string text = "";
+    int i = 0;
+    while (i < times) {
+        text = text + piece;
+        i = i + 1;
+    }
+    return text;
+}
+
+int main() {
+    App app = new App();
+    installLimits(app);          // before the window opens: the limits apply to windows opened afterwards
+    app.open("t", 100, 100, "<html></html>", "", false);
+
+    check("ping answers", roundTrip(app, "a1", "[\"ping\"]") == "0 \"pong\"");
+    Item small = createObject();
+    addStringToObject(small, "text", "hello");
+    check("echo answers", roundTrip(app, "a2", requestText("echo", small)) == "0 \"hello\"");
+    check("add answers", roundTrip(app, "a3", "[\"add\",[2,3]]") == "0 5");
+    check("a command that throws is not forbidden", failedWith(roundTrip(app, "a4", "[\"add\",\"x\"]"), "forbidden") == false);
+
+    string resetReply = roundTrip(app, "b1", "[\"reset\"]");
+    check("reset is registered but not listed: forbidden", failedWith(resetReply, "forbidden"));
+    string missingReply = roundTrip(app, "b2", "[\"nothing\"]");
+    check("a name that is not registered is forbidden too", failedWith(missingReply, "forbidden"));
+    check("so the two answers are the same, and names cannot be probed", bodyOf(resetReply) == bodyOf(missingReply));
+    check("a command of the application that was never enabled is forbidden", failedWith(roundTrip(app, "b3", "[\"fs.read\",{\"path\":\"x\"}]"), "forbidden"));
+
+    Item big = createObject();
+    addStringToObject(big, "text", repeatedText("0123456789", 1000));
+    string bigReply = roundTrip(app, "c1", requestText("echo", big));
+    check("a call over 8 KiB is too_large", failedWith(bigReply, "too_large"));
+    check("and does not come back in the answer", !containsText(bigReply, "0123456789"));
+    Item nearLimit = createObject();
+    addStringToObject(nearLimit, "text", repeatedText("0123456789", 500));
+    check("a call under the limit goes through", ok(roundTrip(app, "c2", requestText("echo", nearLimit))));
+
+    check("cancelling is always allowed", roundTrip(app, "d1", "[\"$cancel\",\"t1\"]") == "0 null");
+
+    // a flood: 24 calls with nothing serving the queue; 16 wait, the other 8 are refused at once
+    int queued = 0;
+    int refused = 0;
+    int n = 0;
+    while (n < 24) {
+        int r = app_test_inject(app.handle, "f" + intToString(n), "[\"ping\"]");
+        if (r == 0) {
+            queued = queued + 1;
+        }
+        if (r == 2) {
+            refused = refused + 1;
+        }
+        n = n + 1;
+    }
+    check("with 16 waiting, the rest of a flood is refused", queued == 16 && refused == 8);
+    int busy = 0;
+    int pong = 0;
+    int taken = 0;
+    int turns = 0;
+    while (taken < 24 && turns < 3000) {
+        app.serveOne(20);
+        string id = "";
+        int status = 0;
+        string json = "";
+        while (app_test_take_response(app.handle, id, status, json) == 1) {
+            taken = taken + 1;
+            if (json == "\"pong\"") {
+                pong = pong + 1;
+            }
+            if (startsWithText(json, "{\"code\":\"busy\"")) {
+                busy = busy + 1;
+            }
+        }
+        turns = turns + 1;
+    }
+    check("the refused calls are answered busy, the queued ones answered", busy == 8 && pong == 16);
+    check("after the flood the program answers again", roundTrip(app, "e1", "[\"ping\"]") == "0 \"pong\"");
+
+    app.close();
+    return 0;
+}

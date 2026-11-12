@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Settings</title>
+<style>
+  body { font-family: sans-serif; margin: 2em; }
+  pre { background: #f4f4f4; padding: 1em; min-height: 6em; }
+</style></head>
+<body>
+<h1>Settings</h1>
+<button id="all">show all</button>
+<button id="dark">theme = dark</button>
+<button id="size">fontSize = 14</button>
+<button id="huge">fontSize = 99</button>
+<button id="text">fontSize = "big"</button>
+<button id="secret">get "secret"</button>
+<pre id="out"></pre>
+<script>
+  const out = document.getElementById('out');
+  const add = text => { out.textContent = text + '\n' + out.textContent; };
+  const run = async (label, call) => {
+    try {
+      add(label + ' -> ' + JSON.stringify(await call()));
+    } catch (e) {
+      add(label + ' refused (' + e.code + '): ' + e.message);
+    }
+  };
+  pronao.on('settings.changed', c => add('event settings.changed ' + JSON.stringify(c)));
+  const on = (id, label, call) => { document.getElementById(id).onclick = () => run(label, call); };
+  on('all', 'getAll', () => pronao.settings.getAll());
+  on('dark', 'set theme', () => pronao.settings.set('theme', 'dark'));
+  on('size', 'set fontSize', () => pronao.settings.set('fontSize', 14));
+  on('huge', 'set fontSize', () => pronao.settings.set('fontSize', 99));          // outside 8 to 32: invalid_argument
+  on('text', 'set fontSize', () => pronao.settings.set('fontSize', 'big'));       // wrong type: invalid_argument
+  on('secret', 'get secret', () => pronao.settings.get('secret'));                // not declared: unknown_setting
+  run('getAll on load', () => pronao.settings.getAll());
+</script>
+</body>
+</html>

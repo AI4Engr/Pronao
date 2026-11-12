@@ -1,0 +1,109 @@
+// examples/windows through the real dispatcher, with the headless window double.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+ext_fn int app_test_take_window_log(int handle, ref string line);
+ext_fn int app_test_take_eval(int handle, ref string js);
+ext_fn int app_test_window_rect(string rect);
+ext_fn int app_test_dialog_push(string answer);
+ext_fn int app_test_dialog_take_request(ref string request);
+ext_fn int app_test_close_window(int handle);
+
+string windowLog(int handle) {
+    string all = "";
+    string one = "";
+    while (app_test_take_window_log(handle, one) == 1) {
+        all = all + one + ";";
+    }
+    return all;
+}
+
+Item sizeArgs(double w, double h) {
+    Item o = createObject();
+    addNumberToObject(o, "width", w);
+    addNumberToObject(o, "height", h);
+    return o;
+}
+
+string lastDialogRequest() {
+    string last = "";
+    string one = "";
+    while (app_test_dialog_take_request(one) == 1) {
+        last = one;
+    }
+    return last;
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installWindows(app);
+    int h = app.handle;
+    windowLog(h);
+
+    Item title = createObject();
+    addStringToObject(title, "title", "Report - draft");
+    check("window.setTitle reaches the window", roundTrip(app, "a1", requestText("window.setTitle", title)) == "0 null" && windowLog(h) == "title|Report - draft;");
+    Item emptyTitle = createObject();
+    addStringToObject(emptyTitle, "title", "");
+    check("an empty title is refused and nothing reaches the window", failedWith(roundTrip(app, "a2", requestText("window.setTitle", emptyTitle)), "invalid_argument") && windowLog(h) == "");
+    check("window.setSize", roundTrip(app, "a3", requestText("window.setSize", sizeArgs(900.0, 600.0))) == "0 null" && windowLog(h) == "size|900|600;");
+    check("a width below 200 is refused", failedWith(roundTrip(app, "a4", requestText("window.setSize", sizeArgs(100.0, 600.0))), "invalid_argument") && windowLog(h) == "");
+    check("so is a height above 10000", failedWith(roundTrip(app, "a5", requestText("window.setSize", sizeArgs(800.0, 10001.0))), "invalid_argument"));
+
+    app_test_window_rect("100 120 800 600 0");
+    check("layout.getBounds", roundTrip(app, "b1", "[\"window.getBounds\",{}]") == "0 {\"x\":100,\"y\":120,\"width\":800,\"height\":600,\"maximized\":false,\"minimized\":false,\"fullscreen\":false,\"alwaysOnTop\":false,\"frameless\":false,\"resizable\":true}");
+    Item bounds = createObject();
+    addNumberToObject(bounds, "x", 10.0);
+    addNumberToObject(bounds, "y", 20.0);
+    addNumberToObject(bounds, "width", 500.0);
+    addNumberToObject(bounds, "height", 400.0);
+    check("layout.setBounds places the window", roundTrip(app, "b2", requestText("window.setBounds", bounds)) == "0 null" && containsText(windowLog(h), "placement|"));
+    Item narrow = createObject();
+    addNumberToObject(narrow, "x", 10.0);
+    addNumberToObject(narrow, "y", 20.0);
+    addNumberToObject(narrow, "width", 5.0);
+    addNumberToObject(narrow, "height", 400.0);
+    check("a width below 200 is refused here too", failedWith(roundTrip(app, "b3", requestText("window.setBounds", narrow)), "invalid_argument"));
+    check("full screen and always on top were not allowed, so they do not exist", failedWith(roundTrip(app, "b4", "[\"window.setFullscreen\",{\"on\":true}]"), "unknown_command") && failedWith(roundTrip(app, "b5", "[\"window.setAlwaysOnTop\",{\"on\":true}]"), "unknown_command"));
+    check("the page cannot take its title bar away or fix its size itself", failedWith(roundTrip(app, "b6", "[\"window.setFrameless\",{\"on\":true}]"), "unknown_command") && failedWith(roundTrip(app, "b7", "[\"window.setResizable\",{\"on\":false}]"), "unknown_command"));
+
+    check("the program's own command fixes the size", roundTrip(app, "c1", "[\"app.lockSize\",{\"locked\":true}]") == "0 true" && windowLog(h) == "style|4|0;");
+    check("and frees it again", roundTrip(app, "c2", "[\"app.lockSize\",{\"locked\":false}]") == "0 false" && windowLog(h) == "style|4|1;");
+
+    // a second window: the double has no site, so the request is accepted, the open then fails and the opener is told
+    check("window.open needs a start inside the site", failedWith(roundTrip(app, "d1", "[\"window.open\",{\"start\":\"http://example.com/\"}]"), "invalid_argument") && failedWith(roundTrip(app, "d2", "[\"window.open\",{\"start\":\"/../secret.html\"}]"), "invalid_argument"));
+    check("a window narrower than 200 is refused", failedWith(roundTrip(app, "d3", "[\"window.open\",{\"start\":\"/second.html\",\"width\":50}]"), "invalid_argument"));
+    check("a good request is accepted", roundTrip(app, "d4", "[\"window.open\",{\"start\":\"/second.html\",\"title\":\"Second\"}]") == "0 null");
+    app.serveOne(100);
+    string ev = "";
+    bool told = false;
+    while (app_test_take_eval(h, ev) == 1) {
+        if (containsText(ev, "window.openFailed") && containsText(ev, "/second.html")) {
+            told = true;
+        }
+    }
+    check("with no site to serve it the opener gets window.openFailed", told && app.windows.count() == 1);
+
+    // closing with unsaved work: the program asks, in its own words
+    Item dirty = createObject();
+    addBoolToObject(dirty, "dirty", true);
+    check("window.setDirty", roundTrip(app, "e1", requestText("window.setDirty", dirty)) == "0 null");
+    lastDialogRequest();
+    app_test_dialog_push("button:4");
+    app_test_close_window(h);
+    app.serveOne(150);
+    app.serveOne(150);
+    check("the X asks the application's question, not the page's", lastDialogRequest() == "message|Unsaved work|Close without saving?|3|2");
+    check("answering no keeps the window open", app.windows.count() == 1);
+    app_test_dialog_push("button:3");
+    app_test_close_window(h);
+    app.serveOne(150);
+    app.serveOne(150);
+    check("answering yes closes it", app.windows.count() == 0);
+    return 0;
+}

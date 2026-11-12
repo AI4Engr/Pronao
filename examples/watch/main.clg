@@ -1,0 +1,15 @@
+// examples/watch -- a page that watches a folder, writes a file into it and shows the change events.
+//   PAGE=examples/watch/index.html EXTRA=examples/watch/commands.clg bash scripts/build.sh examples/watch/main.clg out/watch.exe
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installWatch(app);
+    if (!app.openPage("Watch", 640, 420, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>background</title>
+<style>
+  body { font-family: sans-serif; margin: 1.5em; }
+  pre { background: #f4f4f4; padding: 1em; }
+</style></head>
+<body>
+<h1>background</h1>
+<p>Count the primes up to <input id="limit" type="number" value="3000000" style="width:8em">
+   <button id="start">start</button> <button id="cancel" disabled>cancel</button>
+   <button id="big">start with 99999999</button></p>
+<progress id="bar" max="100" value="0" style="width:20em"></progress>
+<pre id="out">(results appear here)</pre>
+<script>
+  const out = document.getElementById('out'), bar = document.getElementById('bar');
+  const $ = (id) => document.getElementById(id);
+  let controller = null;
+  pronao.on('progress', (e) => { bar.value = 100 * e.done / e.of; out.textContent = 'working: ' + e.done + ' of ' + e.of; });
+  async function run(limit) {
+    controller = new AbortController();
+    $('cancel').disabled = false;
+    bar.value = 0;
+    try {
+      const r = await pronao.invoke('primes.count', { limit }, { signal: controller.signal });
+      out.textContent = r.primes + ' primes up to ' + r.limit;
+    } catch (e) {
+      out.textContent = 'rejected: ' + e.code + (e.message ? ' (' + e.message + ')' : '');   // cancelled, timed_out, invalid_argument ...
+    }
+    $('cancel').disabled = true;
+  }
+  $('start').onclick = () => run(Number($('limit').value));
+  $('big').onclick = () => run(99999999);                 // refused by the command before any work starts
+  $('cancel').onclick = () => controller.abort();         // rejects at once with {code: 'cancelled'}; the job sees callCancelled and stops
+</script>
+</body>
+</html>

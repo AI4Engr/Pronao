@@ -4,7 +4,7 @@
 
 **Desktop apps with a web UI and a [CeeLing](https://github.com/AI4Engr/CeeLing) backend, in the spirit of Wails and Tauri.** The window is the system WebView (WebView2 on Windows), the page is HTML and JavaScript, and the commands the page calls are CeeLing code: checked for dangling references and use after move, compiled to plain C++.
 
-A complete program: four commands and a window.
+A complete program: four commands and a window. There are eleven more in [examples/](examples/), one for each part below.
 
 ```
 #include "app.clh"
@@ -63,7 +63,7 @@ The program above, built for release, is one **1.2 MB** `.exe`: no installer, no
 
 | | Pronao | Tauri 2.12 (`--release`) | Tauri, size-tuned | Electron 45 (one portable `.exe`) |
 |---|---|---|---|---|
-| program | **1.2 MB** | 8.6 MB | 3.1 MB | 110 MB (373 MB unpacked) |
+| program | **1.2 MB** (2.0 MB if it prints with `std::cout`) | 8.6 MB | 3.1 MB | 110 MB (373 MB unpacked) |
 | build from nothing | 14 s | 56 s | 93 s | 103 s |
 | edit one command, rebuild | 12 s | 13 to 16 s | 51 s | 103 s |
 
@@ -106,19 +106,21 @@ bash tests/run_headless.sh       # ~20 s, 17 programs, 982 checks, no window nee
 
 Everything below is off until the application turns it on, and a page can ask only for what the application allowed.
 
-| Area | What | Manual |
-|---|---|---|
-| Commands and events | named commands with checked arguments, events from CeeLing to the page, structured errors | [2](docs/manual/02-how-it-works.md) |
-| Files | an allowed-folder policy checked against the open handle, not the path text; read, write, list, stat, remove | [3](docs/manual/03-files-and-data.md) |
-| Settings, folders | per-user data folders and a declared, typed settings file | [3](docs/manual/03-files-and-data.md) |
-| Dialogs, drag and drop | open, save, folder, message; a pick or a drop becomes a grant for exactly that file | [3](docs/manual/03-files-and-data.md) |
-| Watching folders | change events, merged and re-checked against the permission | [3](docs/manual/03-files-and-data.md) |
-| Programs and links | a fixed list of programs with typed slots, no shell; links and files opened by the system | [4](docs/manual/04-programs-and-links.md) |
-| Windows | title, size, position, full screen, always on top, frameless, modal, several windows, remembered places, one running copy, an icon | [5](docs/manual/05-windows.md) |
-| Menus and tray | menu bar and shortcuts, tray icon, pop-up menus, notifications, light and dark | [6](docs/manual/06-menus-tray-notifications.md) |
-| Background work | async commands on a worker pool, cancelling, deadlines, `Channel` and pumps | [7](docs/manual/07-background-work.md) |
-| Limits on a page | request size and flood limits, navigation guard, command lists, release builds without developer tools | [8](docs/manual/08-security.md) |
-| A front end of many files, shipping | a site served from memory, a dev server, a release exe, signing | [9](docs/manual/09-web-ui-and-shipping.md) |
+| Area | What | Manual | Example |
+|---|---|---|---|
+| Commands and events | named commands with checked arguments, events from CeeLing to the page, structured errors | [2](docs/manual/02-how-it-works.md) | [commands](examples/commands/) |
+| Files | an allowed-folder policy checked against the open handle, not the path text; read, write, list, stat, remove | [3](docs/manual/03-files-and-data.md) | [files](examples/files/) |
+| Settings, folders | per-user data folders and a declared, typed settings file | [3](docs/manual/03-files-and-data.md) | [settings](examples/settings/) |
+| Dialogs, drag and drop | open, save, folder, message; a pick or a drop becomes a grant for exactly that file | [3](docs/manual/03-files-and-data.md) | [dialogs](examples/dialogs/) |
+| Watching folders | change events, merged and re-checked against the permission | [3](docs/manual/03-files-and-data.md) | [watch](examples/watch/) |
+| Programs and links | a fixed list of programs with typed slots, no shell; links and files opened by the system | [4](docs/manual/04-programs-and-links.md) | [programs](examples/programs/) |
+| Windows | title, size, position, full screen, always on top, frameless, modal, several windows, remembered places, one running copy, an icon | [5](docs/manual/05-windows.md) | [windows](examples/windows/) |
+| Menus and tray | menu bar and shortcuts, tray icon, pop-up menus, notifications, light and dark | [6](docs/manual/06-menus-tray-notifications.md) | [menus](examples/menus/) |
+| Background work | async commands on a worker pool, cancelling, deadlines, `Channel` and pumps | [7](docs/manual/07-background-work.md) | [background](examples/background/) |
+| Limits on a page | request size and flood limits, navigation guard, command lists, release builds without developer tools | [8](docs/manual/08-security.md) | [limits](examples/limits/) |
+| A front end of many files, shipping | a site served from memory, a dev server, a release exe, signing | [9](docs/manual/09-web-ui-and-shipping.md) | [site](examples/site/) |
+
+Every example is a complete program with a headless check that includes the inputs it must refuse (`bash tests/run_examples.sh`: 182 checks). They are listed in [examples/README.md](examples/README.md).
 
 ## What is and is not checked
 

@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>windows</title>
+<style>
+  body { font-family: sans-serif; margin: 1.5em; }
+  pre { background: #f4f4f4; padding: 1em; }
+</style></head>
+<body>
+<h1>windows</h1>
+<p><button id="bounds">show bounds</button> <button id="size">size 900 x 600</button>
+   <button id="tiny">size 100 x 100</button> <button id="lock">lock size</button>
+   <button id="open">open second window</button></p>
+<p><input id="title" value="Report - draft"> <button id="rename">set title</button>
+   <label><input type="checkbox" id="dirty"> unsaved work</label></p>
+<pre id="out">(results appear here)</pre>
+<script>
+  const out = document.getElementById('out');
+  const $ = id => document.getElementById(id);
+  const show = (label, p) => p.then(v => { out.textContent = label + ' -> ' + JSON.stringify(v, null, 1); },
+                                    e => { out.textContent = label + ' rejected: ' + JSON.stringify(e); });
+  let locked = false;
+  $('bounds').onclick = () => show('getBounds', pronao.layout.getBounds());
+  $('size').onclick = () => show('setSize', pronao.window.setSize({ width: 900, height: 600 }));
+  $('tiny').onclick = () => show('setSize', pronao.window.setSize({ width: 100, height: 100 }));   // refused: width below 200
+  $('rename').onclick = () => show('setTitle', pronao.window.setTitle({ title: $('title').value }));
+  $('dirty').onchange = () => pronao.window.setDirty({ dirty: $('dirty').checked });
+  $('lock').onclick = () => {
+    locked = !locked;
+    $('lock').textContent = locked ? 'unlock size' : 'lock size';
+    show('app.lockSize', pronao.invoke('app.lockSize', { locked }));
+  };
+  $('open').onclick = () => show('window.open', pronao.invoke('window.open', { start: '/second.html', title: 'Second', width: 420, height: 300 }));
+  pronao.window.onCloseDeclined(() => { out.textContent = 'you chose to stay: the work is still unsaved'; });
+  pronao.on('window.openFailed', e => { out.textContent = 'could not open ' + e.start; });
+</script>
+</body>
+</html>

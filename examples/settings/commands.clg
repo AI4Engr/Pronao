@@ -1,0 +1,19 @@
+// examples/settings: typed settings the page can read and change, for the declared keys only.
+#include "app.clh"
+
+void installSettings(App app) {
+    SettingsStore settings = app.settings;
+    settings.declareString("theme", "light", 16);      // key, default, longest text accepted
+    settings.declareInt("fontSize", 12, 8, 32);        // key, default, lowest, highest
+    settings.declareBool("compact", false);
+    // %APPDATA%\pronao-settings\settings.json (XDG: ~/.config/pronao-settings): the page cannot reach it with fs.*
+    string why = settings.open("pronao-settings");
+    if (why.length() > 0) {
+        std::cout << "settings: " << why << std::endl;
+    }
+    settings.load();
+    if (settings.problem.length() > 0) {
+        std::cout << "settings: " << settings.problem << std::endl;      // a bad file gives the defaults
+    }
+    app.enableSettingsCommands();
+}

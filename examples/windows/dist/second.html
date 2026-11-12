@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>second</title>
+<style>body { font-family: sans-serif; margin: 1.5em; }</style></head>
+<body>
+<h1>second window</h1>
+<p>Opened by the first page. It has the same commands and its own title and size.</p>
+<p><button id="bounds">show bounds</button> <button id="close">close this window</button></p>
+<pre id="out"></pre>
+<script>
+  document.getElementById('bounds').onclick = () => pronao.layout.getBounds().then(
+    b => { document.getElementById('out').textContent = JSON.stringify(b, null, 1); });
+  document.getElementById('close').onclick = () => pronao.window.close();
+</script>
+</body>
+</html>
