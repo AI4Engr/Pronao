@@ -6,13 +6,13 @@
 
 **Desktop apps with a web UI and a checked CeeLing backend.**
 
-Pronao is a framework for building small desktop programs: the window is the system's WebView, the page is HTML and JavaScript, and the commands the page calls are written in [CeeLing](https://github.com/AI4Engr/CeeLing), a memory-safe dialect of C++, or directly in C++ ([both shown below](#or-write-it-in-c)). For commands written in CeeLing the compiler rejects dangling references and use after move, and the page can reach only what the program chose to allow: a folder, a list of programs, a list of commands.
+Pronao is a framework for building small desktop programs: the window is the system's WebView, the page is HTML and JavaScript, and the commands the page calls are written in [CeeLing](https://github.com/AI4Engr/CeeLing), a memory-safe dialect of C++. The compiler rejects dangling references and use after move, and the page can reach only what the program chose to allow: a folder, a list of programs, a list of commands.
 
 A program is one `.exe` with no installer. The example program below is **1.2 MB** and builds from nothing in 14 seconds; the same four commands in Tauri are 3.1 to 8.6 MB and in Electron 110 MB ([measurements and how to repeat them](docs/comparison/README.md)).
 
 > **Status: prototype.** The API is not stable and may break before 1.0. Windows is the only platform with a window. There are no releases: build from source.
 >
-> **What the guarantees cover:** only CeeLing code compiled and checked by the CeeLing compiler. The native layer (`shim/`), the WebView and browser engine, any C++ library you link, commands you write in C++ and every `ext_fn` declaration are trusted, not checked. Nothing here is "thread-safe".
+> **What the guarantees cover:** only CeeLing code compiled and checked by the CeeLing compiler. The native layer (`shim/`), the WebView and browser engine, any C++ library you link and every `ext_fn` declaration are trusted, not checked. Nothing here is "thread-safe".
 
 ## Quick start
 
@@ -34,7 +34,7 @@ That builds `out/my-app.exe`: a page, a `main.clg` with one command, and a build
 
 ## A complete program
 
-Four commands and a window. More programs are in [examples/](examples/), one for each part below and one written in C++ (see [Or write it in C++](#or-write-it-in-c)).
+Four commands and a window. More programs are in [examples/](examples/), one for each part below.
 
 ```
 #include "app.clh"
@@ -85,41 +85,6 @@ try { await pronao.invoke('fail'); }
 catch (e) { console.log(e); }                       // {code: "command_failed", message: "this command always fails"}
 ```
 
-## Or write it in C++
-
-Pronao is written in CeeLing and compiled to C++, so the framework is also a C++ library: write the program in plain C++, include the headers the compiler generated, and call it. Use this when a command needs a C++ library, or when your team already writes C++. Three of the same commands:
-
-```cpp
-#include "app.h"
-#include "cjson_item.h"
-#include "core.h"
-
-int main() {
-    auto app = std::make_shared<App>();
-
-    app->command("add", makeCommand([](std::shared_ptr<Item> args) {
-        return createNumber(numberAt(args, 0) + numberAt(args, 1));
-    }));
-    app->command("greet", makeCommand([](std::shared_ptr<Item> args) {
-        return createString("hello, " + requiredString(args, "name"));
-    }));
-    app->command("fail", makeCommand([](std::shared_ptr<Item>) -> std::shared_ptr<Item> {
-        throw std::runtime_error("this command always fails");   // reaches the page as command_failed
-    }));
-
-    if (!app->openPage("My app", 640, 420, false)) return 1;
-    app->run();
-    app->close();
-    return 0;
-}
-```
-
-```
-PAGE=examples/cpp/index.html bash scripts/build.sh examples/cpp/main.cpp out/cpp.exe
-```
-
-The page is the same, and so are the framework's limits: the file gate, the program list, the command lists and the request limits are still checked CeeLing, and a page reaches only what you allowed. What changes is that the commands you write in C++ are ordinary C++: the CeeLing compiler does not check them for dangling references or use after move, and inserts no bounds or null checks. Keep those commands in CeeLing if you want the guarantee. The complete program is [examples/cpp](examples/cpp/), with a headless check, and the rules are in [appendix C](docs/manual/appendix-cpp.md) of the manual.
-
 ## Compared with Tauri and Electron
 
 The same program in each: the four commands above and a page that calls them. Measured on 2026-11-11 on one Windows 11 machine with 32 cores.
@@ -146,7 +111,6 @@ Everything is off until the program turns it on, and a page can ask only for wha
 * **Menus and tray:** menu bar and shortcuts, tray icon, pop-up menus, notifications, light and dark.
 * **Background work:** async commands on a worker pool, with cancelling and deadlines.
 * **Limits on a page:** request size and flood limits, a navigation guard, command lists, release builds without developer tools.
-* **C++ or CeeLing:** write the commands in CeeLing (checked) or in plain C++ against the generated headers.
 * **A front end of many files and shipping:** a site served from memory, a development server, a release `.exe`, version information, signing.
 
 Each has a chapter in the [manual](docs/manual/README.md) and a program in [examples/](examples/README.md).
@@ -193,7 +157,7 @@ CeeLing checks the command table and everything the commands do with their own d
 
 ## Documentation
 
-* **[User manual](docs/manual/README.md):** ten chapters and three appendices, from getting started to shipping, including [what a command does from the page to the reply](docs/manual/appendix-command-journey.md), [the compile errors you will meet](docs/manual/appendix-compile-errors.md) and [writing the program in C++](docs/manual/appendix-cpp.md).
+* **[User manual](docs/manual/README.md):** ten chapters and two appendices, from getting started to shipping, including [what a command does from the page to the reply](docs/manual/appendix-command-journey.md) and [the compile errors you will meet](docs/manual/appendix-compile-errors.md).
 * **[Examples](examples/README.md)** and the [comparison with Tauri and Electron](docs/comparison/README.md).
 * [Source map](docs/manual/source-map.md): where things are in the repository.
 * [Chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-pronao.md): what the language did to this program, with counts of the checks it inserted and what they cost.
