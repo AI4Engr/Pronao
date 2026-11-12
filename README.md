@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/pronao-icon.png" width="120" alt="Pronao"></p>
+
 # Pronao
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![Status: prototype](https://img.shields.io/badge/status-prototype-orange.svg)
