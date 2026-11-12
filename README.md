@@ -109,6 +109,18 @@ PAGE=examples/cpp/index.html bash scripts/build.sh examples/cpp/main.cpp out/cpp
 
 The page is the same, and so are the framework's limits: the file gate, the program list, the command lists and the request limits are still checked CeeLing, and a page reaches only what you allowed. What changes is that the commands you write in C++ are ordinary C++: the CeeLing compiler does not check them for dangling references or use after move, and inserts no bounds or null checks. Keep those commands in CeeLing if you want the guarantee. The complete program is [examples/cpp](examples/cpp/), with a headless check, and the rules are in [appendix C](docs/manual/appendix-cpp.md) of the manual.
 
+## Compared with Tauri and Electron
+
+The same program in each: the four commands above and a page that calls them. Measured on 2026-11-11 on one Windows 11 machine with 32 cores.
+
+| | Pronao | Tauri 2.12.5 (`--release`) | Tauri, size-tuned | Electron 45.3.0 (one portable `.exe`) |
+|---|---|---|---|---|
+| program | **1.2 MB** | 8.6 MB | 3.1 MB | 110 MB |
+| build from nothing | 14 s | 56 s | 93 s | 103 s |
+| edit one command, rebuild | 12 s | 13 to 16 s | 51 s | 103 s |
+
+This is one trivial program, one machine and one build of each. Start-up time and memory were not measured, nor was Tauri's debug profile (`tauri dev`), where its rebuilds are probably much faster. Tauri and Electron have far more features (installers, auto-update, a plugin and permission system, other platforms); a larger Pronao program also takes longer to build, because every module is compiled again. A Pronao program that prints with `std::cout` is 2.0 MB. The sources, the exact commands and the runs are in [docs/comparison](docs/comparison/README.md).
+
 ## What it does
 
 Everything is off until the program turns it on, and a page can ask only for what the program allowed.
