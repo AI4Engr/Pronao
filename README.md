@@ -61,13 +61,13 @@ The commands are CeeLing, so the compiler checks them: a dangling reference or a
 
 The program above, built for release, is one **1.2 MB** `.exe`: no installer, no DLLs, and it uses the WebView that Windows already has. Measured on one 32-core Windows machine, the same four commands and the same page in each framework:
 
-| | Pronao | Tauri 2.12 (`--release`) | Tauri, size-tuned | Electron 45 |
+| | Pronao | Tauri 2.12 (`--release`) | Tauri, size-tuned | Electron 45 (one portable `.exe`) |
 |---|---|---|---|---|
-| program | **1.2 MB** | 8.6 MB | 3.1 MB | 249 MB (373 MB with its files) |
-| build from nothing | 14 s | 56 s | 93 s | 4 s (package) |
-| edit one command, rebuild | 12 s | 13 to 16 s | 51 s | none (it is JavaScript) |
+| program | **1.2 MB** | 8.6 MB | 3.1 MB | 110 MB (373 MB unpacked) |
+| build from nothing | 14 s | 56 s | 93 s | 103 s |
+| edit one command, rebuild | 12 s | 13 to 16 s | 51 s | 103 s |
 
-Electron has nothing to compile: packaging copies a prebuilt Chromium and Node, which is why it builds fast and weighs a quarter of a gigabyte. Pronao and Tauri need Microsoft's WebView2 Runtime; Electron brings its own browser. One trivial program, one machine, one build of each; start-up time and memory were not measured. Tauri brings more runtime (plugins, a permission system) than Pronao does, which is part of the size.
+Electron has no compile step, but turning the app into a single `.exe` (electron-builder, `portable`, default compression) compresses a copy of Chromium and Node, and it takes the same 103 s every time. Packaging only the folder (`@electron/packager`) took 4 s and gives 373 MB of files, not an `.exe`. Pronao and Tauri need Microsoft's WebView2 Runtime; Electron brings its own browser. One trivial program, one machine, one build of each; start-up time and memory were not measured. Tauri brings more runtime (plugins, a permission system) than Pronao does, which is part of the size.
 
 > **Status: prototype.** It answers three questions: can the callback direction be reversed (CeeLing cannot receive a function pointer), are commands written as closures pleasant, and what rules do threads need. Windows is the only platform tried; there are no releases, build from source.
 
