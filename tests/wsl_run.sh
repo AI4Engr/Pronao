@@ -38,7 +38,7 @@ cc_o() { # src obj flags...
 }
 
 # the native layer and the test doubles (POSIX files), compiled from <repo dir> with <flags>; prints the object list
-NATIVE_SRC="shim/watch.cpp shim/assets.cpp shim/os.cpp shim/posix/fs.cpp shim/posix/proc.cpp shim/posix/watch.cpp tests/doubles/headless_shim.cpp tests/doubles/test_support.cpp tests/doubles/instance_double.cpp"
+NATIVE_SRC="shim/watch.cpp shim/assets.cpp shim/os.cpp shim/posix/fs.cpp shim/posix/proc.cpp shim/posix/watch.cpp tests/doubles/headless_shim.cpp tests/doubles/test_support.cpp tests/doubles/instance_double.cpp tests/doubles/http_double.cpp"
 native_objs() { # repo flags
     local o="" f t pids=() p rc=0
     t=$(tag "$2")

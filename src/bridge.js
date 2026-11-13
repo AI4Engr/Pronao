@@ -106,6 +106,8 @@
   })();
   window.pronao.proc = { run: call('proc.run') };
   // shell: only what the application allowed (schemes, file types, the folders of the file commands)
+  // http.request {url, method?, headers?, body? | bodyBase64?, timeoutMs?, responseType?} -> {status, headers, body | bodyBase64}; sent by the program, not the page (src/http.clg)
+  window.pronao.http = { request: call('http.request') };
   window.pronao.shell = { openUrl: call('shell.openUrl'), openFile: call('shell.openFile'), reveal: call('shell.reveal') };
   // settings: only the keys the application declared; "settings.changed" {key, value} reaches every window after a set
   window.pronao.settings = {

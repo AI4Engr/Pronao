@@ -165,6 +165,7 @@ Everything is off until the program turns it on, and a page can ask only for wha
 * **Settings and folders:** per-user data folders and a declared, typed settings file.
 * **Dialogs and drag and drop:** a pick or a drop becomes a grant for exactly that file.
 * **Watching folders:** change events, merged and re-checked against the permission.
+* **HTTP from the program:** requests to hosts the program listed, with the API key kept out of the page, redirects checked hop by hop, limits on size and time (Windows).
 * **Programs and links:** a fixed list of programs with typed slots and no shell; addresses and files opened by the system.
 * **Windows:** title, size, position, full screen, frameless, modal, several windows, remembered places, one running copy, an icon.
 * **Menus and tray:** menu bar and shortcuts, tray icon, pop-up menus, notifications, light and dark.
@@ -204,7 +205,7 @@ Pronao is not a good choice today if you need a window on macOS or Linux, an ins
 
 ## What is and is not checked
 
-CeeLing checks the command table and everything the commands do with their own data: no dangling references, no use after move, no raw pointers, bounds and null checks at run time. For threads the claim is narrow: in the CeeLing code that was checked, a spawned job can reach only its own copies and its own allocations, so there are no data races through `spawn`. **Not checked, and trusted:** the native layer (`shim/`), the `webview` library, the browser engine, every `ext_fn` declaration (a wrong signature is silently believed) and any other C++ you link in. Nothing here is "thread-safe". What needs a real screen (how a menu is drawn, a toast, a real mouse drag) is not seen by the automated tests; each manual chapter says what its tests do and do not see.
+CeeLing checks the command table and everything the commands do with their own data: no dangling references, no use after move, no raw pointers, bounds and null checks at run time. For threads the claim is narrow: in the CeeLing code that was checked, a spawned job can reach only its own copies and its own allocations, so there are no data races through `spawn`. **Not checked, and trusted:** the native layer (`shim/`, which includes the WinHTTP calls that carry out a request; what may be requested is decided in checked CeeLing), the `webview` library, the browser engine, every `ext_fn` declaration (a wrong signature is silently believed) and any other C++ you link in. Nothing here is "thread-safe". What needs a real screen (how a menu is drawn, a toast, a real mouse drag) is not seen by the automated tests; each manual chapter says what its tests do and do not see.
 
 ## FAQ
 

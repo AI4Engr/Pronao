@@ -16,6 +16,7 @@ Where things are in the repository.
 | `src/drops.clg` | files dragged onto a window: `DropRules` (the grants, the limit) |
 | `src/placement.clg` | where windows were: `WindowMemory` and `fitToMonitors` |
 | `shim/win/instance.cpp` | one running copy per user: the mutex, the pipe and the hand-over of a later launch's arguments |
+| `src/http.clg` | HTTP from the backend: the policy (`HttpRules`, `HttpPolicy`), addresses, redirects, what the page may send and see; `app_http_request` is the native primitive (`shim/win/http.cpp`, WinHTTP) |
 | `src/links.clg` | what a page may ask the system to open: addresses, files, show in the file manager |
 | `src/settings.clg` | the per-user folders of an application and `SettingsStore`, its declared, typed settings file |
 | `src/app.clg` | `App`: the command table and the commands (files, programs, dialogs, watches, window), `serveOne` and `run`; the pieces below are included, not written here |

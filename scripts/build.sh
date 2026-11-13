@@ -129,7 +129,7 @@ NKEY="$(cat "$SHIM"/*.h "$SHIM/$PLAT"/*.h "$DOUBLES"/*.h 2>/dev/null | md5sum | 
 bash "$HERE/scripts/pack_assets.sh" "${ASSETS:--}" "$WORK/assets" || exit 1
 NATIVE=("$SHIM/watch.cpp" "$SHIM/assets.cpp" "$WORK/assets/assets_embedded.cpp" "$SHIM/os.cpp" "$SHIM/$PLAT/fs.cpp" "$SHIM/$PLAT/proc.cpp" "$SHIM/$PLAT/watch.cpp")
 if [ "$MODE" = "--headless" ]; then
-    NATIVE+=("$DOUBLES/headless_shim.cpp" "$DOUBLES/test_support.cpp" "$DOUBLES/instance_double.cpp")
+    NATIVE+=("$DOUBLES/headless_shim.cpp" "$DOUBLES/test_support.cpp" "$DOUBLES/instance_double.cpp" "$DOUBLES/http_double.cpp")
     LINK="-pthread -lz"
 else
     INC="-I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
@@ -140,8 +140,9 @@ else
     [ -f "$SHIM/$PLAT/tray.cpp" ] && NATIVE+=("$SHIM/$PLAT/tray.cpp")
     [ -f "$SHIM/$PLAT/theme.cpp" ] && NATIVE+=("$SHIM/$PLAT/theme.cpp")
     [ -f "$SHIM/$PLAT/drop.cpp" ] && NATIVE+=("$SHIM/$PLAT/drop.cpp")
+    NATIVE+=("$SHIM/$PLAT/http.cpp")
     [ -f "$SHIM/$PLAT/assets.cpp" ] && NATIVE+=("$SHIM/$PLAT/assets.cpp")
-    LINK="-static -lz -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
+    LINK="-static -lz -lwinhttp -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
     if [ "${GUI:-${RELEASE:+1}}" = 1 ] && [ "$PLAT" = win ]; then LINK="-mwindows $LINK"; fi
 fi
 for n in "${NATIVE[@]}"; do

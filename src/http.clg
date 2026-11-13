@@ -1,0 +1,661 @@
+// HTTP from the backend (docs/manual/04-programs-and-links.md). A page that calls an API from its own code has to hold the API key, which a page must
+// not be trusted with, and meets CORS. Here the CeeLing side makes the request. The native layer (app_http_request) only sends one request and returns
+// what came back; it follows no redirect and decides nothing. What may be sent, to whom, and what the page may see is decided here:
+//
+//  * Only hosts the application listed (`allowHost`, https; `allowInsecureHost`, http, loopback names only), matched exactly: the host name, or
+//    `host:port` for a port other than 443. No wildcards, no IP literals except loopback, no `user@` in an address, printable ASCII only.
+//  * The page may send only a few headers (Accept, Accept-Language, Content-Type, If-None-Match, If-Modified-Since). It can never send
+//    Authorization or Cookie: a header the application adds for a host (`addHeader`) is added here, and the page does not see it.
+//  * A redirect is followed here, one hop at a time, and every hop is checked as the first request was: a server cannot send the request on to a
+//    host that was not listed, and a header added for one host is not sent to another.
+//  * Limits: the size of what is sent and of what comes back, and a time limit for the whole request, redirects included.
+//
+// Not covered: what a listed host does with the request, DNS and routing (a listed name that resolves to a private address is still reached), proxies other
+// than the system's, cookies (none are kept and Set-Cookie is not shown to the page), certificate pinning.
+#include "text.clh"
+#include "core.clh"
+
+ext_fn double app_now_ms();
+
+// 0 sent and answered; 2 could not connect or resolve; 3 TLS failed; 4 the address is not one the system accepts; 5 not supported here; 6 other error.
+// flags: 1 timed out, 2 the body was cut at maxBytes, 8 cancelled. `respHeaders` is "Name: value" lines separated by \n, as the server sent them.
+ext_fn int app_http_request(int handle, string call, string method, string url, std::vector<string> headers, string body, int timeoutMs, int maxBytes,
+                            ref int statusCode, ref string respHeaders, ref string respBody, ref int flags);
+
+// The policy as plain values, so that it can be copied into the worker that sends the request.
+struct HttpPolicy {
+public:
+    std::vector<string> hosts;          // https: "host" or "host:port"
+    std::vector<string> insecure;       // http: loopback names only
+    std::vector<string> methods;        // GET and HEAD until the application adds more
+    std::vector<string> headerHosts;    // headers the application adds, one per line of the three lists
+    std::vector<string> headerNames;
+    std::vector<string> headerValues;
+    int maxRequestBytes;
+    int maxResponseBytes;
+    int timeoutMs;
+    HttpPolicy() {
+        methods.push_back("GET");
+        methods.push_back("HEAD");
+        maxRequestBytes = 1024 * 1024;
+        maxResponseBytes = 8 * 1024 * 1024;
+        timeoutMs = 15000;
+    }
+};
+
+// An address taken apart. `error` is empty when it is usable.
+struct HttpTarget {
+public:
+    string error;
+    bool secure;
+    string host;        // lowercase
+    int port;
+    string key;         // "host" or "host:port", what the lists hold
+    string path;        // from the first "/" or "?", without the fragment
+    HttpTarget(string e, bool s, string h, int p, string k, string pa) {
+        error = e;
+        secure = s;
+        host = h;
+        port = p;
+        key = k;
+        path = pa;
+    }
+};
+
+bool httpHostNameOk(string host) {
+    if (host.length() < 1 || host.length() > 253) {
+        return false;
+    }
+    int i = 0;
+    while (i < host.length()) {
+        char c = host[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-')) {
+            return false;
+        }
+        if (c == '.' && (i == 0 || i == host.length() - 1 || host[i - 1] == '.')) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+bool httpLoopbackName(string host) {
+    return host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+}
+
+// Printable ASCII, and none of the characters that a browser would escape or a parser might read differently.
+bool httpAddressCharsOk(string url) {
+    int i = 0;
+    while (i < url.length()) {
+        int c = charCode(url, i);
+        if (c <= 32 || c >= 127 || c == 34 || c == 60 || c == 62 || c == 92 || c == 94 || c == 96 || c == 123 || c == 124 || c == 125) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+HttpTarget httpBadTarget(string why) {
+    return new HttpTarget(why, true, "", 0, "", "");
+}
+
+HttpTarget httpParseTarget(string url) {
+    if (url.length() == 0 || url.length() > 2048) {
+        return httpBadTarget("invalid_url: an address is 1 to 2048 bytes");
+    }
+    if (!httpAddressCharsOk(url)) {
+        return httpBadTarget("invalid_url: an address is printable ASCII without spaces, quotes, angle brackets or backslashes");
+    }
+    bool secure = true;
+    string rest = "";
+    if (startsWithText(lowerAscii(url.substr(0, 8)), "https://")) {
+        rest = url.substr(8, url.length() - 8);
+    } else if (startsWithText(lowerAscii(url.substr(0, 7)), "http://")) {
+        secure = false;
+        rest = url.substr(7, url.length() - 7);
+    } else {
+        return httpBadTarget("invalid_url: only http and https addresses are requested");
+    }
+    int cut = 0;
+    while (cut < rest.length() && rest[cut] != '/' && rest[cut] != '?' && rest[cut] != '#') {
+        cut = cut + 1;
+    }
+    string authority = rest.substr(0, cut);
+    string path = rest.substr(cut, rest.length() - cut);
+    int hash = indexOfChar(path, '#');
+    if (hash >= 0) {
+        path = path.substr(0, hash);
+    }
+    if (path.length() == 0) {
+        path = "/";
+    } else if (path[0] == '?') {
+        path = "/" + path;
+    }
+    if (indexOfChar(authority, '@') >= 0) {
+        return httpBadTarget("invalid_url: an address with user information is not requested");
+    }
+    string host = authority;
+    int port = 80;
+    if (secure) {
+        port = 443;
+    }
+    if (startsWithText(authority, "[")) {
+        int close = indexOfChar(authority, ']');
+        if (close < 0) {
+            return httpBadTarget("invalid_url: the host is not valid");
+        }
+        host = lowerAscii(authority.substr(0, close + 1));
+        string after = authority.substr(close + 1, authority.length() - close - 1);
+        if (after.length() > 0) {
+            if (after[0] != ':' || !isDigits(after.substr(1, after.length() - 1))) {
+                return httpBadTarget("invalid_url: the port is not valid");
+            }
+            port = int(decimalValue(after.substr(1, after.length() - 1)));
+        }
+    } else {
+        int colon = indexOfChar(authority, ':');
+        if (colon >= 0) {
+            host = lowerAscii(authority.substr(0, colon));
+            string digits = authority.substr(colon + 1, authority.length() - colon - 1);
+            if (digits.length() < 1 || digits.length() > 5 || !isDigits(digits)) {
+                return httpBadTarget("invalid_url: the port is not valid");
+            }
+            port = int(decimalValue(digits));
+        } else {
+            host = lowerAscii(authority);
+        }
+    }
+    if (port < 1 || port > 65535) {
+        return httpBadTarget("invalid_url: the port is not valid");
+    }
+    if (host != "[::1]" && !httpHostNameOk(host)) {
+        return httpBadTarget("invalid_url: the host is not valid");
+    }
+    string key = host;
+    if (secure && port != 443) {
+        key = host + ":" + intToString(port);
+    }
+    return new HttpTarget("", secure, host, port, key, path);
+}
+
+bool httpListed(std::vector<string> names, string key) {
+    int i = 0;
+    while (i < names.size()) {
+        if (names[i] == key) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// "" when the policy lets a request go to this address, else the error text.
+string httpTargetAllowed(HttpPolicy policy, HttpTarget target) {
+    if (target.error.length() > 0) {
+        return target.error;
+    }
+    if (target.secure) {
+        if (!httpListed(policy.hosts, target.key)) {
+            return "host_not_allowed: requests to this host are not allowed";
+        }
+        return "";
+    }
+    if (!httpLoopbackName(target.host) || !httpListed(policy.insecure, target.host)) {
+        return "host_not_allowed: plain http is allowed only to the loopback hosts the application listed";
+    }
+    return "";
+}
+
+// 1.2.3.4: a host that is an address is not a name an application lists (names are checked by the certificate; an address would need its own rules).
+bool httpLooksLikeAddress(string host) {
+    int i = 0;
+    while (i < host.length()) {
+        char c = host[i];
+        if (!((c >= '0' && c <= '9') || c == '.')) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return host.length() > 0;
+}
+
+// Header names a page may send. Everything else, Authorization and Cookie included, is refused.
+bool httpPageHeaderAllowed(string lowerName) {
+    return lowerName == "accept" || lowerName == "accept-language" || lowerName == "content-type" || lowerName == "if-none-match" || lowerName == "if-modified-since";
+}
+
+// A header value: printable ASCII, space and tab only. No line break, so nothing can end the header and start another one.
+bool httpHeaderValueOk(string value, int maxBytes) {
+    if (value.length() > maxBytes) {
+        return false;
+    }
+    int i = 0;
+    while (i < value.length()) {
+        int c = charCode(value, i);
+        if (!(c == 9 || (c >= 32 && c <= 126))) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+bool httpTokenOk(string name) {
+    if (name.length() < 1 || name.length() > 60) {
+        return false;
+    }
+    int i = 0;
+    while (i < name.length()) {
+        char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Names the application may not add either: the framing and routing of the request is the native layer's.
+bool httpReservedHeader(string lowerName) {
+    return lowerName == "host" || lowerName == "content-length" || lowerName == "transfer-encoding" || lowerName == "connection" || lowerName == "upgrade"
+        || lowerName == "te" || lowerName == "trailer" || lowerName == "expect" || lowerName == "proxy-authorization" || lowerName == "proxy-connection"
+        || lowerName == "cookie";
+}
+
+bool httpMethodAllowed(string method) {
+    return method == "GET" || method == "HEAD" || method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE";
+}
+
+bool httpMethodHasBody(string method) {
+    return method == "POST" || method == "PUT" || method == "PATCH";
+}
+
+// The headers of a request to this host: the page's (already checked), then the ones the application adds for the host. An added header replaces a
+// page header of the same name.
+std::vector<string> httpHeadersFor(HttpPolicy policy, string hostKey, std::vector<string> pageNames, std::vector<string> pageValues) {
+    std::vector<string> lines;
+    int i = 0;
+    while (i < pageNames.size()) {
+        bool replaced = false;
+        int k = 0;
+        while (k < policy.headerHosts.size()) {
+            if (policy.headerHosts[k] == hostKey && lowerAscii(policy.headerNames[k]) == lowerAscii(pageNames[i])) {
+                replaced = true;
+            }
+            k = k + 1;
+        }
+        if (!replaced) {
+            lines.push_back(pageNames[i] + ": " + pageValues[i]);
+        }
+        i = i + 1;
+    }
+    int j = 0;
+    while (j < policy.headerHosts.size()) {
+        if (policy.headerHosts[j] == hostKey) {
+            lines.push_back(policy.headerNames[j] + ": " + policy.headerValues[j]);
+        }
+        j = j + 1;
+    }
+    return lines;
+}
+
+bool httpRedirectStatus(int status) {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+// The value of a response header, "" when it is absent. Names compare without regard to case; `lines` are as the native layer returns them.
+string httpHeaderValue(string lines, string lowerName) {
+    std::vector<string> all = splitLines(lines);
+    int i = 0;
+    while (i < all.size()) {
+        string line = all[i];
+        int colon = indexOfChar(line, ':');
+        if (colon > 0 && lowerAscii(line.substr(0, colon)) == lowerName) {
+            return trimText(line.substr(colon + 1, line.length() - colon - 1));
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// Where a redirect goes: an absolute address as it is, "//host/x" with the scheme of this request, "/x" on the same host, "x" next to the current path.
+string httpRedirectAddress(HttpTarget from, string location) {
+    string scheme = "http";
+    if (from.secure) {
+        scheme = "https";
+    }
+    if (startsWithText(lowerAscii(location.substr(0, 8)), "https://") || startsWithText(lowerAscii(location.substr(0, 7)), "http://")) {
+        return location;
+    }
+    if (startsWithText(location, "//")) {
+        return scheme + ":" + location;
+    }
+    string origin = scheme + "://" + from.key;
+    if (!from.secure && from.port != 80) {
+        origin = scheme + "://" + from.host + ":" + intToString(from.port);
+    }
+    if (startsWithText(location, "/")) {
+        return origin + location;
+    }
+    int slash = from.path.length() - 1;
+    int query = indexOfChar(from.path, '?');
+    if (query >= 0) {
+        slash = query - 1;
+    }
+    while (slash >= 0 && from.path[slash] != '/') {
+        slash = slash - 1;
+    }
+    string dir = "/";
+    if (slash >= 0) {
+        dir = from.path.substr(0, slash + 1);
+    }
+    return origin + dir + location;
+}
+
+string httpHeaderValueJoined(string lines, string lowerName) {
+    std::vector<string> all = splitLines(lines);
+    string joined = "";
+    int i = 0;
+    while (i < all.size()) {
+        string line = all[i];
+        int colon = indexOfChar(line, ':');
+        if (colon > 0 && lowerAscii(line.substr(0, colon)) == lowerName) {
+            if (joined.length() > 0) {
+                joined = joined + ", ";
+            }
+            joined = joined + trimText(line.substr(colon + 1, line.length() - colon - 1));
+        }
+        i = i + 1;
+    }
+    return joined;
+}
+
+// The response headers as a JSON object: names in lowercase, a name that comes twice joined with ", ", and nothing that sets a cookie.
+Item httpResponseHeaderObject(string lines) {
+    Item out = createObject();
+    std::vector<string> all = splitLines(lines);
+    std::vector<string> seen;
+    int i = 0;
+    while (i < all.size()) {
+        string line = all[i];
+        int colon = indexOfChar(line, ':');
+        if (colon > 0) {
+            string name = lowerAscii(line.substr(0, colon));
+            if (name != "set-cookie" && name != "set-cookie2" && !httpListed(seen, name) && plainText(name, 100)) {
+                string value = cleanUtf8(httpHeaderValueJoined(lines, name));
+                addStringToObject(out, name, value);
+                seen.push_back(name);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// What one request ended in: the reply for the page, or an error.
+struct HttpOutcome {
+public:
+    string errorCode;       // "" when there is an answer
+    string errorMessage;
+    int status;
+    string headerLines;
+    string body;
+    HttpOutcome(string c, string m, int s, string h, string b) {
+        errorCode = c;
+        errorMessage = m;
+        status = s;
+        headerLines = h;
+        body = b;
+    }
+};
+
+HttpOutcome httpFailed(string code, string message) {
+    return new HttpOutcome(code, message, 0, "", "");
+}
+
+// Splits "code: message" as the dispatcher does.
+HttpOutcome httpFailedText(string text) {
+    int colon = indexOfChar(text, ':');
+    if (colon < 0) {
+        return httpFailed("command_failed", text);
+    }
+    return httpFailed(text.substr(0, colon), trimText(text.substr(colon + 1, text.length() - colon - 1)));
+}
+
+// Sends the request and follows redirects. Runs on a worker. `method` and `body` are as checked by the caller.
+HttpOutcome httpSend(HttpPolicy policy, int handle, string id, string method, string url, std::vector<string> pageNames, std::vector<string> pageValues,
+                     string body, int timeoutMs, int maxBytes) {
+    double started = app_now_ms();
+    string currentUrl = url;
+    string currentMethod = method;
+    string currentBody = body;
+    int hop = 0;
+    while (hop <= 5) {
+        HttpTarget target = httpParseTarget(currentUrl);
+        string why = httpTargetAllowed(policy, target);
+        if (why.length() > 0) {
+            if (hop > 0 && startsWithText(why, "host_not_allowed")) {
+                return httpFailed("redirect_not_allowed", "the server redirected to an address that is not allowed");
+            }
+            return httpFailedText(why);
+        }
+        double spent = app_now_ms() - started;
+        int left = timeoutMs - int(spent);
+        if (left <= 0) {
+            return httpFailed("timeout", "the request took longer than its time limit");
+        }
+        std::vector<string> lines = httpHeadersFor(policy, target.key, pageNames, pageValues);
+        string address = "http://" + target.host;
+        if (target.secure) {
+            address = "https://" + target.host;
+        }
+        if ((target.secure && target.port != 443) || (!target.secure && target.port != 80)) {
+            address = address + ":" + intToString(target.port);
+        }
+        address = address + target.path;
+        int status = 0;
+        string respHeaders = "";
+        string respBody = "";
+        int flags = 0;
+        int code = app_http_request(handle, id, currentMethod, address, lines, currentBody, left, maxBytes, status, respHeaders, respBody, flags);
+        if (code == 0 && ((flags / 8) % 2) == 1) {
+            return httpFailed("cancelled", "the call was abandoned or the window is closing");
+        }
+        if (code == 0 && (flags % 2) == 1) {
+            return httpFailed("timeout", "the request took longer than its time limit");
+        }
+        if (code == 2) {
+            return httpFailed("connect_failed", "the host could not be reached");
+        }
+        if (code == 3) {
+            return httpFailed("tls_failed", "the secure connection could not be made");
+        }
+        if (code == 4) {
+            return httpFailed("invalid_url", "the address is not one the system accepts");
+        }
+        if (code == 5) {
+            return httpFailed("unsupported", "HTTP requests are not available on this platform");
+        }
+        if (code != 0) {
+            return httpFailed("request_failed", "the request could not be made");
+        }
+        if (((flags / 2) % 2) == 1) {
+            return httpFailed("too_large", "the response is longer than the limit");
+        }
+        if (httpRedirectStatus(status)) {
+            string location = httpHeaderValue(respHeaders, "location");
+            if (location.length() > 0) {
+                if (hop == 5) {
+                    return httpFailed("too_many_redirects", "the server redirected more than five times");
+                }
+                currentUrl = httpRedirectAddress(target, location);
+                if (status == 303 || ((status == 301 || status == 302) && currentMethod != "GET" && currentMethod != "HEAD")) {
+                    if (currentMethod != "HEAD") {
+                        currentMethod = "GET";
+                    }
+                    currentBody = "";
+                }
+                hop = hop + 1;
+            } else {
+                return new HttpOutcome("", "", status, respHeaders, respBody);
+            }
+        } else {
+            return new HttpOutcome("", "", status, respHeaders, respBody);
+        }
+    }
+    return httpFailed("too_many_redirects", "the server redirected more than five times");
+}
+
+// Replies to the page for a finished request. Runs on the worker.
+void finishHttp(int handle, string id, HttpOutcome outcome, bool asBytes, string method) {
+    if (outcome.errorCode.length() > 0) {
+        replyError(handle, id, outcome.errorCode, outcome.errorMessage);
+        return;
+    }
+    Item result = createObject();
+    addNumberToObject(result, "status", double(outcome.status));
+    addItemToObject(result, "headers", httpResponseHeaderObject(outcome.headerLines));
+    if (method != "HEAD") {
+        if (asBytes) {
+            addStringToObject(result, "bodyBase64", base64Encode(outcome.body));
+        } else {
+            if (!isUtf8(outcome.body)) {
+                replyError(handle, id, "not_text", "the response is not valid UTF-8; ask for responseType bytes");
+                return;
+            }
+            addStringToObject(result, "body", outcome.body);
+        }
+    }
+    replyOk(handle, id, printUnformatted(result));
+}
+
+// What the application configures, kept by App and copied into each request.
+class HttpRules {
+public:
+    HttpPolicy policy;
+    std::vector<double> recent;         // when the latest requests started (milliseconds), for the rate limit
+    int perSecond;
+
+    HttpRules() {
+        policy = new HttpPolicy();
+        perSecond = 20;
+    }
+
+    // How many requests may start in one second (1 to 1000); more get "too_many". The default is 20.
+    bool setRate(int n) {
+        if (n < 1 || n > 1000) {
+            return false;
+        }
+        perSecond = n;
+        return true;
+    }
+
+    // More methods than GET and HEAD, from GET, HEAD, POST, PUT, PATCH and DELETE. false if a name is not one of them (nothing is added then).
+    bool allowMethods(std::vector<string> names) {
+        int i = 0;
+        while (i < names.size()) {
+            if (!httpMethodAllowed(names[i])) {
+                return false;
+            }
+            i = i + 1;
+        }
+        int j = 0;
+        while (j < names.size()) {
+            if (!httpListed(policy.methods, names[j])) {
+                policy.methods.push_back(names[j]);
+            }
+            j = j + 1;
+        }
+        return true;
+    }
+
+    // At most perSecond requests start in any second; the page gets "too_many" for the rest.
+    bool startOk() {
+        double now = app_now_ms();
+        std::vector<double> keep;
+        int i = 0;
+        while (i < recent.size()) {
+            if (now - recent[i] < 1000) {
+                keep.push_back(recent[i]);
+            }
+            i = i + 1;
+        }
+        if (keep.size() >= perSecond) {
+            recent = keep;
+            return false;
+        }
+        keep.push_back(now);
+        recent = keep;
+        return true;
+    }
+
+    // https only. `host` is a name ("api.example.com") or name:port; no wildcard.
+    bool allowHost(string hostOrKey) {
+        string key = lowerAscii(hostOrKey);
+        HttpTarget t = httpParseTarget("https://" + key + "/");
+        if (t.error.length() > 0 || indexOfChar(key, '/') >= 0 || t.key != key || startsWithText(key, "[") || httpLooksLikeAddress(t.host)) {
+            return false;
+        }
+        if (httpLoopbackName(t.host)) {
+            return false;
+        }
+        if (httpListed(policy.hosts, key)) {
+            return true;
+        }
+        if (policy.hosts.size() >= 64) {
+            return false;
+        }
+        policy.hosts.push_back(key);
+        return true;
+    }
+
+    // http to a loopback name only: "localhost", "127.0.0.1" or "[::1]".
+    bool allowInsecureHost(string host) {
+        string name = lowerAscii(host);
+        if (!httpLoopbackName(name)) {
+            return false;
+        }
+        if (!httpListed(policy.insecure, name)) {
+            policy.insecure.push_back(name);
+        }
+        return true;
+    }
+
+    // A header sent with every request to `hostKey` (a name already allowed), kept here and never shown to the page. An existing one of the same name is replaced.
+    bool addHeader(string hostOrKey, string name, string value) {
+        string key = lowerAscii(hostOrKey);
+        if (!httpTokenOk(name) || httpReservedHeader(lowerAscii(name)) || !httpHeaderValueOk(value, 4000)) {
+            return false;
+        }
+        if (!httpListed(policy.hosts, key) && !httpListed(policy.insecure, key)) {
+            return false;
+        }
+        int i = 0;
+        while (i < policy.headerHosts.size()) {
+            if (policy.headerHosts[i] == key && lowerAscii(policy.headerNames[i]) == lowerAscii(name)) {
+                policy.headerValues[i] = value;
+                return true;
+            }
+            i = i + 1;
+        }
+        if (policy.headerHosts.size() >= 64) {
+            return false;
+        }
+        policy.headerHosts.push_back(key);
+        policy.headerNames.push_back(name);
+        policy.headerValues.push_back(value);
+        return true;
+    }
+
+    bool setLimits(int maxRequestBytes, int maxResponseBytes, int timeoutMs) {
+        if (maxRequestBytes < 0 || maxRequestBytes > 64 * 1024 * 1024 || maxResponseBytes < 1 || maxResponseBytes > 256 * 1024 * 1024 || timeoutMs < 1000 || timeoutMs > 600000) {
+            return false;
+        }
+        policy.maxRequestBytes = maxRequestBytes;
+        policy.maxResponseBytes = maxResponseBytes;
+        policy.timeoutMs = timeoutMs;
+        return true;
+    }
+}

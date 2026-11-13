@@ -13,6 +13,7 @@ EXPECTED_HEADLESS=295
 EXPECTED_FILES=147
 EXPECTED_PROGRAMS=18
 EXPECTED_EXTRAS=11
+EXPECTED_HTTP=82
 EXPECTED_SITE=38
 EXPECTED_STORE=54
 EXPECTED_LINKS=57
@@ -56,7 +57,7 @@ runProgram() { # name expected
 # first (in the background): the native process runner and folder watcher on their own (real helper program, real file changes); the shared native sources are
 # compiled once, in parallel, then each test is compiled and linked against those objects
 bash "$HERE/scripts/pack_assets.sh" - "$W/stub"          # (no embedded web files in these)
-NSRC="$HERE/shim/watch.cpp $HERE/shim/assets.cpp $W/stub/assets_embedded.cpp $HERE/shim/os.cpp $HERE/shim/$PLAT/fs.cpp $HERE/shim/$PLAT/proc.cpp $HERE/shim/$PLAT/watch.cpp $HERE/shim/$PLAT/instance.cpp $HERE/tests/doubles/headless_shim.cpp $HERE/tests/doubles/test_support.cpp"
+NSRC="$HERE/shim/watch.cpp $HERE/shim/assets.cpp $W/stub/assets_embedded.cpp $HERE/shim/os.cpp $HERE/shim/$PLAT/fs.cpp $HERE/shim/$PLAT/proc.cpp $HERE/shim/$PLAT/watch.cpp $HERE/shim/$PLAT/instance.cpp $HERE/shim/$PLAT/http.cpp $HERE/tests/doubles/headless_shim.cpp $HERE/tests/doubles/test_support.cpp"
 NOBJS=""
 NP=()
 i=0
@@ -68,10 +69,10 @@ for s in $NSRC; do
 done
 for p in "${NP[@]}"; do wait "$p" || OK=0; done
 TPIDS=()
-for t in proc watch assets instance; do
+for t in proc watch assets instance http; do
     src="$HERE/tests/${t}_$( [ $t = assets ] && echo test || echo shim_test).cpp"
     (
-        "$CXX" --std=c++17 $OPT_LEVEL "$src" $NOBJS -pthread -lz $( [ "$PLAT" = win ] && echo "-ladvapi32 -lshell32 -lole32" ) -o "$W/$t.exe" > "$W/$t.log" 2>&1 || { echo "$t TEST BUILD FAILED" >> "$W/$t.log"; echo bad > "$W/$t.verdict"; exit 0; }
+        "$CXX" --std=c++17 $OPT_LEVEL "$src" $NOBJS -pthread -lz $( [ "$PLAT" = win ] && echo "-lwinhttp -lws2_32 -ladvapi32 -lshell32 -lole32" ) -o "$W/$t.exe" > "$W/$t.log" 2>&1 || { echo "$t TEST BUILD FAILED" >> "$W/$t.log"; echo bad > "$W/$t.verdict"; exit 0; }
         TOUT="$("$W/$t.exe")"; TRC=$?
         printf '%s\n' "$TOUT" | grep -v '^PASS' >> "$W/$t.log"
         if [ "$TRC" -eq 0 ]; then echo ok > "$W/$t.verdict"; else echo bad > "$W/$t.verdict"; fi
@@ -109,6 +110,8 @@ B11=$!
 BS=("$B1" "$B2" "$B3" "$B4" "$B5" "$B6" "$B7" "$B8" "$B9" "$B10" "$B11")
 ( ASSETS="$HERE/tests/site" WORK="$W/work_site_main" bash "$HERE/scripts/build.sh" "$HERE/tests/site_main.clg" "$W/site_main.exe" --headless > "$W/site_main.build" 2>&1 ) &
 BS+=($!)
+( EXTRA="$HERE/tests/support.clg" WORK="$W/work_http_main" bash "$HERE/scripts/build.sh" "$HERE/tests/http_main.clg" "$W/http_main.exe" --headless > "$W/http_main.build" 2>&1 ) &
+BS+=($!)
 
 for p in "${BS[@]}"; do wait "$p"; done
 runProgram files_main "$EXPECTED_FILES" &
@@ -137,14 +140,17 @@ NAMES="$NAMES files_main programs_main store_main links_main instance_main place
 runProgram file_extras_main "$EXPECTED_EXTRAS" &
 PIDS+=($!)
 NAMES="$NAMES file_extras_main"
+runProgram http_main "$EXPECTED_HTTP" &
+PIDS+=($!)
+NAMES="$NAMES http_main"
 for p in "${PIDS[@]}" "${TPIDS[@]}"; do wait "$p"; done
 
-for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main file_extras_main site_main; do
+for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main file_extras_main site_main http_main; do
     [ -f "$W/$n.log" ] || continue
     cat "$W/$n.log"
     [ "$(cat "$W/$n.verdict" 2> /dev/null)" = ok ] || OK=0
 done
-for t in proc watch assets instance; do
+for t in proc watch assets instance http; do
     cat "$W/$t.log"
     [ "$(cat "$W/$t.verdict" 2> /dev/null)" = ok ] || OK=0
 done

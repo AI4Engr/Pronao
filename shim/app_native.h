@@ -107,6 +107,14 @@ int app_os_path_kind(std::string path);                                   // 0 n
 int app_proc_run(int handle, std::string call, std::string exe, std::vector<std::string> args, std::string cwd, std::vector<std::string> env,
                  int timeout_ms, int max_bytes, std::string& out, std::string& err, int& exit_code, int& flags);
 
+// ---- HTTP: one request, sent from a worker; the caller waits ----------------------------------------------------------------
+// `url` and `method` have been vetted by src/http.clg; `headers` are "Name: value" lines. No redirect is followed, no cookie kept, no credentials sent on their own.
+// 0 answered (status_code, resp_headers as "Name: value" lines each ended by a newline, resp_body); 2 could not connect or resolve; 3 TLS failed; 4 the address or a header is
+// not one the system accepts; 5 not implemented on this platform; 6 other. flags: 1 timed out (timeout_ms for the whole request), 2 the body was cut at max_bytes, 8 cancelled
+// (app_cancel for `call`, or the window closing); the request is aborted on 1 and 8.
+int app_http_request(int handle, std::string call, std::string method, std::string url, std::vector<std::string> headers, std::string body,
+                     int timeout_ms, int max_bytes, int& status_code, std::string& resp_headers, std::string& resp_body, int& flags);
+
 // ---- cancelling: the registry only remembers; blocking primitives given a call id poll it ----------------------------------
 int app_cancel(int handle, std::string call);          // asks for the call to stop (a page's AbortSignal, a timeout)
 int app_cancel_all(int handle);                        // the window is closing: every call of it, including ones that start afterwards

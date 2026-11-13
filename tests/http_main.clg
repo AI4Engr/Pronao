@@ -1,0 +1,337 @@
+// http.request through the whole pipeline (the page's queue, the dispatcher, the policy of src/http.clg, a worker), with the network replaced by a scripted double
+// (tests/doubles/http_double.cpp) that also records what it was asked to send. The checks read those requests back: what a page may and may not make the
+// program send, where a redirect may go, and what comes back.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+
+ext_fn int app_test_http_reset();
+ext_fn int app_test_http_reply(string url, int code, int status, string headers, string body, int flags, int delayMs);
+ext_fn int app_test_http_count();
+ext_fn int app_test_http_request(int index, ref string method, ref string url, ref string headers, ref string body, ref int timeoutMs, ref int maxBytes);
+ext_fn int app_cancel(int handle, string call);
+
+Item call(string url) {
+    Item o = createObject();
+    addStringToObject(o, "url", url);
+    return o;
+}
+
+Item withHeader(Item o, string name, string value) {
+    Item h = getObjectItem(o, "headers");
+    if (h == nullptr) {
+        h = addObjectToObject(o, "headers");
+    }
+    addStringToObject(h, name, value);
+    return o;
+}
+
+string fetch(App app, string id, Item args) {
+    return roundTrip(app, id, requestText("http.request", args));
+}
+
+string sentUrl(int index) {
+    string m = "";
+    string u = "";
+    string h = "";
+    string b = "";
+    int t = 0;
+    int c = 0;
+    app_test_http_request(index, m, u, h, b, t, c);
+    return u;
+}
+
+string sentMethod(int index) {
+    string m = "";
+    string u = "";
+    string h = "";
+    string b = "";
+    int t = 0;
+    int c = 0;
+    app_test_http_request(index, m, u, h, b, t, c);
+    return m;
+}
+
+string sentHeaders(int index) {
+    string m = "";
+    string u = "";
+    string h = "";
+    string b = "";
+    int t = 0;
+    int c = 0;
+    app_test_http_request(index, m, u, h, b, t, c);
+    return h;
+}
+
+string sentBody(int index) {
+    string m = "";
+    string u = "";
+    string h = "";
+    string b = "";
+    int t = 0;
+    int c = 0;
+    app_test_http_request(index, m, u, h, b, t, c);
+    return b;
+}
+
+int sentTimeout(int index) {
+    string m = "";
+    string u = "";
+    string h = "";
+    string b = "";
+    int t = 0;
+    int c = 0;
+    app_test_http_request(index, m, u, h, b, t, c);
+    return t;
+}
+
+int sentMax(int index) {
+    string m = "";
+    string u = "";
+    string h = "";
+    string b = "";
+    int t = 0;
+    int c = 0;
+    app_test_http_request(index, m, u, h, b, t, c);
+    return c;
+}
+
+string repeated(string unit, int times) {
+    string out = "";
+    int i = 0;
+    while (i < times) {
+        out = out + unit;
+        i = i + 1;
+    }
+    return out;
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    check("a host is listed", app.allowHost("api.example.com"));
+    check("a host with a port is listed", app.allowHost("api.example.com:8443"));
+    check("a second host is listed", app.allowHost("other.example.org"));
+    check("a wildcard is not a host", !app.allowHost("*.example.com") && !app.allowHost("*"));
+    check("an address is not a host", !app.allowHost("203.0.113.7") && !app.allowHost("[::1]"));
+    check("a host with a path or a scheme is not a host", !app.allowHost("api.example.com/x") && !app.allowHost("https://api.example.com") && !app.allowHost("a b"));
+    check("an empty host and a host with an empty label are not hosts", !app.allowHost("") && !app.allowHost("a..b") && !app.allowHost(".a") && !app.allowHost("a."));
+    check("loopback is not an https host; it is an insecure one", !app.allowHost("localhost") && app.allowInsecureHost("localhost"));
+    check("only loopback names are insecure hosts", !app.allowInsecureHost("example.com") && !app.allowInsecureHost("192.168.1.2"));
+    check("a header is added for a listed host", app.addHttpHeader("api.example.com", "Authorization", "Bearer SECRET"));
+    check("not for a host that is not listed", !app.addHttpHeader("nowhere.example.com", "Authorization", "x"));
+    check("not a reserved name", !app.addHttpHeader("api.example.com", "Host", "evil") && !app.addHttpHeader("api.example.com", "Content-Length", "1") && !app.addHttpHeader("api.example.com", "Cookie", "a=b"));
+    check("not a name or a value with a line break", !app.addHttpHeader("api.example.com", "X-A\r\nB", "v") && !app.addHttpHeader("api.example.com", "X-A", "v\r\nX-B: w"));
+    std::vector<string> more;
+    more.push_back("POST");
+    check("a method is added", app.allowHttpMethods(more));
+    std::vector<string> bad;
+    bad.push_back("TRACE");
+    check("TRACE and CONNECT are not methods", !app.allowHttpMethods(bad));
+    check("the rate can be set", app.httpRate(1000) && !app.httpRate(0) && !app.httpRate(1001));
+    app.enableHttpCommands();
+
+    // -- a plain request, and what the program sent
+    app_test_http_reply("https://api.example.com/v1/items?limit=2", 0, 200, "Content-Type: application/json\nX-Request-Id: abc\nSet-Cookie: session=1\n", "{\"n\":2}", 0, 0);
+    string r1 = fetch(app, "r1", call("https://api.example.com/v1/items?limit=2"));
+    check("a request is answered with the status, headers and body", startsWithText(r1, "0 {\"status\":200,\"headers\":{\"content-type\":\"application/json\",\"x-request-id\":\"abc\"},\"body\":\"{\\\"n\\\":2}\"}"));
+    check("Set-Cookie is not shown to the page", !containsText(r1, "ookie") && !containsText(r1, "session"));
+    check("the request that went out is the one that was asked for", app_test_http_count() == 1 && sentMethod(0) == "GET" && sentUrl(0) == "https://api.example.com/v1/items?limit=2");
+    check("the header the application added went with it", containsText(sentHeaders(0), "Authorization: Bearer SECRET\n"));
+    check("and the page never saw it", !containsText(r1, "SECRET"));
+    check("the limits are the defaults", sentTimeout(0) > 14000 && sentTimeout(0) <= 15000 && sentMax(0) == 8388608);
+
+    // -- hosts
+    check("a host that is not listed is refused before anything is sent", failedWith(fetch(app, "h1", call("https://evil.example.net/")), "host_not_allowed") && app_test_http_count() == 1);
+    check("a lookalike host is refused", failedWith(fetch(app, "h2", call("https://api.example.com.evil.net/")), "host_not_allowed") && failedWith(fetch(app, "h3", call("https://xapi.example.com/")), "host_not_allowed"));
+    check("another port is another host", failedWith(fetch(app, "h4", call("https://api.example.com:9999/")), "host_not_allowed"));
+    app_test_http_reply("https://api.example.com:8443/", 0, 204, "", "", 0, 0);
+    check("a listed host and port is reached", ok(fetch(app, "h5", call("https://api.example.com:8443/"))));
+    app_test_http_reply("https://other.example.org/", 0, 200, "", "", 0, 0);
+    check("the default port may be written out", ok(fetch(app, "h6", call("https://other.example.org:443/"))));
+    check("the host is compared in lower case", ok(fetch(app, "h7", call("https://API.Example.COM/v1/items?limit=2"))));
+    check("user information in an address is refused, and says why", containsText(fetch(app, "h8", call("https://user:pw@api.example.com/")), "user information") && containsText(fetch(app, "h9", call("https://api.example.com@evil.net/")), "user information"));
+    check("a backslash does not move the host", failedWith(fetch(app, "h10", call("https://evil.net\\@api.example.com/")), "invalid_url"));
+    check("a space, a quote and a non-ASCII byte are refused", failedWith(fetch(app, "h11", call("https://api.example.com/a b")), "invalid_url") && failedWith(fetch(app, "h12", call("https://api.example.com/\"")), "invalid_url") && failedWith(fetch(app, "h13", call("https://api.example.com/\xc3\xa9")), "invalid_url"));
+    check("other schemes are refused", failedWith(fetch(app, "h14", call("ftp://api.example.com/")), "invalid_url") && failedWith(fetch(app, "h15", call("file:///c:/x")), "invalid_url") && failedWith(fetch(app, "h16", call("//api.example.com/")), "invalid_url"));
+    check("plain http to a listed non-loopback host is refused", failedWith(fetch(app, "h17", call("http://api.example.com/")), "host_not_allowed"));
+    app_test_http_reply("http://localhost:3000/ping", 0, 200, "", "pong", 0, 0);
+    check("plain http to localhost is allowed once listed", startsWithText(fetch(app, "h18", call("http://localhost:3000/ping")), "0 {\"status\":200,"));
+    check("an unlisted loopback name is refused", failedWith(fetch(app, "h19", call("http://127.0.0.1:3000/ping")), "host_not_allowed"));
+    check("an address that is too long is refused", failedWith(fetch(app, "h20", call("https://api.example.com/" + repeated("a", 2100))), "invalid_url"));
+    check("a port out of range is refused", failedWith(fetch(app, "h21", call("https://api.example.com:70000/")), "invalid_url") && failedWith(fetch(app, "h22", call("https://api.example.com:/")), "invalid_url"));
+
+    // -- what a page may send
+    int before = app_test_http_count();
+    check("a page cannot send Authorization", failedWith(fetch(app, "g1", withHeader(call("https://api.example.com/v1/items?limit=2"), "Authorization", "Bearer mine")), "invalid_argument") && app_test_http_count() == before);
+    check("or Cookie, Host or a header it made up", failedWith(fetch(app, "g2", withHeader(call("https://api.example.com/"), "Cookie", "a=b")), "invalid_argument") && failedWith(fetch(app, "g3", withHeader(call("https://api.example.com/"), "host", "evil.net")), "invalid_argument") && failedWith(fetch(app, "g4", withHeader(call("https://api.example.com/"), "X-Anything", "1")), "invalid_argument"));
+    check("the name is checked without regard to case", failedWith(fetch(app, "g5", withHeader(call("https://api.example.com/"), "aUtHoRiZaTiOn", "x")), "invalid_argument"));
+    string r2 = fetch(app, "g6", withHeader(withHeader(call("https://api.example.com/v1/items?limit=2"), "Accept", "application/json"), "Accept-Language", "en"));
+    check("a few headers are allowed and go out", ok(r2) && containsText(sentHeaders(app_test_http_count() - 1), "Accept: application/json\n") && containsText(sentHeaders(app_test_http_count() - 1), "Accept-Language: en\n"));
+    check("a header value with a line break is refused", failedWith(fetch(app, "g7", withHeader(call("https://api.example.com/"), "Accept", "a\r\nAuthorization: x")), "invalid_argument"));
+    app.addHttpHeader("api.example.com", "Accept", "application/vnd.fixed");
+    app_test_http_reply("https://api.example.com/fixed", 0, 200, "", "", 0, 0);
+    fetch(app, "g8", withHeader(call("https://api.example.com/fixed"), "Accept", "text/plain"));
+    string sent = sentHeaders(app_test_http_count() - 1);
+    check("a header the application added replaces the page's of the same name", containsText(sent, "Accept: application/vnd.fixed\n") && !containsText(sent, "text/plain"));
+
+    // -- methods and bodies
+    app_test_http_reply("https://api.example.com/v1/items", 0, 201, "", "", 0, 0);
+    Item post = call("https://api.example.com/v1/items");
+    addStringToObject(post, "method", "POST");
+    addStringToObject(post, "body", "{\"a\":1}");
+    withHeader(post, "Content-Type", "application/json");
+    check("POST sends its body", startsWithText(fetch(app, "m1", post), "0 {\"status\":201,") && sentMethod(app_test_http_count() - 1) == "POST" && sentBody(app_test_http_count() - 1) == "{\"a\":1}");
+    Item del = call("https://api.example.com/v1/items");
+    addStringToObject(del, "method", "DELETE");
+    check("a method that was not added is refused", failedWith(fetch(app, "m2", del), "method_not_allowed"));
+    Item trace = call("https://api.example.com/");
+    addStringToObject(trace, "method", "TRACE");
+    check("an unknown method is invalid_argument", failedWith(fetch(app, "m3", trace), "invalid_argument"));
+    Item lower = call("https://api.example.com/");
+    addStringToObject(lower, "method", "get");
+    check("the method is case sensitive", failedWith(fetch(app, "m4", lower), "invalid_argument"));
+    Item getBody = call("https://api.example.com/v1/items?limit=2");
+    addStringToObject(getBody, "body", "x");
+    check("a GET has no body", failedWith(fetch(app, "m5", getBody), "invalid_argument"));
+    Item both = call("https://api.example.com/v1/items");
+    addStringToObject(both, "method", "POST");
+    addStringToObject(both, "body", "x");
+    addStringToObject(both, "bodyBase64", "eA==");
+    check("a body is text or base64, not both", failedWith(fetch(app, "m6", both), "invalid_argument"));
+    Item raw = call("https://api.example.com/v1/items");
+    addStringToObject(raw, "method", "POST");
+    addStringToObject(raw, "bodyBase64", "AP8B");
+    fetch(app, "m7", raw);
+    string rawSent = sentBody(app_test_http_count() - 1);
+    check("a base64 body is sent as the bytes", rawSent.length() == 3 && charCode(rawSent, 0) == 0 && charCode(rawSent, 1) == 255 && charCode(rawSent, 2) == 1);
+    Item badRaw = call("https://api.example.com/v1/items");
+    addStringToObject(badRaw, "method", "POST");
+    addStringToObject(badRaw, "bodyBase64", "not base64!");
+    check("a body that is not base64 is refused", failedWith(fetch(app, "m8", badRaw), "invalid_argument"));
+
+    // -- limits
+    check("the limits can be set", app.httpLimits(100, 1000, 5000) && !app.httpLimits(-1, 10, 5000) && !app.httpLimits(10, 0, 5000) && !app.httpLimits(10, 10, 10));
+    Item big = call("https://api.example.com/v1/items");
+    addStringToObject(big, "method", "POST");
+    addStringToObject(big, "body", repeated("x", 101));
+    int count = app_test_http_count();
+    check("a body over the limit is refused before it is sent", failedWith(fetch(app, "l1", big), "too_large") && app_test_http_count() == count);
+    app_test_http_reply("https://api.example.com/long", 0, 200, "", repeated("y", 1500), 0, 0);
+    check("a response over the limit is refused, not cut short", failedWith(fetch(app, "l2", call("https://api.example.com/long")), "too_large"));
+    check("and the limit went to the native layer", sentMax(app_test_http_count() - 1) == 1000);
+    Item slow = call("https://api.example.com/v1/items?limit=2");
+    addNumberToObject(slow, "timeoutMs", 99999);
+    check("a page cannot ask for more time than the program allows", failedWith(fetch(app, "l3", slow), "invalid_argument"));
+    Item quick = call("https://api.example.com/v1/items?limit=2");
+    addNumberToObject(quick, "timeoutMs", 2000);
+    fetch(app, "l4", quick);
+    check("but it can ask for less", sentTimeout(app_test_http_count() - 1) > 1500 && sentTimeout(app_test_http_count() - 1) <= 2000);
+    app_test_http_reply("https://api.example.com/hang", 0, 0, "", "", 1, 0);
+    check("a timeout is a code of its own", failedWith(fetch(app, "l5", call("https://api.example.com/hang")), "timeout"));
+
+    // -- errors from the network layer
+    app_test_http_reply("https://api.example.com/tls", 3, 0, "", "", 0, 0);
+    check("a TLS failure", failedWith(fetch(app, "e1", call("https://api.example.com/tls")), "tls_failed"));
+    check("a host that cannot be reached", failedWith(fetch(app, "e2", call("https://api.example.com/unscripted")), "connect_failed"));
+    app_test_http_reply("https://api.example.com/nope", 5, 0, "", "", 0, 0);
+    check("a platform without HTTP", failedWith(fetch(app, "e3", call("https://api.example.com/nope")), "unsupported"));
+    app_test_http_reply("https://api.example.com/err404", 0, 404, "Content-Type: text/plain\n", "gone", 0, 0);
+    check("a 404 is an answer, not an error", startsWithText(fetch(app, "e4", call("https://api.example.com/err404")), "0 {\"status\":404,"));
+    app_test_http_reply("https://api.example.com/binary", 0, 200, "", "\xff\xfe", 0, 0);
+    check("a response that is not text is refused as text", failedWith(fetch(app, "e5", call("https://api.example.com/binary")), "not_text"));
+    Item asBytes = call("https://api.example.com/binary");
+    addStringToObject(asBytes, "responseType", "bytes");
+    check("and answered as base64 when asked for bytes", containsText(fetch(app, "e6", asBytes), "\"bodyBase64\":\"//4=\""));
+    Item head = call("https://api.example.com/err404");
+    addStringToObject(head, "method", "HEAD");
+    check("HEAD answers without a body", startsWithText(fetch(app, "e7", head), "0 {\"status\":404,") && !containsText(fetch(app, "e8", head), "\"body\""));
+    Item oddType = call("https://api.example.com/err404");
+    addStringToObject(oddType, "responseType", "xml");
+    check("a response type must be text or bytes", failedWith(fetch(app, "e9", oddType), "invalid_argument"));
+    check("the address is required", failedWith(roundTrip(app, "e10", requestText("http.request", createObject())), "invalid_argument"));
+
+    // -- redirects
+    app_test_http_reply("https://api.example.com/old", 0, 301, "Location: /new\n", "", 0, 0);
+    app_test_http_reply("https://api.example.com/new", 0, 200, "", "moved", 0, 0);
+    check("a redirect on the same host is followed", containsText(fetch(app, "d1", call("https://api.example.com/old")), "\"body\":\"moved\""));
+    app_test_http_reply("https://api.example.com/out", 0, 302, "Location: https://evil.example.net/steal\n", "", 0, 0);
+    int hops = app_test_http_count();
+    check("a redirect to a host that is not listed is not followed", failedWith(fetch(app, "d2", call("https://api.example.com/out")), "redirect_not_allowed") && app_test_http_count() == hops + 1);
+    app_test_http_reply("https://api.example.com/plain", 0, 302, "Location: http://api.example.com/plain\n", "", 0, 0);
+    check("nor one that downgrades to http", failedWith(fetch(app, "d3", call("https://api.example.com/plain")), "redirect_not_allowed"));
+    app_test_http_reply("https://api.example.com/other", 0, 302, "Location: https://other.example.org/in\n", "", 0, 0);
+    app_test_http_reply("https://other.example.org/in", 0, 200, "", "there", 0, 0);
+    int beforeOther = app_test_http_count();
+    check("a redirect to another listed host is followed", containsText(fetch(app, "d4", call("https://api.example.com/other")), "\"body\":\"there\""));
+    check("and the header added for the first host did not go to the second", containsText(sentHeaders(beforeOther), "Authorization: Bearer SECRET\n") && !containsText(sentHeaders(beforeOther + 1), "Authorization"));
+    app_test_http_reply("https://api.example.com/loop", 0, 302, "Location: /loop\n", "", 0, 0);
+    check("a loop ends", failedWith(fetch(app, "d5", call("https://api.example.com/loop")), "too_many_redirects"));
+    app_test_http_reply("https://api.example.com/rel/a/b", 0, 302, "Location: c\n", "", 0, 0);
+    app_test_http_reply("https://api.example.com/rel/a/c", 0, 200, "", "relative", 0, 0);
+    check("a relative address is taken from the current path", containsText(fetch(app, "d6", call("https://api.example.com/rel/a/b")), "\"body\":\"relative\""));
+    app_test_http_reply("https://api.example.com/sr", 0, 302, "Location: //other.example.org/in\n", "", 0, 0);
+    check("an address without a scheme keeps the scheme", containsText(fetch(app, "d7", call("https://api.example.com/sr")), "\"body\":\"there\""));
+    app_test_http_reply("https://api.example.com/sr2", 0, 302, "Location: //evil.example.net/\n", "", 0, 0);
+    check("and is checked like any other", failedWith(fetch(app, "d8", call("https://api.example.com/sr2")), "redirect_not_allowed"));
+    app_test_http_reply("https://api.example.com/seeother", 0, 303, "Location: /new\n", "", 0, 0);
+    Item postRedirect = call("https://api.example.com/seeother");
+    addStringToObject(postRedirect, "method", "POST");
+    addStringToObject(postRedirect, "body", "payload");
+    int beforePost = app_test_http_count();
+    fetch(app, "d9", postRedirect);
+    check("a 303 after a POST asks again with GET and no body", sentMethod(beforePost) == "POST" && sentMethod(beforePost + 1) == "GET" && sentBody(beforePost + 1) == "");
+    app_test_http_reply("https://api.example.com/keep", 0, 307, "Location: /new\n", "", 0, 0);
+    Item keep = call("https://api.example.com/keep");
+    addStringToObject(keep, "method", "POST");
+    addStringToObject(keep, "body", "again");
+    int beforeKeep = app_test_http_count();
+    fetch(app, "d10", keep);
+    check("a 307 keeps the method and the body", sentMethod(beforeKeep + 1) == "POST" && sentBody(beforeKeep + 1) == "again");
+    app_test_http_reply("https://api.example.com/nolocation", 0, 302, "", "x", 0, 0);
+    check("a redirect without an address is just the answer", startsWithText(fetch(app, "d11", call("https://api.example.com/nolocation")), "0 {\"status\":302,"));
+
+    // -- cancelling and the rate limit
+    app_test_http_reply("https://api.example.com/wait", 0, 200, "", "late", 0, 3000);
+    app_test_inject(app.handle, "c1", requestText("http.request", call("https://api.example.com/wait")));
+    int turns = 0;
+    while (turns < 5) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    app_cancel(app.handle, "c1");
+    string cancelled = "";
+    int waitedTurns = 0;
+    while (app_test_response_ready(app.handle) == 0 && waitedTurns < 300) {
+        app.serveOne(20);
+        waitedTurns = waitedTurns + 1;
+    }
+    string cid = "";
+    int cstatus = 0;
+    app_test_take_response(app.handle, cid, cstatus, cancelled);
+    check("a request that is cancelled stops and answers cancelled", cid == "c1" && containsText(cancelled, "\"code\":\"cancelled\"") && waitedTurns < 200);
+    App busy = new App();
+    busy.open("t2", 100, 100, "<html></html>", "", false);
+    busy.allowHost("rate.example.com");
+    busy.enableHttpCommands();
+    app_test_http_reply("https://rate.example.com/", 0, 200, "", "", 0, 0);
+    int accepted = 0;
+    int refused = 0;
+    int n = 0;
+    while (n < 30) {
+        string reply = fetch(busy, "q" + intToString(n), call("https://rate.example.com/"));
+        if (failedWith(reply, "too_many")) {
+            refused = refused + 1;
+        } else if (startsWithText(reply, "0 ")) {
+            accepted = accepted + 1;
+        }
+        n = n + 1;
+    }
+    check("at most 20 requests start in a second", accepted <= 20 && refused >= 10 && accepted + refused == 30);
+    App plain = new App();
+    plain.open("t3", 100, 100, "<html></html>", "", false);
+    check("a program that did not enable the command has none", failedWith(fetch(plain, "x", call("https://api.example.com/")), "unknown_command"));
+    return 0;
+}

@@ -42,7 +42,7 @@ s = s.replace(old, new)
 open(p, 'w', encoding='utf-8', newline='').write(s.replace('\n', '\r\n') if crlf else s)
 PYEOF
     local extra=""
-    [ "$5" = "file_extras_main" ] && extra="$HERE/tests/support.clg"
+    [ "$5" = "file_extras_main" ] || [ "$5" = "http_main" ] && extra="$HERE/tests/support.clg"
     local assets="-"
     [ "$5" = "site_main" ] && assets="$HERE/tests/site"
     ASSETS="$assets" EXTRA="$extra" SRC="$dir/src" SHIM="$dir/shim" DOUBLES="$dir/tests/doubles" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
@@ -134,6 +134,26 @@ control "a dropped folder needs the application yes" drops.clg '                
 control "a drop takes at most the number set" drops.clg 'if (taken >= maxFiles || !plainText(path, 32000)) {' 'if (!plainText(path, 32000)) {' system_main "at most the number"
 control "a dropped name must exist" drops.clg '            } else if (found == 1 || found == 5) {' '            } else {' system_main "only what exists"
 control "a colour mode must be one of three" theme.clg '        if (code < 0) {' '        if (false) {' system_main "a word that is not a mode"
+control "an https host must be listed" http.clg '    if (!httpListed(policy.hosts, target.key)) {' '    if (false) {' http_main "a host that is not listed is refused before anything is sent"
+control "plain http only to a listed loopback name" http.clg '    if (!httpLoopbackName(target.host) || !httpListed(policy.insecure, target.host)) {' '    if (false) {' http_main "plain http to a listed non-loopback host is refused"
+control "a page may send only the short list of headers" http.clg '    return lowerName == "accept" || lowerName == "accept-language" || lowerName == "content-type" || lowerName == "if-none-match" || lowerName == "if-modified-since";' '    return true;' http_main "a page cannot send Authorization"
+control "user information in an address is refused" http.clg "    if (indexOfChar(authority, '@') >= 0) {" '    if (false) {' http_main "user information in an address is refused, and says why"
+control "a header value cannot hold a line break" http.clg '        if (!(c == 9 || (c >= 32 && c <= 126))) {' '        if (false) {' http_main "a header value with a line break is refused"
+control "Set-Cookie is not shown to the page" http.clg 'if (name != "set-cookie" && name != "set-cookie2" && !httpListed(seen, name)' 'if (!httpListed(seen, name)' http_main "Set-Cookie is not shown to the page"
+control "every redirect hop is checked" http.clg '        string why = httpTargetAllowed(policy, target);
+        if (why.length() > 0) {
+            if (hop > 0' '        string why = "";
+        if (why.length() > 0) {
+            if (hop > 0' http_main "a redirect to a host that is not listed is not followed"
+control "a response over the limit is refused" http.clg '        if (((flags / 2) % 2) == 1) {
+            return httpFailed("too_large"' '        if (false) {
+            return httpFailed("too_large"' http_main "a response over the limit is refused"
+control "a request body over the limit is refused" app.clg '            if (body.length() > policy.maxRequestBytes) {' '            if (false) {' http_main "a body over the limit is refused before it is sent"
+control "a page cannot ask for more time" app.clg '                if (!isNumber(wanted) || wanted.valuedouble < 1000 || wanted.valuedouble > double(policy.timeoutMs)) {' '                if (!isNumber(wanted)) {' http_main "a page cannot ask for more time than the program allows"
+control "a method must be on the list the application gave" app.clg '            if (!httpListed(policy.methods, method)) {' '            if (false) {' http_main "a method that was not added is refused"
+control "requests are rate limited" http.clg '        if (keep.size() >= perSecond) {' '        if (false) {' http_main "at most 20 requests start in a second"
+control "a header added for one host is sent only to it" http.clg '        if (policy.headerHosts[j] == hostKey) {' '        if (true) {' http_main "the header added for the first host did not go to the second"
+control "a 303 turns a POST into a GET without its body" http.clg '                if (status == 303 || ((status == 301 || status == 302) && currentMethod != "GET" && currentMethod != "HEAD")) {' '                if (false) {' http_main "a 303 after a POST asks again with GET and no body"
 wait
 for ((k = 0; k < ${#NAMES[@]}; k++)); do
     cat "$W/result.$k"

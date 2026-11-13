@@ -17,6 +17,7 @@
 #include "windows.clh"
 #include "settings.clh"
 #include "links.clh"
+#include "http.clh"
 #include "placement.clh"
 #include "menu.clh"
 #include "theme.clh"
@@ -84,6 +85,7 @@ public:
     MenuAction menuHandler;
     bool menuToPage;
     LinkRules links;                   // what a page may ask the system to open
+    HttpRules httpRules;               // what the program may request over HTTP, for a page (src/http.clg)
     ThemeState theme;
     DropRules drops;
     WindowBook windows;
@@ -109,6 +111,7 @@ public:
         gate = new FileGate();
         settings = new SettingsStore();
         links = new LinkRules();
+        httpRules = new HttpRules();
         drops = new DropRules(gate);
         memory = new WindowMemory();
         menuHandler = new MenuAction();
@@ -631,6 +634,133 @@ public:
                 int flags = 0;
                 int status = app_proc_run(handle, id, exe, argv, cwd, env, timeoutMs, maxBytes, out, err, exitCode, flags);
                 finishRun(handle, id, status, out, err, exitCode, flags);
+            });
+        });
+    }
+
+    // ---- HTTP from the backend (src/http.clg) ----
+
+    // A host a page may reach through http.request, by https. A name ("api.example.com") or name:port; no wildcards, no addresses. false if it is not valid.
+    bool allowHost(string host) {
+        return httpRules.allowHost(host);
+    }
+
+    // Plain http to localhost, 127.0.0.1 or [::1] (a service on this computer). false for any other name.
+    bool allowInsecureHost(string host) {
+        return httpRules.allowInsecureHost(host);
+    }
+
+    // A header that is added to every request to an allowed host and that the page never sees, such as ("api.example.com", "Authorization", "Bearer ...").
+    // A page can send only Accept, Accept-Language, Content-Type, If-None-Match and If-Modified-Since, so it cannot set Authorization itself.
+    bool addHttpHeader(string host, string name, string value) {
+        return httpRules.addHeader(host, name, value);
+    }
+
+    // How many http.request calls may start in one second (1 to 1000). The default is 20; the page gets "too_many" for the rest.
+    bool httpRate(int perSecond) {
+        return httpRules.setRate(perSecond);
+    }
+
+    // Methods other than GET and HEAD that a page may use, from GET, HEAD, POST, PUT, PATCH and DELETE. false (and none added) if a name is not one of those.
+    bool allowHttpMethods(std::vector<string> methods) {
+        return httpRules.allowMethods(methods);
+    }
+
+    // The most a request body and a response body may be, and the time limit for one request with its redirects (1 to 600 seconds). Defaults: 1 MiB, 8 MiB, 15 s.
+    bool httpLimits(int maxRequestBytes, int maxResponseBytes, int timeoutMs) {
+        return httpRules.setLimits(maxRequestBytes, maxResponseBytes, timeoutMs);
+    }
+
+    // Registers http.request {url, method?, headers?, body? | bodyBase64?, timeoutMs?, responseType?} -> {status, headers, body | bodyBase64}. A status of 400 or more
+    // is an answer, not an error. The request is sent on a worker, so the command loop keeps serving and the page can cancel it. The hosts, headers and limits
+    // are read when a request arrives, so they may be set before or after this call.
+    void enableHttpCommands() {
+        HttpRules rules = httpRules;
+        asyncCommand("http.request", closure AsyncCommand [rules] (Item args, string id, int handle) {
+            HttpPolicy policy = rules.policy;       // as configured when the request arrives
+            string url = requiredString(args, "url");
+            string method = optionalString(args, "method", "GET");
+            if (!httpMethodAllowed(method)) {
+                throw "invalid_argument: `method` must be GET, HEAD, POST, PUT, PATCH or DELETE";
+            }
+            if (!httpListed(policy.methods, method)) {
+                throw "method_not_allowed: this method is not allowed";
+            }
+            string responseType = optionalString(args, "responseType", "text");
+            if (responseType != "text" && responseType != "bytes") {
+                throw "invalid_argument: `responseType` must be text or bytes";
+            }
+            // the first address is checked here, so that a refused request is answered at once and nothing is sent
+            string why = httpTargetAllowed(policy, httpParseTarget(url));
+            if (why.length() > 0) {
+                throw why;
+            }
+            std::vector<string> names;
+            std::vector<string> values;
+            Item given = getObjectItem(args, "headers");
+            if (given != nullptr) {
+                if (!isObject(given)) {
+                    throw "invalid_argument: `headers` must be an object";
+                }
+                Item h = given.child;
+                while (h != nullptr) {
+                    string lower = lowerAscii(h.key);
+                    if (!httpPageHeaderAllowed(lower)) {
+                        string message = "invalid_argument: a page may not send the header `" + h.key + "`";
+                        throw message;
+                    }
+                    if (!isString(h) || !httpHeaderValueOk(h.valuestring, 1000)) {
+                        throw "invalid_argument: a header value must be printable ASCII of at most 1000 bytes";
+                    }
+                    if (names.size() >= 16) {
+                        throw "invalid_argument: at most 16 headers";
+                    }
+                    names.push_back(h.key);
+                    values.push_back(h.valuestring);
+                    h = h.next;
+                }
+            }
+            if (!rules.startOk()) {
+                throw "too_many: too many requests started in the last second";
+            }
+            string body = "";
+            Item text = getObjectItem(args, "body");
+            Item raw = getObjectItem(args, "bodyBase64");
+            if (text != nullptr && raw != nullptr) {
+                throw "invalid_argument: give `body` or `bodyBase64`, not both";
+            }
+            if (text != nullptr) {
+                if (!isString(text)) {
+                    throw "invalid_argument: `body` must be a string";
+                }
+                body = text.valuestring;
+            }
+            if (raw != nullptr) {
+                if (!isString(raw) || !isBase64(raw.valuestring)) {
+                    throw "invalid_argument: `bodyBase64` must be base64 text";
+                }
+                body = base64Decode(raw.valuestring);
+            }
+            if (body.length() > 0 && !httpMethodHasBody(method)) {
+                throw "invalid_argument: a request with this method has no body";
+            }
+            if (body.length() > policy.maxRequestBytes) {
+                throw "too_large: the request body is longer than the limit";
+            }
+            int timeoutMs = policy.timeoutMs;
+            Item wanted = getObjectItem(args, "timeoutMs");
+            if (wanted != nullptr) {
+                if (!isNumber(wanted) || wanted.valuedouble < 1000 || wanted.valuedouble > double(policy.timeoutMs)) {
+                    throw "invalid_argument: `timeoutMs` must be a number from 1000 up to the program's limit";
+                }
+                timeoutMs = int(wanted.valuedouble);
+            }
+            int maxBytes = policy.maxResponseBytes;
+            bool asBytes = responseType == "bytes";
+            HttpPolicy sending = policy;
+            spawn(closure Job [sending, handle, id, method, url, names, values, body, timeoutMs, maxBytes, asBytes] () {
+                HttpOutcome outcome = httpSend(sending, handle, id, method, url, names, values, body, timeoutMs, maxBytes);
+                finishHttp(handle, id, outcome, asBytes, method);
             });
         });
     }
