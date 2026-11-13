@@ -25,6 +25,8 @@ You need these, and all the scripts are `bash` (Git Bash or MSYS2 on Windows; Po
 | [CeeLing](https://github.com/AI4Engr/CeeLing) | the compiler | clone it next to this repository and build it (`cmake -S . -B build && cmake --build build`), so that `../CeeLing/build/cling.exe` exists; or set `CLING=` |
 | [cJSON-cling](https://github.com/AI4Engr/cJSON-cling) | the JSON the commands receive | clone it next to this repository (`../cJSON-cling`); or set `CJSON=` |
 
+The short way, from a fresh clone of this repository: `bash scripts/setup.sh` checks the tools, clones CeeLing and cJSON-cling next to it if they are missing, builds the compiler (a few minutes) and runs `fetch.sh`. By hand:
+
 ```bash
 bash scripts/fetch.sh                      # once: webview 0.12.0 and the WebView2 SDK 1.0.2210.55 into third_party/ (pinned, SHA-256 checked, not committed)
 bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh
