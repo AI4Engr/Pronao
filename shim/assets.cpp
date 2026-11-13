@@ -12,6 +12,7 @@ std::shared_ptr<AssetStore> assetStore() {
 int embeddedCount();
 const char* embeddedName(int index);
 const char* embeddedData(int index, unsigned long& size);
+unsigned long embeddedRawSize(int index);               // 0: the stored bytes are the file; otherwise they are a gzip stream of a file that long
 
 int app_asset_site(std::string origin, std::string csp) {
     assetStore()->configure(origin, csp);
@@ -27,6 +28,7 @@ int app_asset_add_embedded(std::string path, std::string mime, int index) {
     unsigned long size = 0;
     if (index < 0 || index >= embeddedCount()) return 0;
     const char* data = embeddedData(index, size);
+    if (embeddedRawSize(index) != 0) return assetStore()->addGzip(path, mime, std::string(data, size)) ? 1 : 0;
     return assetStore()->add(path, mime, std::string(data, size)) ? 1 : 0;
 }
 int app_asset_add_text(std::string path, std::string mime, std::string text) { return assetStore()->add(path, mime, std::move(text)) ? 1 : 0; }

@@ -73,7 +73,7 @@ build_program() { # variant repo flags exe main
     for p in "${pids[@]}"; do wait "$p" || rc=1; done
     [ $rc -eq 0 ] || return 1
     natives=$(native_objs "$2" "$3") || return 1
-    g++ $3 $objs $natives -pthread -o "$4" || return 1
+    g++ $3 $objs $natives -pthread -lz -o "$4" || return 1
 }
 # TSan needs ASLR off on some WSL kernels (its shadow-memory mapping fails otherwise)
 run_tsan() { # exe out
@@ -84,7 +84,7 @@ run_tsan() { # exe out
 build_cpp_test() { # source repo flags exe
     local natives
     natives=$(native_objs "$2" "$3") || return 1
-    g++ --std=c++17 $3 -I "$2/tests" "$2/tests/$1" $natives -pthread -o "$4" || return 1
+    g++ --std=c++17 $3 -I "$2/tests" "$2/tests/$1" $natives -pthread -lz -o "$4" || return 1
 }
 
 # the program the process tests run (every section below that needs it finds it through APP_PROC_ECHO)
@@ -154,11 +154,11 @@ sec_tsan_watch() {
 sec_assets() {
     local rc races ok=0
     echo "== ASan+UBSan and TSan: the asset table"
-    g++ --std=c++17 $ASAN -pthread repo/tests/assets_test.cpp -o assets.asan || return 1
+    g++ --std=c++17 $ASAN -pthread repo/tests/assets_test.cpp -lz -o assets.asan || return 1
     ASAN_OPTIONS=detect_leaks=1 ./assets.asan > assets.asan.out 2>&1; rc=$?
     echo "   ASan exit $rc: $(tail -1 assets.asan.out)"
     [ $rc -eq 0 ] || { grep -v '^PASS' assets.asan.out | head -20; ok=1; }
-    g++ --std=c++17 $TSAN -pthread repo/tests/assets_test.cpp -o assets.tsan || return 1
+    g++ --std=c++17 $TSAN -pthread repo/tests/assets_test.cpp -lz -o assets.tsan || return 1
     run_tsan assets.tsan assets.tsan.out; rc=$?; races=$(grep -c 'WARNING: ThreadSanitizer' assets.tsan.out)
     echo "   TSan exit $rc, $races reports"
     [ $rc -eq 0 ] && [ "$races" -eq 0 ] || { head -30 assets.tsan.out; ok=1; }

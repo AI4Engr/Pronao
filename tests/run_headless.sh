@@ -71,7 +71,7 @@ TPIDS=()
 for t in proc watch assets instance; do
     src="$HERE/tests/${t}_$( [ $t = assets ] && echo test || echo shim_test).cpp"
     (
-        "$CXX" --std=c++17 $OPT_LEVEL "$src" $NOBJS -pthread $( [ "$PLAT" = win ] && echo "-ladvapi32 -lshell32 -lole32" ) -o "$W/$t.exe" > "$W/$t.log" 2>&1 || { echo "$t TEST BUILD FAILED" >> "$W/$t.log"; echo bad > "$W/$t.verdict"; exit 0; }
+        "$CXX" --std=c++17 $OPT_LEVEL "$src" $NOBJS -pthread -lz $( [ "$PLAT" = win ] && echo "-ladvapi32 -lshell32 -lole32" ) -o "$W/$t.exe" > "$W/$t.log" 2>&1 || { echo "$t TEST BUILD FAILED" >> "$W/$t.log"; echo bad > "$W/$t.verdict"; exit 0; }
         TOUT="$("$W/$t.exe")"; TRC=$?
         printf '%s\n' "$TOUT" | grep -v '^PASS' >> "$W/$t.log"
         if [ "$TRC" -eq 0 ]; then echo ok > "$W/$t.verdict"; else echo bad > "$W/$t.verdict"; fi

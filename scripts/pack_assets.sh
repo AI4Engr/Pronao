@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Packs a folder of web files into the program:  scripts/pack_assets.sh <folder or "-"> <out dir>
 # Writes <out dir>/assets_embedded.cpp (the table the shim reads) and, with a folder, <out dir>/assets_blob.o (the bytes, via ld -r -b binary).
-# "-" writes the table for no files at all. Files are stored as they are: WebView2 does not unpack a Content-Encoding that a program
-# puts on a response it makes itself (tried: the page received the gzip bytes), so compressing here would only break the page.
+# "-" writes the table for no files at all.
+# A file that gzip makes at least 10% smaller is stored as the gzip stream, and the shim inflates it when the window asks for it (shim/assets.h): the
+# window gets the file's own bytes with no Content-Encoding, because WebView2 does not unpack an encoding that a program puts on a response it
+# makes itself (tried: the page received the gzip bytes). Other files (images that are already compressed) are stored as they are.
 set -euo pipefail
 DIR="$1"; OUT="$2"
 mkdir -p "$OUT"
@@ -16,22 +18,31 @@ if [ "$DIR" = "-" ]; then
         echo 'int embeddedCount() { return 0; }'
         echo 'const char* embeddedName(int) { return ""; }'
         echo 'const char* embeddedData(int, unsigned long& size) { size = 0; return ""; }'
+        echo 'unsigned long embeddedRawSize(int) { return 0; }'
     } >> "$CPP"
     exit 0
 fi
 BLOB="$OUT/assets.blob"
 : > "$BLOB"
-NAMES=""; OFFSETS=""; SIZES=""
+TMPGZ="$OUT/one.gz"
+NAMES=""; OFFSETS=""; SIZES=""; RAWS=""
 offset=0; count=0
 while IFS= read -r -d '' file; do
     rel="${file#"$DIR"/}"
     # a name the C++ string below could not hold as it is
     if printf '%s' "$rel" | LC_ALL=C grep -q '["\\]'; then echo "pack_assets: a file name with a quote or backslash is not supported: $rel" >&2; exit 1; fi
     size=$(stat -c %s "$file")
-    cat "$file" >> "$BLOB"
-    NAMES="$NAMES\"$rel\","; OFFSETS="$OFFSETS${offset}UL,"; SIZES="$SIZES${size}UL,"
+    raw=0
+    if [ "$size" -ge 256 ]; then
+        gzip -9 -n -c "$file" > "$TMPGZ"
+        gzsize=$(stat -c %s "$TMPGZ")
+        if [ $((gzsize * 10)) -lt $((size * 9)) ]; then cat "$TMPGZ" >> "$BLOB"; raw=$size; size=$gzsize; fi
+    fi
+    if [ "$raw" -eq 0 ]; then cat "$file" >> "$BLOB"; fi
+    NAMES="$NAMES\"$rel\","; OFFSETS="$OFFSETS${offset}UL,"; SIZES="$SIZES${size}UL,"; RAWS="$RAWS${raw}UL,"
     offset=$((offset + size)); count=$((count + 1))
 done < <(find "$DIR" -type f -print0 | LC_ALL=C sort -z)
+rm -f "$TMPGZ"
 echo "x" >> "$BLOB"          # (an empty blob has no symbols)
 ( cd "$OUT" && ld -r -b binary -o assets_blob.o assets.blob )
 {
@@ -39,10 +50,12 @@ echo "x" >> "$BLOB"          # (an empty blob has no symbols)
     echo "static const char* const kNames[] = {$NAMES \"\"};"
     echo "static const unsigned long kOffsets[] = {$OFFSETS 0UL};"
     echo "static const unsigned long kSizes[] = {$SIZES 0UL};"
+    echo "static const unsigned long kRaw[] = {$RAWS 0UL};"
     echo "int embeddedCount() { return $count; }"
     echo 'const char* embeddedName(int i) { return kNames[i]; }'
     echo 'const char* embeddedData(int i, unsigned long& size) {'
     echo '    size = kSizes[i];'
     echo '    return reinterpret_cast<const char*>(_binary_assets_blob_start) + kOffsets[i];'
     echo '}'
+    echo 'unsigned long embeddedRawSize(int i) { return kRaw[i]; }'
 } >> "$CPP"

@@ -8,7 +8,7 @@ Fetch the dependencies, build the example, make a project of your own, run the t
 bash scripts/fetch.sh                 # downloads webview 0.12.0 and the WebView2 SDK 1.0.2210.55 (pinned, sha256-checked) into third_party/
 PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 
-bash tests/run_headless.sh            # ~20 s, 17 programs, about 1,000 checks (982 on 2026-11-09); each prints "N passed, 0 failed" (SLOW=1: build at -O1)
+bash tests/run_headless.sh            # ~20 s, 17 programs, about 1,000 checks (993 on 2026-11-12); each prints "N passed, 0 failed" (SLOW=1: build at -O1)
 bash tests/run_examples.sh           # ~8 min: builds each program in examples/ and runs its 14 to 23 headless checks (207 in all)
 bash tests/run_distribution.sh       # release build: windowed program, version and icon in the exe, the runtime check with a box, bad version values refused
 bash tests/run_signing.sh            # signing with a throwaway certificate: signed, runs, a changed file is caught, refusals
@@ -25,7 +25,7 @@ bash tests/run_sanitizers.sh          # ~80 s, WSL: ASan+UBSan, TSan on the queu
 bash tests/negative_controls.sh       # ~65 s: removes one check at a time from src/ and shows the tests fail
 ```
 
-Requirements: the CeeLing compiler, cJSON-cling, a C++ compiler (MinGW-w64 on Windows), the WebView2 runtime for window runs, WSL with
+Requirements: the CeeLing compiler, cJSON-cling, a C++ compiler (MinGW-w64 on Windows) and zlib's library (`-lz`; MinGW-w64 has it), the WebView2 runtime for window runs, WSL with
 g++ for the sanitizers. Windows is the only platform with a window; Linux runs the headless suite and the sanitizers (see the README's Platforms table). The scripts find the tools themselves when CeeLing, cJSON-cling and Pronao
 sit side by side (`../CeeLing/build/cling.exe`, `../cJSON-cling`) and `g++` is on `PATH`; otherwise set `CLING`, `CJSON`, `CXX`
 (`scripts/env.sh` says what is missing). `WSL_DISTRO` picks the WSL distribution for the sanitizer run (default: WSL's default);
