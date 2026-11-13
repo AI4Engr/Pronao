@@ -31,6 +31,10 @@ find "$SITE/js/diagramly" -type d -empty -delete 2>/dev/null || true
 rm -f "$SITE"/js/integrate.min.js "$SITE"/js/viewer.min.js "$SITE"/js/viewer-static.min.js "$SITE"/js/embed*.js "$SITE"/js/export*.js
 rm -f "$SITE"/service-worker.js* "$SITE"/workbox-*.js* "$SITE"/teams.html "$SITE"/onedrive3.html "$SITE"/export3.html "$SITE"/open.html "$SITE"/clear.html
 rm -f "$SITE"/monday-app-association.json
+# mxgraph/src is read only by the development mode (?dev=1); the largest template (3.4 MB, 2.6 MB compressed) is a network-equipment drawing,
+# and its line is removed from the template index so that no entry points at a missing file
+rm -rf "$SITE/mxgraph/src" "$SITE/templates/network/fortinet.xml" "$SITE/templates/network/fortinet.png"
+sed -i '/<template url="network\/fortinet.xml"/d' "$SITE/templates/index.xml"
 find "$SITE" -name '*.map' -delete
 find "$SITE/resources" -type f ! -name 'dia.txt' ! -name 'dia_en.txt' ! -name 'dia_zh.txt' -delete 2>/dev/null || true
 

@@ -6,14 +6,14 @@ The editor is the web application, unmodified except for one `<script>` line add
 
 ## Build
 
-draw.io is not in this repository. `fetch.sh` downloads a pinned release (32.6.10), checks its SHA-256, drops what a desktop editor does not need, and adds the bridge `pronao-electron.js`:
+draw.io is not in this repository. `fetch.sh` downloads a pinned release (32.6.10), checks its SHA-256, drops what a desktop editor does not need (the server side, the embed and viewer builds, the unminified sources, a development-only folder, the biggest template and its index entry), and adds the bridge `pronao-electron.js`:
 
 ```
 bash examples/drawio/fetch.sh
 RELEASE=1 ICON=docs/assets/pronao.ico ASSETS=examples/drawio/site bash scripts/build.sh examples/drawio/main.clg out/diagrams.exe
 ```
 
-`fetch.sh` leaves `examples/drawio/site/` (about 59 MB, gitignored). The release build embeds it uncompressed, so the program is about 56 MB (measured on one machine; a Pronao program without a site is about 1 to 2 MB). The embedded files are what takes the space: the editor's script bundles are 21 MB, the shape libraries' icons 12 MB, templates 6 MB.
+`fetch.sh` leaves `examples/drawio/site/` (about 53 MB, gitignored). The release build embeds it with gzip applied to every file that it shrinks (`scripts/pack_assets.sh`), and the program inflates a file when the window asks for it. The program is **22.6 MB** (22,588,416 bytes, measured on one machine; a Pronao program without a site is about 1 to 2 MB). Before the compression it was 55.8 MB. The script bundles are the largest part: 21 MB of scripts, about 5 MB of them after gzip. Images (PNG, 8 MB) do not compress. A build takes about 6 minutes, mostly writing the embedded files.
 
 ## How it works
 
