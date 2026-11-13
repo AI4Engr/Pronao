@@ -18,6 +18,7 @@ Each folder is a complete program for one part of the [manual](../docs/manual/RE
 | [site](site/) | a front end of several files served from memory, and a release build | [9](../docs/manual/09-web-ui-and-shipping.md), [10](../docs/manual/10-distribution.md) |
 | [cpp](cpp/) | the same kind of program written in C++ against the generated headers | [C](../docs/manual/appendix-cpp.md) |
 | [weather](weather/) | a five-day forecast in a frosted-glass page; a struct argument, a custom error code (sample data: no network yet) | [2](../docs/manual/02-how-it-works.md) |
+| [drawio](drawio/) | the draw.io diagram editor as one exe: open and save through dialogs, unsaved-changes warning (needs `fetch.sh`; not built by `run_examples.sh`) | [3](../docs/manual/03-files-and-data.md) |
 | [template](template/) | what `scripts/new_project.sh` copies for a project of your own | [1](../docs/manual/01-getting-started.md) |
 
 Build one from the repository root (the exact line is in each README), for example:

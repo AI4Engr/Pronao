@@ -1,0 +1,30 @@
+// examples/drawio: the draw.io editor (diagrams.net, Apache-2.0) in a Pronao window. See README.md.
+// The editor is the unmodified web application; pronao-electron.js gives it the `electron` object it expects, built on the commands below.
+// The page reaches only the files the user picks in a dialog. It may open web links in the browser.
+#include "app.clh"
+
+int main() {
+    App app = new App();
+    std::vector<string> schemes;
+    schemes.push_back("https");
+    schemes.push_back("http");
+    app.allowLinkSchemes(schemes);
+    app.enableShellCommands();
+    app.enableDialogCommands();
+    app.enableFileCommands(64 * 1024 * 1024);
+    app.enableWindowCommands();
+    app.confirmClose("Unsaved diagram", "Close without saving the changes?");
+    string url = app.devServerFromEnvironment();
+    bool opened = false;
+    if (url.length() > 0) {
+        opened = app.openDevServer("Diagrams", 1280, 800, url);
+    } else {
+        opened = app.openSite("Diagrams", 1280, 800, false, "http://app.localhost", "");
+    }
+    if (!opened) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}
