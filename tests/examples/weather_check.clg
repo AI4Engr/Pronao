@@ -1,0 +1,38 @@
+// Drives the commands of examples/weather through the real dispatcher (headless window double).
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "app.clh"
+#include "support.clh"
+#include "commands.clh"
+
+Item cityArgs(string city) {
+    Item o = createObject();
+    addStringToObject(o, "city", city);
+    return o;
+}
+
+int main() {
+    App app = new App();
+    app.open("t", 100, 100, "<html></html>", "", false);
+    installWeather(app);
+
+    string cities = roundTrip(app, "w1", requestText("weather.cities", createArray()));
+    check("the cities are listed", cities == "0 [\"Shanghai\",\"Oslo\",\"Cairo\",\"Lima\"]");
+
+    string oslo = roundTrip(app, "w2", requestText("weather.forecast", cityArgs("Oslo")));
+    check("a forecast answers", ok(oslo));
+    check("it names the city and says the data is a sample", containsText(oslo, "\"city\":\"Oslo\"") && containsText(oslo, "\"source\":\"sample data\""));
+    check("it has the current weather", containsText(oslo, "\"now\":-2") && containsText(oslo, "\"sky\":\"snow\"") && containsText(oslo, "\"humidity\":81"));
+    check("it has five days, the first one first", containsText(oslo, "\"days\":[{\"day\":\"Mon\",\"high\":0,\"low\":-6,\"sky\":\"snow\"}") && containsText(oslo, "{\"day\":\"Fri\",\"high\":-3,\"low\":-9,\"sky\":\"sunny\"}]"));
+    check("every listed city has a forecast", ok(roundTrip(app, "w3", requestText("weather.forecast", cityArgs("Shanghai")))) && ok(roundTrip(app, "w4", requestText("weather.forecast", cityArgs("Cairo")))) && ok(roundTrip(app, "w5", requestText("weather.forecast", cityArgs("Lima")))));
+
+    check("a city without data has a code of its own", roundTrip(app, "w6", requestText("weather.forecast", cityArgs("Atlantis"))) == "1 {\"code\":\"not_found\",\"message\":\"there is no sample data for Atlantis\"}");
+    check("the match is exact", failedWith(roundTrip(app, "w7", requestText("weather.forecast", cityArgs("oslo"))), "not_found"));
+    check("a missing city is invalid_argument", failedWith(roundTrip(app, "w8", requestText("weather.forecast", createObject())), "invalid_argument"));
+    Item number = createObject();
+    addNumberToObject(number, "city", 5);
+    check("a city of the wrong type is invalid_argument", failedWith(roundTrip(app, "w9", requestText("weather.forecast", number)), "invalid_argument"));
+    check("an unknown command is refused", failedWith(roundTrip(app, "w10", requestText("weather.nope", createArray())), "unknown_command"));
+    return 0;
+}

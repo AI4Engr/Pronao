@@ -1,0 +1,14 @@
+// examples/weather: see README.md
+#include "app.clh"
+#include "commands.clh"
+
+int main() {
+    App app = new App();
+    installWeather(app);
+    if (!app.openPage("Weather", 720, 540, false)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

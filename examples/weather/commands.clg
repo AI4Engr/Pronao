@@ -1,0 +1,92 @@
+// examples/weather: a forecast page backed by two commands. The numbers are SAMPLE DATA kept in the program: the CeeLing side has no network access yet.
+#include "app.clh"
+
+// The page sends {city: "Oslo"}. The compiler writes decodeForecastArgs because this is a struct.
+struct ForecastArgs {
+public:
+    string city;
+    ForecastArgs(string c) { city = c; }
+};
+
+Item dayItem(string day, int high, int low, string sky) {
+    Item d = createObject();
+    addStringToObject(d, "day", day);
+    addNumberToObject(d, "high", high);
+    addNumberToObject(d, "low", low);
+    addStringToObject(d, "sky", sky);
+    return d;
+}
+
+bool knownCity(string city) {
+    return city == "Shanghai" || city == "Oslo" || city == "Cairo" || city == "Lima";
+}
+
+Item forecastFor(string city) {
+    int now = 0;
+    int humidity = 0;
+    int wind = 0;
+    string sky = "";
+    std::vector<int> highs;
+    std::vector<int> lows;
+    std::vector<string> skies;
+    if (city == "Shanghai") {
+        now = 22; humidity = 68; wind = 14; sky = "partly";
+        highs.push_back(24); highs.push_back(26); highs.push_back(21); highs.push_back(19); highs.push_back(23);
+        lows.push_back(17); lows.push_back(18); lows.push_back(16); lows.push_back(14); lows.push_back(16);
+        skies.push_back("partly"); skies.push_back("sunny"); skies.push_back("rain"); skies.push_back("rain"); skies.push_back("cloudy");
+    } else if (city == "Oslo") {
+        now = -2; humidity = 81; wind = 9; sky = "snow";
+        highs.push_back(0); highs.push_back(-1); highs.push_back(2); highs.push_back(3); highs.push_back(-3);
+        lows.push_back(-6); lows.push_back(-7); lows.push_back(-2); lows.push_back(-1); lows.push_back(-9);
+        skies.push_back("snow"); skies.push_back("cloudy"); skies.push_back("cloudy"); skies.push_back("partly"); skies.push_back("sunny");
+    } else if (city == "Cairo") {
+        now = 31; humidity = 22; wind = 19; sky = "sunny";
+        highs.push_back(33); highs.push_back(34); highs.push_back(32); highs.push_back(30); highs.push_back(31);
+        lows.push_back(21); lows.push_back(22); lows.push_back(21); lows.push_back(19); lows.push_back(20);
+        skies.push_back("sunny"); skies.push_back("sunny"); skies.push_back("partly"); skies.push_back("sunny"); skies.push_back("sunny");
+    } else {
+        now = 18; humidity = 77; wind = 11; sky = "cloudy";
+        highs.push_back(19); highs.push_back(20); highs.push_back(18); highs.push_back(21); highs.push_back(20);
+        lows.push_back(15); lows.push_back(15); lows.push_back(14); lows.push_back(16); lows.push_back(15);
+        skies.push_back("cloudy"); skies.push_back("partly"); skies.push_back("cloudy"); skies.push_back("sunny"); skies.push_back("partly");
+    }
+    Item out = createObject();
+    addStringToObject(out, "city", city);
+    addStringToObject(out, "source", "sample data");
+    addNumberToObject(out, "now", now);
+    addStringToObject(out, "sky", sky);
+    addNumberToObject(out, "humidity", humidity);
+    addNumberToObject(out, "wind", wind);
+    Item days = createArray();
+    std::vector<string> names;
+    names.push_back("Mon"); names.push_back("Tue"); names.push_back("Wed"); names.push_back("Thu"); names.push_back("Fri");
+    int i = 0;
+    while (i < 5) {
+        addItemToArray(days, dayItem(names[i], highs[i], lows[i], skies[i]));
+        i = i + 1;
+    }
+    addItemToObject(out, "days", days);
+    return out;
+}
+
+void installWeather(App app) {
+    // weather.cities: the cities there is sample data for
+    app.command("weather.cities", closure Command [] (Item args) {
+        Item list = createArray();
+        addItemToArray(list, createString("Shanghai"));
+        addItemToArray(list, createString("Oslo"));
+        addItemToArray(list, createString("Cairo"));
+        addItemToArray(list, createString("Lima"));
+        return list;
+    });
+
+    // weather.forecast {city}: the current weather and five days. A city without data is refused with a code of its own.
+    app.command("weather.forecast", closure Command [] (Item args) {
+        ForecastArgs a = decodeForecastArgs(args);
+        if (!knownCity(a.city)) {
+            string message = "not_found: there is no sample data for " + a.city;
+            throw message;
+        }
+        return forecastFor(a.city);
+    });
+}

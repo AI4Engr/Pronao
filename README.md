@@ -14,6 +14,10 @@ A program is one `.exe` with no installer. The example program below is **1.2 MB
 >
 > **What the guarantees cover:** only CeeLing code compiled and checked by the CeeLing compiler. The native layer (`shim/`), the WebView and browser engine, any C++ library you link and every `ext_fn` declaration are trusted, not checked. Nothing here is "thread-safe".
 
+<p align="center"><img src="docs/assets/weather.png" width="560" alt="examples/weather: a forecast page in a Pronao window"></p>
+
+<p align="center"><sub>examples/weather: a page of HTML, CSS and JavaScript calling two CeeLing commands. The forecast is sample data.</sub></p>
+
 ## Quick start
 
 You need these, and all the scripts are `bash` (Git Bash or MSYS2 on Windows; PowerShell is not used or tried):
