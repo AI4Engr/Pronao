@@ -14,12 +14,27 @@
 # APP_VERSION=1.2.3 (APP_NAME, APP_COMPANY, APP_DESCRIPTION, APP_COPYRIGHT): the version resource of the exe, shown by Explorer under Properties > Details.
 # ICON=<file.ico>: the program's icon (Windows): compiled into the exe as resource 1, so Explorer shows it, and the window (and so the taskbar) uses it. Without
 # it the system's default icon is shown. scripts/make_icon.py makes a placeholder.
+# SIGN_COMMAND='signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 THUMBPRINT %1' (RELEASE=1 only): run as the very last step, on the finished exe, with %1
+# replaced by its path (as one argument, whatever characters the path has; write %1 bare, not in quotes). Any signing tool works: signtool, relic, artifact-signing-cli, osslsigncode,
+# a script. SIGN_VERIFY_COMMAND (same %1) runs after it, for example 'signtool verify /pa %1'. If either fails, or the signing command leaves the exe unchanged, the build FAILS and the
+# unsigned exe is deleted, so no exe that looks like a release is left behind. The commands are not printed (they may hold a key or a password); their own output is shown.
 # JOBS (parallel compiles, default: the cores), OBJ_CACHE (a folder of compiled objects shared by builds), OPT (optimisation level, default -O1).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$HERE/scripts/env.sh"      # CLING, CJSON, CXX: from the environment, else the side-by-side layout (see env.sh)
 CLING_FLAGS="${CLING_FLAGS---pool-shared}"
 MAIN="$1"; OUT="$2"; MODE="${3:-window}"
+# the signing hook is checked BEFORE anything is built: a mistake in it must not cost a whole build
+if [ -n "${SIGN_COMMAND:-}${SIGN_VERIFY_COMMAND:-}" ]; then
+    [ "$MODE" != "--headless" ] || { echo "build.sh: SIGN_COMMAND is for a program for people; a --headless (test) build is not signed" >&2; exit 1; }
+    [ -n "${RELEASE:-}" ] || { echo "build.sh: SIGN_COMMAND needs RELEASE=1 (a build with developer tools must not be signed as if it were the release)" >&2; exit 1; }
+    for v in SIGN_COMMAND SIGN_VERIFY_COMMAND; do
+        if [ -n "${!v:-}" ]; then
+            case "${!v}" in *%1*) ;; *) echo "build.sh: $v must contain %1, the place where the path of the exe goes" >&2; exit 1 ;; esac
+        fi
+    done
+    [ -n "${SIGN_COMMAND:-}" ] || { echo "build.sh: SIGN_VERIFY_COMMAND without SIGN_COMMAND: there is nothing to verify" >&2; exit 1; }
+fi
 WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
@@ -208,3 +223,26 @@ RCEOF
     OBJS+=("$WORK/icon.o")
 fi
 "$CXX" "${OBJS[@]}" "$WORK/embedded.o" $GC $STRIP_FLAG $LINK -o "$OUT"
+
+# ---- signing, last: nothing may touch the exe after this (a change breaks the signature) --------------------------------------------------------------------------------------------
+if [ -n "${SIGN_COMMAND:-}" ]; then
+    # %1 becomes "$1" of a fresh shell that is handed the path: the path is one argument whatever it holds (spaces, ;, $, quotes), never part of the command's text.
+    # (A "%1" the user quoted anyway is taken as the same thing.)
+    run_with_exe() {
+        local cmd="${1//\"%1\"/%1}"
+        cmd="${cmd//%1/\"\$1\"}"
+        bash -c "$cmd" signing-hook "$OUT"
+    }
+    before="$(sha256sum "$OUT" | cut -d' ' -f1)"
+    if ! run_with_exe "$SIGN_COMMAND"; then
+        rm -f "$OUT"; echo "build.sh: the signing command failed; the unsigned $(basename "$OUT") was deleted" >&2; exit 1
+    fi
+    after="$(sha256sum "$OUT" 2>/dev/null | cut -d' ' -f1)"
+    if [ -z "$after" ] || [ "$after" = "$before" ]; then
+        rm -f "$OUT"; echo "build.sh: the signing command succeeded but did not change the exe (nothing was signed); the exe was deleted" >&2; exit 1
+    fi
+    if [ -n "${SIGN_VERIFY_COMMAND:-}" ] && ! run_with_exe "$SIGN_VERIFY_COMMAND"; then
+        rm -f "$OUT"; echo "build.sh: the signature did not verify; the exe was deleted" >&2; exit 1
+    fi
+    echo "signed: $OUT"
+fi

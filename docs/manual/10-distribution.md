@@ -55,9 +55,46 @@ signtool verify /pa /v out\my-app.exe
   module `Microsoft.PowerShell.Security`, a PowerShell 7 session has passed its `PSModulePath` on: start it from a plain command prompt, or run `set PSModulePath=` first.
   Tested here with a throwaway self-signed certificate (`tests/run_signing.sh`): signing, who signed, a changed file reported as changed, a wrong password refused. A self-signed certificate is reported as signed
   but not trusted, which is the correct answer; a real timestamp server and a certificate that chains to a trusted root were not used.
+- **Let the build do it: `SIGN_COMMAND`.** With `RELEASE=1`, `scripts/build.sh` runs a command as its very last step, on the finished exe, with `%1` replaced by the exe's path (it reaches the command as one argument whatever characters the path has). The command is yours, so any tool fits: `signtool`, `relic` or `artifact-signing-cli` (the cloud options Tauri's documentation shows), `osslsigncode`, or the script below. `SIGN_VERIFY_COMMAND` (also with `%1`) runs after it.
+
+  ```
+  RELEASE=1 ICON=app.ico APP_VERSION=1.4.0 \
+  SIGN_COMMAND='signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 THUMBPRINT %1' \
+  SIGN_VERIFY_COMMAND='signtool verify /pa %1' \
+  bash scripts/build.sh main.clg out/my-app.exe
+  ```
+
+  With the PowerShell script and a certificate file (a Windows tool needs a Windows path: the command is a shell command, so `cygpath` does that):
+
+  ```
+  SIGN_COMMAND='powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1 -File "$(cygpath -w %1)" -Pfx cert.pfx -PasswordEnv SIGN_PASSWORD -Timestamp http://timestamp.digicert.com'
+  ```
+
+  The rules, each tested (`tests/run_sign_hook.sh`): the hook is checked before anything is built (a command without `%1`, a hook without `RELEASE=1`, or on a `--headless` test build, is refused at once); **a failing signing command, one that succeeds but leaves the exe unchanged, and a failing verification each fail the build and delete the exe**, so an unsigned file that looks like a release is never left behind; the command is not printed, because it may hold a token (its own output is). Secrets go in environment variables the command reads, not in the command line.
 - **Sign last.** After the build is finished and stripped; any change to the exe afterwards (a packer, `strip`, resource editing) breaks the signature.
 - **Use a timestamp server** (`/tr`), so the signature stays valid after the certificate expires.
 - Keep the key out of the repository and out of build logs; hardware tokens and cloud signing keep it off the build machine.
+
+### Signing in a CI build (a sketch, not run)
+
+The usual way (Tauri's documentation shows the same for its own build): the certificate as a base64 secret, written to a file for the one step that needs it and deleted after, its password as another secret, passed to the command as an environment variable. **I have not run this on GitHub Actions.** The shell of the step below is run as written by `tests/run_sign_hook.sh` (with the secrets as environment variables, a throwaway certificate and a small program in place of yours), and builds a signed exe, deletes the certificate file at the end and keeps the password out of the log. What is not tested is GitHub's runner itself: its shell, its paths and its secrets.
+
+```yaml
+- name: Build and sign
+  shell: bash
+  env:
+    WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}              # the .pfx, base64
+    SIGN_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+  run: |
+    printf '%s' "$WINDOWS_CERTIFICATE" | base64 -d > "$RUNNER_TEMP/cert.pfx"
+    trap 'rm -f "$RUNNER_TEMP/cert.pfx"' EXIT
+    unset PSModulePath          # a PowerShell 7 parent passes on a path that Windows PowerShell cannot load its modules from
+    RELEASE=1 ICON=app.ico APP_VERSION="${GITHUB_REF_NAME#v}" \
+    SIGN_COMMAND="powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1 -File \"\$(cygpath -w %1)\" -Pfx \"\$(cygpath -w \"$RUNNER_TEMP/cert.pfx\")\" -PasswordEnv SIGN_PASSWORD -Timestamp http://timestamp.digicert.com" \
+    bash scripts/build.sh main.clg out/my-app.exe
+```
+
+Hardware tokens and cloud signing services keep the key off the runner altogether; they are what a `SIGN_COMMAND` for `relic` or `artifact-signing-cli` is for. Whether a new signed exe stops being warned by SmartScreen depends on its reputation, which neither kind of certificate gives at once (Tauri's documentation says the same of its own signed builds).
 
 ## If a virus scanner objects anyway
 
@@ -71,7 +108,7 @@ wrote (see [programs and links](04-programs-and-links.md)), and a scanner that i
 2. `checkRuntime` is in `main`.
 3. The program ends with `app.close()` (so the tray icon, if any, is removed).
 4. Settings and window places are in `%APPDATA%\<name>\` (`rememberWindows`, `SettingsStore`): nothing is written next to the exe, so it can live in a read-only folder.
-5. Signed, verified, with a timestamp.
+5. Signed, verified, with a timestamp (`SIGN_COMMAND` and `SIGN_VERIFY_COMMAND` do both in the build).
 6. Started once on a computer that is not the one it was built on.
 
 ## What is not covered
