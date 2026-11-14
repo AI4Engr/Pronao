@@ -23,6 +23,7 @@ ASAN="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-poi
 TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print $APP_MODULES embedded"
 EXPECTED_SITE=38
+EXPECTED_HTTP=82
 MAXPAR="${MAXPAR:-8}"
 mkdir -p sec
 
@@ -64,7 +65,7 @@ native_objs() { # repo flags
 build_program() { # variant repo flags exe main
     local objs="" f natives t pids=() p rc=0
     t=$(tag "$3")
-    for f in $LIBS $5; do
+    for f in $LIBS ${EXTRA_LIBS:-} $5; do
         local obj="$1/$f.$t.o"
         cc_o "$1/$f.cpp" "$obj" $3 -pthread -Wno-unknown-pragmas &
         pids+=($!)
@@ -112,6 +113,7 @@ sec_asan_menu() { sec_asan_program menu_main $EXPECTED_MENU; }
 sec_asan_notify() { sec_asan_program notify_main $EXPECTED_NOTIFY; }
 sec_asan_layout() { sec_asan_program layout_main $EXPECTED_LAYOUT; }
 sec_asan_system() { sec_asan_program system_main $EXPECTED_SYSTEM; }
+sec_asan_http() { EXTRA_LIBS=support sec_asan_program http_main $EXPECTED_HTTP; }
 
 sec_asan_site() {
     local rc pass bad
@@ -194,6 +196,17 @@ sec_tsan_program() { # variant
     echo "   exit $rc, $pass passed, $bad failed, $races TSan reports"
     if [ $rc -ne 0 ] || [ "$races" -ne 0 ] || [ "$pass" -ne $EXPECTED ] || [ "$bad" -ne 0 ]; then grep "^FAIL" headless.tsan.$variant.out; head -60 headless.tsan.$variant.out; return 1; fi
 }
+# the HTTP command sends its request on a worker thread (a spawned job) and cancels from another: under TSan, with the scripted network
+sec_tsan_http() {
+    local rc races pass bad
+    echo "== TSan: http.request (a request sent and cancelled from worker threads, scripted network)"
+    EXTRA_LIBS=support build_program work repo "$TSAN" http.tsan http_main || { echo "BUILD FAILED"; return 1; }
+    run_tsan http.tsan http.tsan.out; rc=$?
+    races=$(grep -c 'WARNING: ThreadSanitizer' http.tsan.out)
+    pass=$(grep -c '^PASS ' http.tsan.out); bad=$(grep -c '^FAIL ' http.tsan.out)
+    echo "   exit $rc, $pass passed, $bad failed, $races TSan reports"
+    if [ $rc -ne 0 ] || [ "$races" -ne 0 ] || [ "$pass" -ne $EXPECTED_HTTP ] || [ "$bad" -ne 0 ]; then grep "^FAIL" http.tsan.out; head -60 http.tsan.out; return 1; fi
+}
 sec_tsan_work() { sec_tsan_program work; }
 sec_tsan_pool() { sec_tsan_program work_pool; }
 
@@ -238,9 +251,9 @@ sec_control3() {
 
 # Phase 1 runs everything that does not depend on timing; phase 2 (the queue stress, whose ping-pong test measures how late a wakeup is, and the two
 # controls built on it) runs alone afterwards, so a busy machine cannot make a correct wakeup look late.
-PHASE1="sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_instance sec_asan_placement sec_asan_menu sec_asan_notify sec_asan_layout sec_asan_system sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_tsan_work sec_tsan_pool sec_control2 sec_control3"
+PHASE1="sec_asan_http sec_tsan_http sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_instance sec_asan_placement sec_asan_menu sec_asan_notify sec_asan_layout sec_asan_system sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_tsan_work sec_tsan_pool sec_control2 sec_control3"
 PHASE2="sec_stress_asan sec_stress_tsan sec_control1 sec_control4"
-SECTIONS="sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_instance sec_asan_placement sec_asan_menu sec_asan_notify sec_asan_layout sec_asan_system sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_stress_asan sec_stress_tsan sec_tsan_work sec_tsan_pool sec_control1 sec_control2 sec_control4 sec_control3"
+SECTIONS="sec_asan_http sec_tsan_http sec_asan_headless sec_asan_files sec_asan_programs sec_asan_store sec_asan_links sec_asan_instance sec_asan_placement sec_asan_menu sec_asan_notify sec_asan_layout sec_asan_system sec_asan_site sec_asan_proc sec_asan_watch sec_tsan_watch sec_assets sec_stress_asan sec_stress_tsan sec_tsan_work sec_tsan_pool sec_control1 sec_control2 sec_control4 sec_control3"
 
 # the libraries and the native layer every ASan / TSan program shares are compiled first, all at once
 ( build_program work repo "$ASAN" /dev/null headless_main > /dev/null 2>&1 ) &
