@@ -1,0 +1,19 @@
+{
+  "name": "pronao-excalidraw",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A small host page for the Excalidraw component: files go through Pronao's dialogs and commands, not the browser's.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.4",
+    "vite": "5.4.11"
+  }
+}

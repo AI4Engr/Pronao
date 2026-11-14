@@ -1,0 +1,26 @@
+//ceeling 0.1
+// TEST ONLY: examples/excalidraw/main.clg plus one allowed folder, taken from the environment, which the test driver (test-driver.js) uses in place of the dialogs.
+// run_window_test.py builds this program; the program that is shipped has no allowed folder at all.
+#include "app.clh"
+
+ext_fn int app_os_env(string name, ref string out);
+
+int main() {
+    App app = new App();
+    string dir = "";
+    if (app_os_env("EXCALIDRAW_TEST_DIR", dir) != 1 || !app.allowFolder(dir)) {
+        std::cout << "EXCALIDRAW_TEST_DIR is not set or is not a folder" << std::endl;
+        return 2;
+    }
+    app.enableDialogCommands();
+    app.enableFileCommands(64 * 1024 * 1024);
+    app.enableWindowCommands();
+    app.confirmClose("Unsaved drawing", "Close without saving the changes?");
+    string policy = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob:; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+    if (!app.openSite("Excalidraw", 1280, 800, false, "http://app.localhost", policy)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}

@@ -141,7 +141,7 @@ The same program in each: the four commands above and a page that calls them. Me
 
 This is one trivial program, one machine and one build of each. Start-up time and memory were not measured, nor was Tauri's debug profile (`tauri dev`), where its rebuilds are probably much faster. Tauri and Electron have far more features (installers, auto-update, a plugin and permission system, other platforms); a larger Pronao program also takes longer to build, because every module is compiled again. A Pronao program that prints with `std::cout` is 2.0 MB. The sources, the exact commands and the runs are in [docs/comparison](docs/comparison/README.md).
 
-## A real application: the draw.io editor
+## Real applications: draw.io and Excalidraw
 
 [draw.io](https://github.com/jgraph/drawio) (diagrams.net), a diagram editor whose desktop edition is an Electron program, runs in a Pronao window as **one 22.6 MB `.exe`** (22,588,416 bytes, measured on one machine). Nothing of draw.io is in this repository: `examples/drawio/fetch.sh` downloads a pinned release and checks its hash, and a bridge written for this repository (`pronao-electron.js`) answers the editor's file calls with Pronao's commands. The editor is otherwise unmodified.
 
@@ -155,6 +155,10 @@ RELEASE=1 ICON=docs/assets/pronao.ico ASSETS=examples/drawio/site bash scripts/b
 The page can read and write **only the files the user picks in an open or save dialog**, nothing around them, and closing the window with unsaved changes asks first. The files are embedded gzip-compressed and inflated when the window asks for them, which took the program from 55.8 MB to 22.6 MB. It took about 6 minutes to build.
 
 What was tested and what was not: the bridge has 12 checks that run without a window, and the editor was started in a real window (also from the packed `.exe`) and saved a file through the bridge. **Not tested:** the native open and save dialogs, export to PNG, SVG and PDF, opening `.vsdx` files and images, printing, and dropping files onto the window. draw.io's own code is Apache-2.0; the Electron shell of its desktop edition is GPL-3.0, none of which is used here; "draw.io" is jgraph's name. Details: [examples/drawio](examples/drawio/README.md).
+
+**Excalidraw** works the other way round: not the whole web application cut down, but its MIT-licensed component in a page of about 150 lines whose file access is Pronao's dialogs. It is **17.4 MB** with its Chinese hand-drawn font and **4.7 MB** without it (`LEAN=1`), against a program that carries a browser. The page cannot reach any address but the program's own (a content-security policy), and the window asks before closing with unsaved work. A test drives the real window: it opens a drawing through the menu, exports PNG and SVG, edits, saves, saves as, and tries to read a file outside the folder it was given (refused); it found a real bug in the page, which is fixed. **The native dialogs are replaced by fixed answers in that test** (a script cannot click them), so how a dialog looks and behaves was not tested. The packages it contains each have their own licence, and a combined notices file is not generated yet. Details: [examples/excalidraw](examples/excalidraw/README.md).
+
+<p align="center"><img src="docs/assets/excalidraw.png" width="640" alt="The Excalidraw component in a Pronao window, with a drawing opened"></p>
 
 ## What it does
 

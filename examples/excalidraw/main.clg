@@ -1,0 +1,21 @@
+//ceeling 0.1
+// examples/excalidraw: the Excalidraw drawing component in a Pronao window. See README.md.
+// The page is a small host for the component (app/); all it may do with the computer is what is enabled here: open and save through the program's own dialogs,
+// each of which makes exactly the file the user picked reachable. There is no network access and no program to run.
+#include "app.clh"
+
+int main() {
+    App app = new App();
+    app.enableDialogCommands();
+    app.enableFileCommands(64 * 1024 * 1024);
+    app.enableWindowCommands();
+    app.confirmClose("Unsaved drawing", "Close without saving the changes?");
+    // Nothing may be loaded from or sent to any address but the program's own: a font or a script that the page asked a CDN for is refused by the browser.
+    string policy = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob:; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+    if (!app.openSite("Excalidraw", 1280, 800, false, "http://app.localhost", policy)) {
+        return 1;
+    }
+    app.run();
+    app.close();
+    return 0;
+}
