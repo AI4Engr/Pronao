@@ -53,6 +53,7 @@
   .day .hi { font-size: 16px; font-weight: 700; }
   .day .lo { font-size: 13px; font-weight: 500; color: rgba(255,255,255,.8); }
   footer { margin-top: 14px; font-size: 12px; font-weight: 500; color: rgba(255,255,255,.82); display: flex; justify-content: space-between; }
+  .sub2 { padding: 18px 4px; font-size: 15px; font-weight: 600; color: rgba(255,255,255,.9); }
   .err { padding: 12px 14px; border-radius: 12px; background: rgba(254,202,202,.2); border: 1px solid rgba(254,202,202,.5); font-weight: 600; }
 </style>
 </head>
@@ -64,33 +65,61 @@
     <div class="chips" id="chips"></div>
   </header>
   <div id="view"></div>
-  <footer><span id="src"></span><span>five-day forecast</span></footer>
+  <footer><span id="src"></span><span>Weather data by Open-Meteo.com (CC BY 4.0)</span></footer>
 </div>
 <script>
   const ICON = { sunny: '☀️', partly: '⛅', cloudy: '☁️', rain: '🌧️', snow: '❄️', storm: '⛈️' };
   const LABEL = { sunny: 'Sunny', partly: 'Partly cloudy', cloudy: 'Cloudy', rain: 'Rain', snow: 'Snow', storm: 'Storm' };
+  // WMO weather interpretation codes, as Open-Meteo reports them
+  function sky(code) {
+    if (code === 0) return 'sunny';
+    if (code <= 2) return 'partly';
+    if (code === 3 || code === 45 || code === 48) return 'cloudy';
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow';
+    if (code >= 95) return 'storm';
+    return 'rain';
+  }
+  const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const view = document.getElementById('view'), chips = document.getElementById('chips');
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let latest = 0;
   async function show(city) {
-    for (const c of chips.children) c.classList.toggle('on', c.textContent === city);
+    const mine = ++latest;
+    for (const c of chips.children) c.classList.toggle('on', c.textContent === city.name);
+    view.innerHTML = '<div class="city">' + esc(city.name) + '</div><div class="sub2">Loading…</div>';
     try {
-      const f = await pronao.invoke('weather.forecast', { city });
+      // the request is sent by the program, which allows only this host; the page gets the status, the headers and the text
+      const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + city.latitude + '&longitude=' + city.longitude +
+        '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code' +
+        '&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=5';
+      const r = await pronao.http.request({ url, headers: { Accept: 'application/json' } });
+      if (mine !== latest) return;
+      if (r.status !== 200) throw { code: 'http_' + r.status, message: 'the service answered ' + r.status };
+      const f = JSON.parse(r.body);
+      const now = f.current, d = f.daily;
+      let days = '';
+      for (let i = 0; i < d.time.length; i++) {
+        const when = new Date(d.time[i] + 'T12:00:00');
+        days += '<div class="day"><div class="d">' + WEEKDAY[when.getDay()] + '</div><div class="i">' + ICON[sky(d.weather_code[i])] + '</div>' +
+          '<div class="hi">' + Math.round(d.temperature_2m_max[i]) + '°</div><div class="lo">' + Math.round(d.temperature_2m_min[i]) + '°</div></div>';
+      }
       view.innerHTML =
-        '<div class="city">' + f.city + '</div>' +
-        '<div class="now"><div class="icon">' + ICON[f.sky] + '</div>' +
-        '<div class="temp">' + f.now + '<sup>°C</sup></div>' +
-        '<div class="meta">' + LABEL[f.sky] + '<br><span>Humidity ' + f.humidity + '%</span><br><span>Wind ' + f.wind + ' km/h</span></div></div>' +
-        '<div class="days">' + f.days.map(d =>
-          '<div class="day"><div class="d">' + d.day + '</div><div class="i">' + ICON[d.sky] + '</div>' +
-          '<div class="hi">' + d.high + '°</div><div class="lo">' + d.low + '°</div></div>').join('') + '</div>';
-      document.getElementById('src').textContent = 'Source: ' + f.source;
+        '<div class="city">' + esc(city.name) + '</div>' +
+        '<div class="now"><div class="icon">' + ICON[sky(now.weather_code)] + '</div>' +
+        '<div class="temp">' + Math.round(now.temperature_2m) + '<sup>°C</sup></div>' +
+        '<div class="meta">' + LABEL[sky(now.weather_code)] + '<br><span>Humidity ' + now.relative_humidity_2m + '%</span><br><span>Wind ' + Math.round(now.wind_speed_10m) + ' km/h</span></div></div>' +
+        '<div class="days">' + days + '</div>';
+      document.getElementById('src').textContent = 'Source: open-meteo.com';
     } catch (e) {
-      view.innerHTML = '<div class="err">' + (e.code || 'error') + ': ' + (e.message || '') + '</div>';
+      if (mine !== latest) return;
+      view.innerHTML = '<div class="city">' + esc(city.name) + '</div><div class="err">' + esc(e.code || 'error') + ': ' + esc(e.message || '') + '</div>';
+      document.getElementById('src').textContent = 'No data';
     }
   }
   (async () => {
     const cities = await pronao.invoke('weather.cities');
     for (const c of cities) {
-      const b = document.createElement('button'); b.className = 'chip'; b.textContent = c;
+      const b = document.createElement('button'); b.className = 'chip'; b.textContent = c.name;
       b.onclick = () => show(c); chips.append(b);
     }
     show(cities[0]);

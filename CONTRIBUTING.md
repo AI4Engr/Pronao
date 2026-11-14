@@ -6,8 +6,8 @@ You need the [CeeLing compiler](https://github.com/AI4Engr/CeeLing) and [cJSON-c
 
 ```bash
 bash scripts/fetch.sh                  # once: webview and WebView2 headers into third_party/ (pinned, hash-checked)
-bash tests/run_headless.sh             # ~20 s, 18 programs, 1,083 checks, no window
-bash tests/run_examples.sh             # ~8 min: builds every program in examples/ and runs its 207 checks
+bash tests/run_headless.sh             # ~20 s, 18 programs, 1,084 checks, no window
+bash tests/run_examples.sh             # ~8 min: builds every program in examples/ and runs its 211 checks
 bash tests/negative_controls.sh        # removes one check at a time from src/ and shows that the tests fail
 ```
 

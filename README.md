@@ -16,7 +16,7 @@ A program is one `.exe` with no installer. The example program below is **1.2 MB
 
 <p align="center"><img src="docs/assets/weather.png" width="560" alt="examples/weather: a forecast page in a Pronao window"></p>
 
-<p align="center"><sub>examples/weather: a page of HTML, CSS and JavaScript calling two CeeLing commands. The forecast is sample data.</sub></p>
+<p align="center"><sub>examples/weather: a page of HTML, CSS and JavaScript with a live forecast. The program, not the page, sends the request, and only to the host it lists.</sub></p>
 
 ## Quick start
 
