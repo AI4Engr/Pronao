@@ -1,3 +1,4 @@
+//ceeling 0.1
 // HTTP from the backend (docs/manual/04-programs-and-links.md). A page that calls an API from its own code has to hold the API key, which a page must
 // not be trusted with, and meets CORS. Here the CeeLing side makes the request. The native layer (app_http_request) only sends one request and returns
 // what came back; it follows no redirect and decides nothing. What may be sent, to whom, and what the page may see is decided here:

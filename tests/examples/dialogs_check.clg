@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/dialogs: the file dialog, the grant a pick gives, and dropped files, through the real dispatcher with the headless window double.
 #include "text.clh"
 #include "core.clh"

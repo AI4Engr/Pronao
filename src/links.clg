@@ -1,3 +1,4 @@
+//ceeling 0.1
 // What a page may ask the operating system to open: an address in the default browser, a file in its default program, a file
 // shown in the file manager. The native layer (app_shell_open) only hands the target to the shell; what may be handed over is
 // decided here (docs/manual/04-programs-and-links.md).

@@ -1,3 +1,4 @@
+//ceeling 0.1
 // http.request through the whole pipeline (the page's queue, the dispatcher, the policy of src/http.clg, a worker), with the network replaced by a scripted double
 // (tests/doubles/http_double.cpp) that also records what it was asked to send. The checks read those requests back: what a page may and may not make the
 // program send, where a redirect may go, and what comes back.

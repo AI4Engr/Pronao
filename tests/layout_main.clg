@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Window layout (src/app.clg: Window.bounds / setBounds / setFullscreen / setAlwaysOnTop / setFrameless / setResizable / startDrag / startResize / setModalFor, and the
 // page commands enableWindowLayoutCommands). The system is a test double that logs what it was asked (style|WHAT|ON, drag|EDGE, modal|OWNER|ON, placement|...);
 // what the system does with it is tests/run_layout_window.sh.

@@ -1,3 +1,4 @@
+//ceeling 0.1
 // installWatch -- the commands of the watch example (docs/manual/03-files-and-data.md, "Watching folders").
 #include "app.clh"
 

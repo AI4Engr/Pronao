@@ -1,3 +1,4 @@
+//ceeling 0.1
 // The standard folders and the settings store (src/settings.clg), against the real file system, and the commands a page gets for them (src/app.clg).
 // The environment variables that name the per-user folders are pointed at a temporary folder first, so nothing outside it is touched.
 #include "text.clh"

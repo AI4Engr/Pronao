@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/menus -- a menu bar with shortcuts, a pop-up menu the page asks for by name, a notification and the theme.
 // setMenu needs an open window, so main calls installMenus after openPage.
 #include "app.clh"

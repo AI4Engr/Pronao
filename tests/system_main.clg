@@ -1,3 +1,4 @@
+//ceeling 0.1
 // The system's colour scheme (src/theme.clg: App.setTheme / systemTheme / enableThemeCommands) and files dragged onto a window (src/drops.clg: App.enableFileDrop /
 // disableFileDrop). The system is a test double: it logs what it was asked (theme|MODE|SYSTEM, drop|ON) and the test plays what the native layer queues
 // (app_test_theme_changed, app_test_drop). What Windows really does with it is tests/run_theme_window.sh and tests/run_drop_window.sh.

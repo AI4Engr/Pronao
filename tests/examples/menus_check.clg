@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/menus through the real dispatcher, with the headless window and menu doubles. The native bar, the shortcuts and the toast are not drawn here.
 #include "text.clh"
 #include "core.clh"

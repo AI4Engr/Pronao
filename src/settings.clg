@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Where an application keeps its data, and the settings it saves there. Both are policy, so both live here in checked CeeLing; the native layer only makes a
 // folder and renames a file. See docs/manual/03-files-and-data.md.
 //

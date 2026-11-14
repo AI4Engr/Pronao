@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Window layout in a real window (run by tests/run_layout_window.sh). The program takes instructions from a file, one line "N operation args", so the test can ask for each change
 // and then look at the window with its own eyes (window_poke.exe layout). It prints "done N" after each, and "ready" when the window is up.
 //   fullscreen 1|0   ontop 1|0   frameless 1|0   resizable 1|0   bounds X Y W H   drag   modalopen   modalclose   quit

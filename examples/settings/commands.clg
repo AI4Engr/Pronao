@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/settings: typed settings the page can read and change, for the declared keys only.
 #include "app.clh"
 

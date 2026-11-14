@@ -1,3 +1,4 @@
+//ceeling 0.1
 // One running copy of a program (claimInstance / singleInstance, the "instance" record, arguments()) in src/app.clg. The system is replaced by test doubles:
 // tests/doubles/instance_double.cpp answers the claim as the test says and logs the calls, so no second process is needed here. The real thing, with a
 // real second process and the named pipe, is tests/instance_shim_test.cpp.

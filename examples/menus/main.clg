@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/menus -- menu bar, pop-up menu, notification and theme.
 //   PAGE=examples/menus/index.html EXTRA=examples/menus/commands.clg bash scripts/build.sh examples/menus/main.clg out/menus.exe
 #include "app.clh"

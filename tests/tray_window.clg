@@ -1,3 +1,4 @@
+//ceeling 0.1
 // A tray icon and a window that hides instead of closing, in a real program (run by tests/run_tray_window.sh, which closes the window, clicks the icon and chooses
 // tray menu items from outside). What happens is printed: "tray click", "menu ID", and "ready" / "closed".
 #include "text.clh"

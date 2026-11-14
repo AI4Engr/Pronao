@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/limits through the real dispatcher: the allowed commands answer, the command left out of the list and an unregistered name are both
 // forbidden, a call over the size limit is too_large, a flood past the queue limit is busy, and cancelling is always allowed.
 #include "text.clh"

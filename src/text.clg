@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Text helpers shared by the other modules: UTF-8 checking and repair, splitting, small parsers. Plain CeeLing, no operating-system calls.
 
 // The byte at i as 0..255 (a char may be signed).

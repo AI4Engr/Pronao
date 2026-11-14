@@ -1,3 +1,4 @@
+//ceeling 0.1
 // How a call from a page is answered: who is calling (CallContext), which commands a window may call (CommandRules) and the
 // Dispatcher that parses a request, checks it, runs the command and turns what it throws into {code, message}.
 // See docs/manual/02-how-it-works.md and 08-security.md.

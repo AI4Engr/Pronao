@@ -1,3 +1,4 @@
+//ceeling 0.1
 // What the run-time checks cost on pronao's own code (chapter 16 of the CeeLing guide, "The run-time checks, counted and priced").
 //   scripts/bench_checks.sh      builds this once with the checks on and once with both off and compares
 // Three operations, each repeated, through the real dispatcher and file policy with the window replaced by the test doubles:

@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/commands: named commands, checked arguments, structured errors and an event to the page.
 #include "app.clh"
 

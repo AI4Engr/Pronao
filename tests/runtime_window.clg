@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Starting up on a computer that may lack the window's runtime (run by tests/run_distribution.sh). With the runtime the window opens and the program ends when it
 // is closed; without it a message box says why and the program ends with 3 and never opens a window.
 #include "text.clh"

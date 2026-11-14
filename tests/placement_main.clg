@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Where windows were (src/placement.clg and the parts of src/app.clg that use it). The monitors are a test double (app_test_monitors) so every layout can be tried;
 // the real monitors, the real window moving and the real file are tests/run_placement_window.sh. The environment variables that name the per-user folders point
 // at a temporary folder first.

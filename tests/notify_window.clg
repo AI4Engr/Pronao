@@ -1,3 +1,4 @@
+//ceeling 0.1
 // A program with no tray menu that shows a notification (run by tests/run_notify_window.sh): its notification icon is in the notification area only while a notification is up.
 // The program prints what happens: "ready", "notified ok" / "notified FAILED ...", "notification click ID", "closed".
 #include "text.clh"

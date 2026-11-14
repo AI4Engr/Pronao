@@ -1,3 +1,4 @@
+//ceeling 0.1
 // The file policy (src/files.clg) against the real file system, with no window and no commands: the point of most checks is a path
 // that LOOKS allowed and is not (`..`, a folder whose name merely starts with an allowed one, a link or junction that leads out,
 // Windows device and stream names). The native layer under it is shim/{win,posix}/fs.cpp.

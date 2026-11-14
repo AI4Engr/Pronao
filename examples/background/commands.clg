@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/background -- an async command: copy the arguments into plain values, spawn a job, report progress, answer later, stop when abandoned.
 #include "app.clh"
 

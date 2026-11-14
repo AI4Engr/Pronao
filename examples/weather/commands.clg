@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/weather: a forecast page backed by two commands. The numbers are SAMPLE DATA kept in the program: the CeeLing side has no network access yet.
 #include "app.clh"
 

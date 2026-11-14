@@ -1,3 +1,4 @@
+//ceeling 0.1
 // What a page may ask the system to open (src/links.clg, and the shell commands and link handling in src/app.clg). The system is replaced by a test double
 // that records what it was asked (nothing is started): the checks read those requests back.
 #include "text.clh"

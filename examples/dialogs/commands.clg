@@ -1,3 +1,4 @@
+//ceeling 0.1
 // installDialogs -- the commands of the dialogs example (docs/manual/03-files-and-data.md, "Dialogs" and "Files dragged onto a window").
 #include "app.clh"
 

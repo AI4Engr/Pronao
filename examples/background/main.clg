@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/background -- a slow command that runs on a worker, with progress, a deadline and cancelling.
 //   PAGE=examples/background/index.html EXTRA=examples/background/commands.clg bash scripts/build.sh examples/background/main.clg out/background.exe
 #include "app.clh"

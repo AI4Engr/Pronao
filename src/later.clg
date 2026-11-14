@@ -1,3 +1,4 @@
+//ceeling 0.1
 // A worker hands a result to the main thread (Later, LaterBook, finishLater) or asks it to do something only it may (Pump, PumpBook,
 // wakeMain). See docs/manual/07-background-work.md.
 

@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/hello -- the smallest complete pronao program: a window and three commands.
 //   PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe
 #include "app.clh"

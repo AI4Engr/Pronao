@@ -1,3 +1,4 @@
+//ceeling 0.1
 // The arguments of the dialog commands (dialog.open, dialog.save, dialog.folder, dialog.message), read by generated decoders, and the
 // checks on what they mean. A pick becomes a file grant on the main thread (see docs/manual/03-files-and-data.md).
 

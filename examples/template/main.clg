@@ -1,3 +1,4 @@
+//ceeling 0.1
 // __NAME__ -- an pronao program: CeeLing commands behind a web page. Build with `bash build.sh`.
 //   APP_DEV_URL=http://localhost:5173/  loads a front-end dev server instead of index.html (not in a --release build)
 //   APP_DEBUG=1                         turns the developer tools on

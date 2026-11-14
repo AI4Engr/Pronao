@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Helpers of the file commands (fs.read, fs.write, ...): status numbers to error codes, the shape of a directory entry, what a
 // dialog filter extension or a proposed file name may look like, and the write modes. The policy itself is FileGate (files.clg).
 

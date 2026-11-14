@@ -1,3 +1,4 @@
+//ceeling 0.1
 // One running copy of a program, with real processes and a real window (run by tests/run_instance_window.sh, which starts this program twice).
 //   first launch   claims the name, opens a window, tells the script it is ready, and ends when the page reports the event app.secondInstance
 //   second launch  (while the first runs) finds the name taken, hands over its folder and arguments, and ends at once WITHOUT opening a window

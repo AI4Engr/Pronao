@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/windows -- what a page may do with its window, and what only the application decides.
 #include "app.clh"
 

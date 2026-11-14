@@ -1,3 +1,4 @@
+//ceeling 0.1
 // A real window whose page is served by the program from memory (src/assets.clg, shim/win/assets.cpp): a stylesheet, a script, json, binary data, an alias, localStorage, the bridge, a frame on the site and a frame / navigation to another origin.
 #include "text.clh"
 #include "core.clh"

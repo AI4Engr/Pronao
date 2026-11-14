@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Drives the commands of examples/settings through the real dispatcher and the settings store (headless window double).
 // The per-user folders are pointed at a scratch folder first, so nothing outside it is touched.
 #include "text.clh"

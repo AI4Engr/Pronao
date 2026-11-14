@@ -1,3 +1,4 @@
+//ceeling 0.1
 // fs.writeBytes, fs.readBytes and fs.remove {recursive} through the whole pipeline (the page's queue, the dispatcher, the file gate),
 // in a scratch folder, with the headless window double. The folder is allowed by the application, as a real program would.
 #include "text.clh"

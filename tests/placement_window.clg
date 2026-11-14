@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Window places, for real (run by tests/run_placement_window.sh, which moves, maximizes and closes the window from outside and starts this program again):
 // it remembers the place of its window, opens it there next time, and says "ready" once its page has loaded.
 #include "text.clh"

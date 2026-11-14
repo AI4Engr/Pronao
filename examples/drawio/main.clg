@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/drawio: the draw.io editor (diagrams.net, Apache-2.0) in a Pronao window. See README.md.
 // The editor is the unmodified web application; pronao-electron.js gives it the `electron` object it expects, built on the commands below.
 // The page reaches only the files the user picks in a dialog. It may open web links in the browser.

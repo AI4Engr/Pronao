@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/watch: the watch commands over the program's data folder, through the real dispatcher, the file gate and a real watcher thread
 // of the headless build. The data folder is made if it is missing and removed again if this program made it.
 #include "text.clh"

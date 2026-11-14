@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/watch -- a page that watches a folder, writes a file into it and shows the change events.
 //   PAGE=examples/watch/index.html EXTRA=examples/watch/commands.clg bash scripts/build.sh examples/watch/main.clg out/watch.exe
 #include "app.clh"

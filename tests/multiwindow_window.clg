@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Two real windows of one program, both served from memory: each page learns which window it is (whoami), reports, and the application closes the second
 // window from the main thread; the first must keep working and the program must end only when the first closes too (exit 0, "selftest ok").
 #include "text.clh"

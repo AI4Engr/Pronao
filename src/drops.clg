@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Files dragged from the file manager onto a window. The native layer (app_drop_accept) queues the paths the engine names; what
 // becomes of them is decided here:
 //

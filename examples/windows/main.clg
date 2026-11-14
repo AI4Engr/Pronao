@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/windows -- window commands, layout commands, a second window and the application's own Window calls.
 //   ASSETS=examples/windows/dist EXTRA=examples/windows/commands.clg bash scripts/build.sh examples/windows/main.clg out/windows.exe
 #include "app.clh"

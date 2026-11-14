@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/site: the addresses the program serves, through the same table lookup the real window uses (the test double calls it).
 // Built with ASSETS=examples/site/dist; APP_SITE_DIR is that folder, to compare the bodies with the files.
 #include "text.clh"

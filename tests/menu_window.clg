@@ -1,3 +1,4 @@
+//ceeling 0.1
 // A menu bar and its shortcuts in a real window (run by tests/run_menu_window.sh, which clicks and types from outside). Every click prints "click ID".
 #include "text.clh"
 #include "core.clh"

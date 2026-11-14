@@ -1,3 +1,4 @@
+//ceeling 0.1
 // examples/site -- a front end of several files, packed into the program and served from memory. See README.md.
 #include "app.clh"
 #include "commands.clh"

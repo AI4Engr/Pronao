@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Drives the commands of examples/weather through the real dispatcher (headless window double).
 #include "text.clh"
 #include "core.clh"

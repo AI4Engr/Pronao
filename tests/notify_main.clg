@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Notifications (src/app.clg: Notifier, enableNotifications, notify, enableNotificationCommand). The system is a test double that logs what it was asked to show
 // (tray|notify|KIND|TITLE|TEXT|ID in the tray's window log) and lets the test click a notification; what the system then does with it is tests/run_notify_window.sh.
 #include "text.clh"

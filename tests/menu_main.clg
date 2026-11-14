@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Menus (src/menu.clg, and the parts of src/app.clg that use them). The native menus, the keyboard shortcuts and the tray icon are tests/run_menu_window.sh.
 #include "text.clh"
 #include "core.clh"

@@ -1,3 +1,4 @@
+//ceeling 0.1
 // installPrograms -- the commands of the programs example (docs/manual/04-programs-and-links.md): a fixed list of programs, and what may leave the window.
 #include "app.clh"
 

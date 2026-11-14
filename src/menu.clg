@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Menus: the window's menu bar, the tray icon's menu and pop-up menus. Only the application declares a menu; a page can choose among the declared names and
 // learns the id of what was clicked, but cannot add, change or show an item. Every Menu call that breaks a rule (see add, parseShortcut) returns false, changes
 // nothing and sets `problem`. The native layer builds the menu from spec() and reports back only ids it was given.

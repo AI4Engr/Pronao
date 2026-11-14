@@ -1,3 +1,4 @@
+//ceeling 0.1
 // How a program is found (resolveProgram in src/app.clg): an absolute path, or a bare name searched for on PATH only. The native
 // layer under it (app_os_env, app_os_path_kind) is shim/{win,posix}/proc.cpp.
 #include "text.clh"

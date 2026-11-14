@@ -1,3 +1,4 @@
+//ceeling 0.1
 // The application's own web files: which addresses stand for which file, and what type each is served as.
 //
 // The files are compiled in (scripts/build.sh, ASSETS=<folder>) and served from memory under an origin such as http://app.localhost/.

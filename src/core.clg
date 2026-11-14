@@ -1,3 +1,4 @@
+//ceeling 0.1
 // What every other module uses: replies and structured errors, events to the page, argument helpers, and the classes a command is
 // built from. The `ext_fn`s below are trusted C++, not checked.
 //

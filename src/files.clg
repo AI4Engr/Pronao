@@ -1,3 +1,4 @@
+//ceeling 0.1
 // Which files a page may reach, and the operations on them (FileGate).
 //
 // The policy is here, in checked CeeLing code. The native layer (shim/win/fs.cpp, shim/posix/fs.cpp) only opens, reads, writes,

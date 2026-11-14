@@ -1,3 +1,4 @@
+//ceeling 0.1
 // The program's own web files (src/assets.clg + shim/assets.h) against tests/site, compiled into this test with ASSETS=tests/site: what
 // the window would be given for each address, through the same table lookup the real window uses (the test double calls it).
 #include "text.clh"
