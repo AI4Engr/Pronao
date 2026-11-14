@@ -36,6 +36,19 @@ std::atomic<int> g_requests{0};
 std::string g_lastRequest;                      // the head and body of the latest request, for the test to look at
 std::atomic<bool> g_sawCookie{false};
 
+// a deflate stream in its standard form for "Content-Encoding: deflate" (zlib header and checksum), as Open-Meteo sends it: WinHTTP cannot read it
+std::string zlibDeflateOf(const std::string& in) {
+    z_stream z{};
+    deflateInit2(&z, 6, Z_DEFLATED, MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
+    std::string out(deflateBound(&z, static_cast<uLong>(in.size())) + 32, '\0');
+    z.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(in.data())); z.avail_in = static_cast<uInt>(in.size());
+    z.next_out = reinterpret_cast<Bytef*>(&out[0]); z.avail_out = static_cast<uInt>(out.size());
+    deflate(&z, Z_FINISH);
+    out.resize(z.total_out);
+    deflateEnd(&z);
+    return out;
+}
+
 std::string gzipOf(const std::string& in) {
     z_stream z{};
     deflateInit2(&z, 6, Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
@@ -89,6 +102,13 @@ void serveOne(SOCKET c) {
     else if (path == "/redir") sendAll(c, response(302, "Location: /ok\r\n", "moved"));
     else if (path == "/big") sendAll(c, response(200, "", std::string(100000, 'x')));
     else if (path == "/gz") { const std::string z = gzipOf("gzipped text, long enough to be worth it: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); sendAll(c, response(200, "Content-Encoding: gzip\r\n", z)); }
+    else if (path == "/negotiate") {
+        // like the service that was found to fail: if the request offers deflate it is chosen, and sent in the standard zlib form
+        const std::string text = "negotiated body, long enough to be compressed: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        if (in.find("deflate") != std::string::npos) sendAll(c, response(200, "Content-Encoding: deflate\r\n", zlibDeflateOf(text)));
+        else if (in.find("gzip") != std::string::npos) sendAll(c, response(200, "Content-Encoding: gzip\r\n", gzipOf(text)));
+        else sendAll(c, response(200, "", text));
+    }
     else if (path == "/204") sendAll(c, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
     else if (path == "/slow") { for (int i = 0; i < 80 && !g_stop; ++i) Sleep(50); sendAll(c, response(200, "", "late")); }
     else if (path == "/auth") sendAll(c, response(401, "WWW-Authenticate: NTLM\r\nWWW-Authenticate: Negotiate\r\n", "no"));
@@ -147,6 +167,7 @@ int main() {
     get("/ok");
     check("a cookie that was set is not sent back", !g_sawCookie);
 
+    check("a server that prefers deflate when it is offered still gets through (only gzip is offered)", get("/negotiate") == 0 && status == 200 && body.rfind("negotiated body", 0) == 0);
     check("a gzip response is delivered decompressed", get("/gz") == 0 && body.rfind("gzipped text", 0) == 0);
 
     check("the method, the headers and the body go out as given",

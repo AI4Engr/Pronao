@@ -181,7 +181,9 @@ int app_http_request(int handle, std::string call, std::string method, std::stri
         WinHttpSetOption(request, WINHTTP_OPTION_AUTOLOGON_POLICY, &logon, sizeof logon);
         DWORD features = WINHTTP_DISABLE_COOKIES;
         WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &features, sizeof features);
-        DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;
+        // Only gzip is asked for. With "gzip, deflate" some servers (Open-Meteo, found by trying it) answer with a deflate stream that WinHTTP then fails to read
+        // half way (E_ABORT, status 200 and no body); the same servers answer gzip when that is all that is offered.
+        DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_GZIP;
         WinHttpSetOption(request, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof decompress);      // (a failure just leaves the body as it came)
 
         bool headersOk = true;
