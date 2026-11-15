@@ -64,7 +64,8 @@ and `wrong.host.badssl.com` all came back as a TLS failure (`tls_failed`); an un
 ## Packaging
 
 ```bash
-bash scripts/package_linux.sh out/app my-app 1.0.0 icon.png dist/      # APP_TITLE, APP_DESCRIPTION, APP_MAINTAINER, APP_CATEGORIES are read from the environment
+pronao package --version 1.0.0        # in a project: a release build, then dist/my-app_1.0.0_amd64.deb (uses the project's icon.png)
+bash scripts/package_linux.sh out/app my-app 1.0.0 icon.png dist/      # what it calls, for a program that is not a project; APP_TITLE, APP_DESCRIPTION, APP_MAINTAINER, APP_CATEGORIES are read from the environment
 sudo apt install ./dist/my-app_1.0.0_amd64.deb
 ```
 

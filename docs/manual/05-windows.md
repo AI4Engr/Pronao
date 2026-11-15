@@ -140,8 +140,8 @@ pronao.onSecondInstance(function (e) { /* e = { cwd: 'C:\\work', args: ['report.
 ## The program's icon
 
 ```
-ICON=app.ico bash scripts/build.sh main.clg out.exe          # a project made by scripts/new_project.sh already has icon.ico and uses it
-python3 scripts/make_icon.py app.ico my-app [RRGGBB]         # a placeholder: a coloured rounded square with a ring, 16 / 32 / 48 px, the colour from the name
+ICON=app.ico bash scripts/build.sh main.clg out.exe          # a project made by `pronao create` already has icon.ico (Windows) and icon.png (Linux) and uses the one for its system
+python3 scripts/make_icon.py app.ico my-app [RRGGBB]         # (app.png makes a 64 x 64 PNG for Linux) a placeholder: a coloured rounded square with a ring, 16 / 32 / 48 px, the colour from the name
 ```
 
 - **Where it shows (Windows):** in Explorer (the icon is compiled into the exe as resource 1), in the window's title bar, in Alt+Tab and on the taskbar (the window takes the same resource, big and small).

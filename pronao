@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# pronao: one command for a Pronao project. It only calls the scripts that are already here (scripts/new_project.sh, build.sh, package_linux.sh, setup.sh, env.sh and the tests);
+# no logic of its own beyond finding the project and its name. Run it as `bash pronao <command>`, or put this folder on PATH (or make an alias) and run `pronao <command>`.
+#
+#   pronao create <folder> [name]      a new project (a page, a main.clg with one command, a build.sh, placeholder icons)
+#   pronao build [--release] [--headless]
+#                                      build the project in the current folder (out/<name>; --release: no developer tools, no dev server; --headless: only check it compiles)
+#   pronao run [-- args]               build, then start the program
+#   pronao dev [--url URL] [--server "command"]
+#                                      build, then start the program on a development server (default http://localhost:5173/) with the developer tools on;
+#                                      --server starts the front end's own server first (for example "npm run dev") and stops it when the program ends
+#   pronao test                        headless build (it must transpile and compile) and, if the project has one, ./test.sh
+#   pronao package [--version V] [--out DIR]
+#                                      a release build, then what the system ships: Windows a portable .exe (signed when SIGN_COMMAND is set, see chapter 10),
+#                                      Linux a .deb with its dependencies; macOS is not supported yet
+#   pronao doctor                      what is missing on this machine, and the command that fixes it
+#   pronao setup                       clone CeeLing and cJSON-cling next to this folder, build the compiler, fetch the webview library
+#   pronao selftest [headless|window|template|cli|all]
+#                                      Pronao's own tests (for working on Pronao itself, not on a program)
+#   pronao version | help
+# -C <folder> before the command runs it in that project folder instead of the current one.
+set -uo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+if command -v readlink > /dev/null 2>&1; then SELF="$(readlink -f "$SELF" 2> /dev/null || echo "$SELF")"; fi
+ROOT="$(cd "$(dirname "$SELF")" && pwd)"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) OS=windows; EXE=.exe ;; Darwin) OS=macos; EXE= ;; *) OS=linux; EXE= ;; esac
+
+die() { echo "pronao: $*" >&2; exit 1; }
+usage() { sed -n '2,25p' "$SELF" | sed 's/^# \{0,1\}//'; }
+bad() { echo "pronao: $*" >&2; echo "(pronao help lists the commands)" >&2; exit 2; }
+
+PROJECT="$PWD"
+if [ "${1:-}" = "-C" ]; then
+    [ $# -ge 2 ] || bad "-C needs a folder"
+    PROJECT="$(cd "$2" 2> /dev/null && pwd)" || die "no such folder: $2"
+    shift 2
+fi
+[ $# -ge 1 ] || { usage; exit 2; }
+CMD="$1"; shift
+
+# the project in $PROJECT: it has a build.sh that calls Pronao's build (made by `pronao create`)
+need_project() {
+    [ -f "$PROJECT/build.sh" ] && grep -q 'scripts/build.sh' "$PROJECT/build.sh" || die "$PROJECT is not a Pronao project (no build.sh that calls Pronao's build). Make one with: pronao create <folder>"
+}
+project_name() { local n; n="$(sed -n 's/.*APP_NAME="\([^"]*\)".*/\1/p' "$PROJECT/build.sh" | head -1)"; echo "${n:-$(basename "$PROJECT")}"; }
+project_version() { local v; v="$(sed -n 's/.*APP_VERSION:-\([0-9][0-9.]*\)}.*/\1/p' "$PROJECT/build.sh" | head -1)"; echo "${APP_VERSION:-${v:-0.1.0}}"; }
+build() { ( cd "$PROJECT" && bash build.sh "$@" ); }
+program() { echo "$PROJECT/out/$(project_name)$EXE"; }
+
+case "$CMD" in
+    help|-h|--help) usage ;;
+
+    version)
+        echo "pronao $(git -C "$ROOT" describe --tags --always --dirty 2> /dev/null || echo unknown) ($OS)" ;;
+
+    create)
+        [ $# -ge 1 ] && [ $# -le 2 ] || bad "usage: pronao create <folder> [name]"
+        bash "$ROOT/scripts/new_project.sh" "$@" ;;
+
+    build)
+        need_project
+        for a in "$@"; do case "$a" in --release|--headless) ;; *) bad "build: unknown option $a" ;; esac; done
+        build "$@" ;;
+
+    run)
+        need_project
+        args=()
+        if [ "${1:-}" = "--" ]; then shift; args=("$@"); elif [ $# -gt 0 ]; then bad "run: arguments for the program go after --"; fi
+        build || exit 1
+        ( cd "$PROJECT/out" && exec "./$(project_name)$EXE" "${args[@]+"${args[@]}"}" ) ;;
+
+    dev)
+        need_project
+        URL="${APP_DEV_URL:-http://localhost:5173/}"; SERVER=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --url) [ $# -ge 2 ] || bad "dev: --url needs an address"; URL="$2"; shift 2 ;;
+                --server) [ $# -ge 2 ] || bad "dev: --server needs a command"; SERVER="$2"; shift 2 ;;
+                *) bad "dev: unknown option $1" ;;
+            esac
+        done
+        case "$URL" in http://localhost[:/]*|http://127.0.0.1[:/]*|http://\[::1\][:/]*) ;; *) die "dev: the development address must be on this machine (http://localhost:... or http://127.0.0.1:...): $URL" ;; esac
+        build || exit 1
+        SPID=""
+        if [ -n "$SERVER" ]; then
+            echo "pronao: starting the development server: $SERVER"
+            ( cd "$PROJECT" && exec bash -c "$SERVER" ) &
+            SPID=$!
+            trap '[ -n "$SPID" ] && kill "$SPID" 2> /dev/null' EXIT
+            n=0
+            until curl -s -o /dev/null -m 2 "$URL" 2> /dev/null; do
+                kill -0 "$SPID" 2> /dev/null || die "dev: the development server ended before it answered at $URL"
+                n=$((n + 1)); [ "$n" -gt 60 ] && die "dev: nothing answered at $URL within 60 seconds"
+                sleep 1
+            done
+        fi
+        echo "pronao: starting the program on $URL (developer tools on; this build is not for release)"
+        ( cd "$PROJECT/out" && APP_DEV_URL="$URL" APP_DEBUG=1 "./$(project_name)$EXE" ) ;;
+
+    test)
+        need_project
+        [ $# -eq 0 ] || bad "test takes no arguments"
+        echo "pronao: headless build (the program must transpile and compile)"
+        build --headless || { echo "pronao: test FAILED (the headless build)"; exit 1; }
+        if [ -f "$PROJECT/test.sh" ]; then
+            echo "pronao: running test.sh"
+            ( cd "$PROJECT" && bash test.sh ) || { echo "pronao: test FAILED (test.sh)"; exit 1; }
+        else
+            echo "(no test.sh in the project: only the build was checked)"
+        fi
+        echo "pronao: test ok" ;;
+
+    package)
+        need_project
+        OUT="$PROJECT/dist"; VERSION="$(project_version)"
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --version) [ $# -ge 2 ] || bad "package: --version needs a number"; VERSION="$2"; shift 2 ;;
+                --out) [ $# -ge 2 ] || bad "package: --out needs a folder"; OUT="$2"; shift 2 ;;
+                *) bad "package: unknown option $1" ;;
+            esac
+        done
+        case "$VERSION" in [0-9]*) ;; *) die "package: the version must start with a digit: $VERSION" ;; esac
+        case "$OS" in
+            macos) die "package: macOS is not supported yet (TODO F3)" ;;
+        esac
+        NAME="$(project_name)"
+        echo "pronao: release build $NAME $VERSION"
+        ( export APP_VERSION="$VERSION"; build --release ) || exit 1
+        mkdir -p "$OUT"
+        if [ "$OS" = windows ]; then
+            cp "$(program)" "$OUT/$NAME-$VERSION$EXE" || exit 1
+            F="$OUT/$NAME-$VERSION$EXE"
+            echo "pronao: $F ($(( $(wc -c < "$F") / 1024 )) KiB, sha256 $(sha256sum "$F" | cut -d' ' -f1))"
+            if [ -n "${SIGN_COMMAND:-}" ]; then echo "pronao: signed by SIGN_COMMAND (the build checked that the file changed)"; else echo "pronao: NOT signed (set SIGN_COMMAND, see docs/manual/10-distribution.md); a portable exe, no installer"; fi
+        else
+            PKG="$(printf '%s' "$NAME" | tr 'A-Z_' 'a-z-')"
+            ICON_ARG=""; [ -f "$PROJECT/icon.png" ] && ICON_ARG="$PROJECT/icon.png"
+            APP_TITLE="${APP_TITLE:-$NAME}" bash "$ROOT/scripts/package_linux.sh" "$(program)" "$PKG" "$VERSION" "$ICON_ARG" "$OUT" || exit 1
+        fi ;;
+
+    doctor)
+        bad_count=0
+        ok() { echo "  ok       $1"; }
+        missing() { echo "  MISSING  $1"; echo "           fix: $2"; bad_count=$((bad_count + 1)); }
+        note() { echo "  note     $1"; }
+        echo "pronao doctor ($OS), Pronao in $ROOT"
+        if env_out="$(bash -c ". '$ROOT/scripts/env.sh' && echo \"\$CLING|\$CJSON|\$CXX\"" 2>&1)"; then
+            IFS='|' read -r c j x <<< "$env_out"
+            ok "CeeLing compiler: $c"; ok "cJSON-cling: $j"; ok "C++ compiler: $x"
+        else
+            missing "$(printf '%s' "$env_out" | head -1 | sed 's/^pronao: //')" "bash pronao setup   (or set CLING / CJSON / CXX)"
+        fi
+        if [ -f "$ROOT/third_party/webview/core/include/webview/webview.h" ] || [ -d "$ROOT/third_party/webview/core" ]; then ok "the webview library (third_party/webview)"; else missing "the webview library (third_party/webview)" "bash scripts/fetch.sh"; fi
+        command -v curl > /dev/null 2>&1 && ok "curl" || missing "curl (fetch.sh downloads with it)" "install curl"
+        case "$OS" in
+            windows)
+                if [ -d "$ROOT/third_party/webview2/build/native/include" ]; then ok "the WebView2 SDK (third_party/webview2)"; else missing "the WebView2 SDK (third_party/webview2)" "bash scripts/fetch.sh"; fi
+                command -v python3 > /dev/null 2>&1 || command -v python > /dev/null 2>&1 && ok "python (fetch.sh, placeholder icons)" || missing "python 3" "install Python 3"
+                note "a program needs the WebView2 Runtime on the machine that runs it (Windows 11 has it); App.checkRuntime says so" ;;
+            linux)
+                if command -v pkg-config > /dev/null 2>&1 && pkg-config --exists gtk+-3.0 && { pkg-config --exists webkit2gtk-4.1 || pkg-config --exists webkit2gtk-4.0; }; then
+                    ok "GTK 3 and WebKitGTK (pkg-config)"
+                else
+                    missing "GTK 3 and WebKitGTK development files" "sudo apt install pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev"
+                fi
+                if pkg-config --exists libsoup-3.0 2> /dev/null; then ok "libsoup 3 (backend HTTP)"; else note "no libsoup 3: http.request answers 'unsupported' (WebKitGTK 4.1 brings it)"; fi
+                command -v python3 > /dev/null 2>&1 && ok "python3 (placeholder icons, some tests)" || note "no python3: new projects get no placeholder icon"
+                command -v dpkg-deb > /dev/null 2>&1 && ok "dpkg-deb (pronao package)" || note "no dpkg-deb: pronao package works on Debian-based systems only"
+                if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then ok "a display ($DISPLAY${WAYLAND_DISPLAY:+ $WAYLAND_DISPLAY})"; else note "no display: building works, running a window needs one (Xvfb + a window manager for tests)"; fi ;;
+            macos) note "macOS has no window layer yet (TODO F3): only headless builds can work" ;;
+        esac
+        if [ "$bad_count" -eq 0 ]; then echo "pronao doctor: nothing missing"; else echo "pronao doctor: $bad_count thing(s) missing"; exit 1; fi ;;
+
+    setup)
+        bash "$ROOT/scripts/setup.sh" "$@" ;;
+
+    selftest)
+        WHAT="${1:-headless}"; [ $# -le 1 ] || bad "selftest takes one word"
+        run() { echo "pronao: $*"; bash "$ROOT/tests/$1" || { echo "pronao: selftest FAILED ($1)"; exit 1; }; }
+        win() { if [ "$OS" = windows ]; then run run_window_selftest.sh; elif [ "$OS" = linux ]; then run run_window_selftest_linux.sh; else die "selftest window: no window layer on $OS yet"; fi; }
+        case "$WHAT" in
+            headless) run run_headless.sh ;;
+            window) win ;;
+            template) run run_template.sh ;;
+            cli) run run_cli.sh ;;
+            all) run run_headless.sh; run run_template.sh; run run_cli.sh; win ;;
+            *) bad "selftest: headless, window, template, cli or all" ;;
+        esac
+        echo "pronao: selftest ok" ;;
+
+    *) bad "unknown command: $CMD" ;;
+esac

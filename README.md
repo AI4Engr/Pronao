@@ -33,11 +33,15 @@ You need these, and all the scripts are `bash` (Git Bash or MSYS2 on Windows; Po
 The short way, from a fresh clone of this repository: `bash scripts/setup.sh` checks the tools, clones CeeLing and cJSON-cling next to it if they are missing, builds the compiler (a few minutes) and runs `fetch.sh`. By hand:
 
 ```bash
-bash scripts/fetch.sh                      # once: webview 0.12.0 (and on Windows the WebView2 SDK 1.0.2210.55) into third_party/ (pinned, SHA-256 checked, not committed)
-bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh
+bash pronao doctor                         # what is missing on this machine, and the command that fixes it
+bash pronao setup                          # once: CeeLing and cJSON-cling next to this folder, the compiler, webview into third_party/ (pinned, SHA-256 checked, not committed)
+bash pronao create ../my-app && cd ../my-app
+bash ../app-cling/pronao build             # out/my-app.exe (out/my-app on Linux); `pronao run`, `pronao dev`, `pronao test`, `pronao package` do the rest
 ```
 
-That builds `out/my-app.exe` (`out/my-app` on Linux): a page, a `main.clg` with one command, and a build script; run it from there. To try what is here first, `PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe`. `scripts/env.sh` says what is missing.
+`pronao` is one bash script that only calls the scripts below it (`scripts/new_project.sh`, `build.sh`, `package_linux.sh`, `setup.sh`); put the Pronao folder on `PATH` to type `pronao build` instead. [Chapter 1](docs/manual/01-getting-started.md#the-pronao-command) lists the commands.
+
+That makes a project with a page, a `main.clg` with one command, and a build script; run it from there. To try what is here first, `PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe`. `scripts/env.sh` says what is missing.
 
 ## A complete program
 

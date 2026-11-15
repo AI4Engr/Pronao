@@ -7,6 +7,8 @@ You need the [CeeLing compiler](https://github.com/AI4Engr/CeeLing) and [cJSON-c
 ```bash
 bash scripts/fetch.sh                  # once: webview and WebView2 headers into third_party/ (pinned, hash-checked)
 bash tests/run_headless.sh             # ~20 s, 18 programs, 1,084 checks, no window
+bash tests/run_cli.sh                  # the `pronao` command (fake projects, then a real one; three controls)
+bash tests/run_template.sh             # a new project builds in every way and its window starts
 bash tests/run_examples.sh             # ~8 min: builds every program in examples/ and runs its 211 checks
 node examples/excalidraw/test/test_files.mjs     # the Excalidraw page's file logic, no window (needs Node)
 python examples/excalidraw/test/run_window_test.py   # a real window: needs `bash examples/excalidraw/build_site.sh` first (Node, npm), Windows only

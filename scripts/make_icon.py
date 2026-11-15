@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Makes a placeholder application icon: a rounded square in one colour with a white ring, at 16, 32 and 48 pixels.
-    python3 scripts/make_icon.py <out.ico> [NAME] [RRGGBB]
-The colour comes from RRGGBB, else from NAME (so different applications get different placeholders). The file is meant to be replaced by a real icon:
-set ICON=<your.ico> in the build. Plain 32-bit BMP images, no compression and no libraries; the bytes are the same every time.
+"""Makes a placeholder application icon: a rounded square in one colour with a white ring.
+    python3 scripts/make_icon.py <out.ico | out.png> [NAME] [RRGGBB]
+An .ico (Windows) holds 16, 32 and 48 pixels as plain 32-bit BMP images; a .png (Linux) is one 64 x 64 image. The colour comes from RRGGBB, else from NAME (so different
+applications get different placeholders). The file is meant to be replaced by a real icon: set ICON=<your file> in the build. No libraries (zlib only, for the PNG);
+the bytes are the same every time.
 """
 import hashlib
 import struct
 import sys
+import zlib
 
 
 def colour_for(name):
@@ -60,6 +62,18 @@ def build(rgb):
     return out + b''.join(images)
 
 
+def build_png(rgb, size=64):
+    xor, _ = image(size, rgb)                  # bottom-up BGRA
+    rows = [xor[i * size * 4:(i + 1) * size * 4] for i in range(size)][::-1]
+    raw = b''
+    for row in rows:
+        raw += bytes([0]) + b''.join(bytes((row[i + 2], row[i + 1], row[i], row[i + 3])) for i in range(0, len(row), 4))
+
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+    return bytes.fromhex('89504e470d0a1a0a') + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b'')
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -74,7 +88,7 @@ def main():
     else:
         rgb = colour_for(name)
     with open(sys.argv[1], 'wb') as f:
-        f.write(build(rgb))
+        f.write(build_png(rgb) if sys.argv[1].lower().endswith('.png') else build(rgb))
     return 0
 
 

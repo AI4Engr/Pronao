@@ -11,7 +11,9 @@ Where things are in the repository.
 | `src/menu.clg` | menus: `Menu` (the rules for ids, labels, shortcuts) and the flat spec the native layer builds a menu from |
 | `scripts/sign.ps1`, `scripts/check_signature.ps1` | sign an exe with a certificate file or a certificate in the store; say what the signature of an exe is |
 | `docs/manual/` | the user manual: ten chapters, the command journey, the compile errors and writing the program in C++ |
-| `scripts/make_icon.py` | a placeholder `.ico` (the build option `ICON=`) |
+| `scripts/make_icon.py` | a placeholder `.ico` or `.png` (the build option `ICON=`) |
+| `pronao` | the one command for a project: create, build, run, dev, test, package, doctor, setup ([chapter 1](01-getting-started.md#the-pronao-command)); `tests/run_cli.sh` tests it |
+| `scripts/package_linux.sh` | a `.deb` of a Linux program ([appendix D](appendix-linux.md)) |
 | `src/theme.clg` | the colour scheme: `ThemeState` (system / light / dark), its event and commands |
 | `src/drops.clg` | files dragged onto a window: `DropRules` (the grants, the limit) |
 | `src/placement.clg` | where windows were: `WindowMemory` and `fitToMonitors` |

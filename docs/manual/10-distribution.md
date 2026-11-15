@@ -25,6 +25,8 @@ RELEASE=1 ICON=app.ico APP_VERSION=1.4.0 APP_NAME="My app" APP_COMPANY="Example 
     bash scripts/build.sh main.clg out/my-app.exe          # a project made by new_project.sh: bash build.sh --release
 ```
 
+For a project, `pronao package --version 1.4.0` does the release build and leaves `dist/my-app-1.4.0.exe` with its size, SHA-256 and whether it was signed ([chapter 1](01-getting-started.md#the-pronao-command)).
+
 - **`RELEASE=1`** compiles out the developer tools and the development-server switch, strips the symbols, and links the exe as a **Windows program** (no black console
   window when it is double-clicked). `GUI=0` keeps the console; the tests keep it because they read what the program prints. In a windowed program `std::cout` goes nowhere:
   use `app.showMessage(title, text)` for what the user must be told.
@@ -115,4 +117,4 @@ wrote (see [programs and links](04-programs-and-links.md)), and a scanner that i
 
 - An installer, Start-menu entries, uninstall, file associations and a `myapp://` handler (E19): a portable exe has none of these. If you later want an installer, the exe from this page is what goes in it.
 - Auto-update (E23).
-- Other systems: this page is about Windows. For Linux see [appendix D](appendix-linux.md): `scripts/package_linux.sh` makes a `.deb` (the program, a launcher entry, the icon, and the packages it depends on). Not done: an AppImage or a Flatpak (they would have to carry WebKitGTK), a signed repository, an update mechanism.
+- Other systems: this page is about Windows. For Linux see [appendix D](appendix-linux.md): `pronao package` (`scripts/package_linux.sh`) makes a `.deb` (the program, a launcher entry, the icon, and the packages it depends on). Not done: an AppImage or a Flatpak (they would have to carry WebKitGTK), a signed repository, an update mechanism.

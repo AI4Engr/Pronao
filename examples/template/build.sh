@@ -19,6 +19,7 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=.exe ;; *) EXE= ;; esac
 mkdir -p "$HERE/out"
 # what Explorer shows under Properties > Details of the exe, and what a virus scanner or SmartScreen reads about a program with no signature: fill these in
 export APP_NAME="__NAME__" APP_VERSION="${APP_VERSION:-0.1.0}" APP_COMPANY="${APP_COMPANY:-}" APP_DESCRIPTION="${APP_DESCRIPTION:-__NAME__}"
-[ -f "$HERE/icon.ico" ] && export ICON="$HERE/icon.ico"      # the program's icon: replace icon.ico with your own (a Windows .ico, several sizes)
+# the program's icon: replace icon.ico (Windows, several sizes) and icon.png (Linux, 48 x 48 or more) with your own
+if [ -n "$EXE" ]; then [ -f "$HERE/icon.ico" ] && export ICON="$HERE/icon.ico"; else [ -f "$HERE/icon.png" ] && export ICON="$HERE/icon.png"; fi
 PAGE="$HERE/index.html" WORK="${WORK:-$HERE/out/work}" bash "$PRONAO/scripts/build.sh" "$HERE/main.clg" "$HERE/out/__NAME__$EXE" $MODE
 echo "built out/__NAME__$EXE"

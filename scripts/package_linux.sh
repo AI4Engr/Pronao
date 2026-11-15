@@ -36,11 +36,16 @@ while read -r soname; do
     [ -n "$soname" ] || continue
     lib="$(printf '%s\n' "$LDD" | awk -v n="$soname" '$1 == n && $2 == "=>" { print $3; exit }')"
     [ -n "$lib" ] || continue
-    pkg="$(dpkg -S "$(readlink -f "$lib")" 2> /dev/null | head -1 | cut -d: -f1 || true)"
+    # (dpkg records a library under /lib or /usr/lib, whichever the package used, and the two are one directory on a merged-/usr system: try every spelling)
+    real="$(readlink -f "$lib")"; pkg=""
+    for candidate in "$real" "$lib" "${real#/usr}" "${lib#/usr}"; do
+        pkg="$(dpkg -S "$candidate" 2> /dev/null | head -1 | cut -d: -f1 || true)"
+        [ -n "$pkg" ] && break
+    done
     [ -n "$pkg" ] && DEPS="$DEPS
 $pkg"
 done <<< "$NEEDED"
-DEPENDS="$(printf '%s\n' "$DEPS" | sort -u | grep -v '^$' | paste -sd, - | sed 's/,/, /g')"
+DEPENDS="$(printf '%s\n' "$DEPS" | sort -u | grep -v '^$' | paste -sd, - | sed 's/,/, /g' || true)"
 [ -n "$DEPENDS" ] || DEPENDS="libc6"
 
 ROOT="$(mktemp -d)"

@@ -49,4 +49,4 @@ fi
 bash "$HERE/scripts/fetch.sh"
 . "$HERE/scripts/env.sh"
 echo "setup: ready. CLING=$CLING CJSON=$CJSON"
-echo "setup: next:  bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh"
+echo "setup: next:  bash pronao doctor     then:  bash pronao create ../my-app && cd ../my-app && bash ../$(basename "$HERE")/pronao build"
