@@ -25,18 +25,19 @@ You need these, and all the scripts are `bash` (Git Bash or MSYS2 on Windows; Po
 | Needed | Why | Notes |
 |---|---|---|
 | Windows 10 or 11 | the window | the WebView2 Runtime (Windows 11 has it) |
-| MinGW-w64 (`g++` on `PATH`), `curl`, Python 3 | compile the program; `fetch.sh` downloads and unpacks | no particular version is pinned; developed with the MSYS2 MinGW-w64 toolchain |
-| [CeeLing](https://github.com/AI4Engr/CeeLing) | the compiler | clone it next to this repository and build it (`cmake -S . -B build && cmake --build build`), so that `../CeeLing/build/cling.exe` exists; or set `CLING=` |
+| or Linux | the window (GTK 3 + WebKitGTK; [appendix D](docs/manual/appendix-linux.md)) | `sudo apt install g++ cmake pkg-config zlib1g-dev libgtk-3-dev libwebkit2gtk-4.1-dev`; the output is `out/my-app`, not `.exe`. A first version, tested under WSLg, Xvfb and headless Wayland, not yet on a full desktop |
+| MinGW-w64 on Windows, `g++` on Linux (on `PATH`), `curl`, Python 3 on Windows | compile the program; `fetch.sh` downloads and unpacks | no particular version is pinned; developed with the MSYS2 MinGW-w64 toolchain |
+| [CeeLing](https://github.com/AI4Engr/CeeLing) | the compiler | clone it next to this repository and build it (`cmake -S . -B build && cmake --build build`), so that `../CeeLing/build/cling.exe` (`cling` on Linux) exists; or set `CLING=` |
 | [cJSON-cling](https://github.com/AI4Engr/cJSON-cling) | the JSON the commands receive | clone it next to this repository (`../cJSON-cling`); or set `CJSON=` |
 
 The short way, from a fresh clone of this repository: `bash scripts/setup.sh` checks the tools, clones CeeLing and cJSON-cling next to it if they are missing, builds the compiler (a few minutes) and runs `fetch.sh`. By hand:
 
 ```bash
-bash scripts/fetch.sh                      # once: webview 0.12.0 and the WebView2 SDK 1.0.2210.55 into third_party/ (pinned, SHA-256 checked, not committed)
+bash scripts/fetch.sh                      # once: webview 0.12.0 (and on Windows the WebView2 SDK 1.0.2210.55) into third_party/ (pinned, SHA-256 checked, not committed)
 bash scripts/new_project.sh ../my-app && cd ../my-app && bash build.sh
 ```
 
-That builds `out/my-app.exe`: a page, a `main.clg` with one command, and a build script; run it from there. To try what is here first, `PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe`. `scripts/env.sh` says what is missing.
+That builds `out/my-app.exe` (`out/my-app` on Linux): a page, a `main.clg` with one command, and a build script; run it from there. To try what is here first, `PAGE=examples/hello/index.html bash scripts/build.sh examples/hello/main.clg hello.exe`. `scripts/env.sh` says what is missing.
 
 ## A complete program
 
@@ -191,7 +192,7 @@ CeeLing main thread:  app_next_call()  <-- blocks on the queue
 ```
 
 * **`src/`** is CeeLing, checked by the compiler. Every decision is here: which files a page may reach, which programs it may start, what a dialog may say.
-* **`shim/`** is hand-written C++ and is trusted, not checked (about 2,800 lines of code for Windows and 2,600 for Linux, counted by `scripts/shim_lines.sh`). It opens the window, queues calls, opens files and runs programs, as small primitives. It holds no application logic.
+* **`shim/`** is hand-written C++ and is trusted, not checked (about 2,800 lines of code for Windows and 3,200 for Linux, counted by `scripts/shim_lines.sh`). It opens the window, queues calls, opens files and runs programs, as small primitives. It holds no application logic.
 
 CeeLing runs the loop, so no callback has to cross into CeeLing. [How it works](docs/manual/02-how-it-works.md) has the details.
 
