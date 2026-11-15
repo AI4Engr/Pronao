@@ -3,7 +3,7 @@
 #   theme: forcing dark and light is seen by the page (prefers-color-scheme) and reported as theme.changed; following the system returns to what it was.
 #   drop:  a real drag between two windows (tests/xdrag.c offers files as text/uri-list, the way a file manager does; the mouse is driven with xdotool): the page must hear enter /
 #          over / leave / drop and read both dropped files, Then a CONTROL: a shim that never delivers the paths.
-# Needs a display (X11, or WSLg with GDK_BACKEND=x11), xdotool, gcc and GTK headers. What it cannot play: the desktop changing its scheme while the program runs.
+# Needs a display (X11, or WSLg with GDK_BACKEND=x11), xdotool, gcc and GTK headers. The desktop changing its scheme while the program runs is played only with XSETTINGSD=1 (needs xsettingsd, and a display of its own such as Xvfb).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export GDK_BACKEND="${GDK_BACKEND:-x11}" DISPLAY="${DISPLAY:-:0}" GSETTINGS_BACKEND=memory
@@ -35,6 +35,25 @@ story() { # kind(theme|drop) dir shim-dir-or-empty -> 0 if the whole story worke
         do_ theme system && waitfor '^seen theme .*"mode":"system"' 10 || fail "follow the system: the page was not told" || return 1
         do_ probe && [ "$(lastseen now)" = "$sys" ] || fail "follow the system: the page is $(lastseen now), the system's was $sys" || return 1
         echo "follow the system: back to $sys"
+        # the desktop changes its scheme while the program runs (played with xsettingsd, a real XSETTINGS daemon: GTK reads the theme name from it, as it does from a desktop's
+        # settings daemon). Opt-in, XSETTINGSD=1, and only on a display of its own (Xvfb): it takes over the XSETTINGS of the display it runs on.
+        if [ "${XSETTINGSD:-0}" = 1 ] && command -v xsettingsd > /dev/null 2>&1; then
+            printf 'Net/ThemeName "Adwaita"
+' > "$S/xs.conf"
+            xsettingsd -c "$S/xs.conf" > "$S/xs.log" 2>&1 & local xpid=$!
+            sleep 1
+            do_ theme system || { kill "$xpid" 2> /dev/null; fail "theme system"; return 1; }
+            local before; before="$(grep -ac '^seen theme ' "$OUT")"
+            printf 'Net/ThemeName "Adwaita-dark"
+' > "$S/xs.conf"; kill -HUP "$xpid"
+            waitfor '^seen theme .*"system":"dark"' 10 && waitfor '^seen scheme dark$' 10 || { kill "$xpid" 2> /dev/null; fail "the desktop went dark: the page was not told"; return 1; }
+            printf 'Net/ThemeName "Adwaita"
+' > "$S/xs.conf"; kill -HUP "$xpid"
+            waitfor '^seen theme .*"system":"light"' 10 || { kill "$xpid" 2> /dev/null; fail "the desktop went light again: the page was not told"; return 1; }
+            kill "$xpid" 2> /dev/null
+            [ "$(grep -ac '^seen theme ' "$OUT")" -gt "$before" ] || fail "no theme event" || return 1
+            echo "the desktop went dark and light again: the page was told each time and its scheme followed"
+        fi
     else
         local D="$S/dropped"; mkdir -p "$D"; printf 'alpha' > "$D/a.txt"; printf 'bravo' > "$D/b.txt"
         gcc -o "$S/xdrag" "$HERE/tests/xdrag.c" $(pkg-config --cflags --libs gtk+-3.0) 2> /dev/null || { echo "cannot build xdrag"; return 2; }

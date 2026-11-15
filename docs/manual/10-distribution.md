@@ -115,4 +115,4 @@ wrote (see [programs and links](04-programs-and-links.md)), and a scanner that i
 
 - An installer, Start-menu entries, uninstall, file associations and a `myapp://` handler (E19): a portable exe has none of these. If you later want an installer, the exe from this page is what goes in it.
 - Auto-update (E23).
-- Other systems: this page is Windows only.
+- Other systems: this page is about Windows. For Linux see [appendix D](appendix-linux.md): `scripts/package_linux.sh` makes a `.deb` (the program, a launcher entry, the icon, and the packages it depends on). Not done: an AppImage or a Flatpak (they would have to carry WebKitGTK), a signed repository, an update mechanism.

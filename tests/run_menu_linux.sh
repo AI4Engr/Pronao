@@ -23,7 +23,8 @@ story() { # dir shim-dir-or-empty -> 0 if the whole story worked
     waitfor '^sized ' 30 || fail "the program never became ready" || return 1
     local id; id="$(xdotool search --onlyvisible --name '^menu test$' | head -1)"
     [ -n "$id" ] || fail "no window" || return 1
-    xdotool windowfocus "$id"; sleep 0.5
+    xdotool windowfocus "$id"; sleep 0.3
+    xdotool mousemove --window "$id" 300 300; sleep 0.2; xdotool click 1; sleep 0.4        # (a click on an empty part of the page: some window managers give the keyboard to the window only then)
 
     # 1: the page fills the window under the bar (the window is 600 x 400, the bar takes some of the height)
     read -r _ w h < <(grep -a '^sized ' "$OUT" | tail -1 | tr -d '\r')
@@ -31,7 +32,8 @@ story() { # dir shim-dir-or-empty -> 0 if the whole story worked
     [ "$w" = 600 ] && [ "$h" -ge 330 ] && [ "$h" -lt 400 ] || fail "the page does not fill the window under the bar" || return 1
 
     # 2: shortcuts, while the page has the keyboard
-    xdotool key ctrl+o; waitfor '^click file.open$' 5 || fail "Ctrl+O did not choose Open" || return 1
+    # (under WSLg the very first key sometimes does not reach the window: one more try, only if nothing at all came of the first)
+    xdotool key ctrl+o; waitfor '^click file.open$' 3 || { xdotool windowfocus "$id"; sleep 0.5; xdotool key ctrl+o; waitfor '^click file.open$' 5; } || fail "Ctrl+O did not choose Open" || return 1
     xdotool key ctrl+s; waitfor '^click file.save$' 5 && waitfor '^page saw file.save$' 5 || fail "Ctrl+S did not choose Save (or the page was not told)" || return 1
     [ "$(count file.open)" = 1 ] || fail "Ctrl+O chose Open $(count file.open) times" || return 1
     xdotool key 71; waitfor '^click view.grid$' 5 || fail "F5 did not choose Grid" || return 1

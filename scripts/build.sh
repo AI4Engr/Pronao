@@ -156,6 +156,8 @@ else
         [ -n "$WEBKIT" ] && pkg-config --exists gtk+-3.0 || { echo "build.sh: a window on Linux needs GTK 3 and WebKitGTK: sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev (or -4.0-dev)" >&2; exit 1; }
         INC="$INC $(pkg-config --cflags gtk+-3.0 "$WEBKIT")"
         GTKLIBS="$(pkg-config --libs gtk+-3.0 "$WEBKIT")"
+        # backend HTTP (shim/posix/http.cpp) uses libsoup 3, which WebKitGTK 4.1 brings; with WebKitGTK 4.0 (libsoup 2.4) the primitive answers "not implemented"
+        if pkg-config --exists libsoup-3.0 2> /dev/null; then INC="$INC $(pkg-config --cflags libsoup-3.0)"; GTKLIBS="$GTKLIBS $(pkg-config --libs libsoup-3.0)"; fi
     fi
     spawn cc "$SHIM/app_shim.cpp" "$WORK/app_shim.o" --std=c++14 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE} $INC
     OBJS+=("$WORK/app_shim.o")

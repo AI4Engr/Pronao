@@ -1,5 +1,5 @@
-// The real HTTP primitive (shim/win/http.cpp, over WinHTTP) against a small server on the loopback interface that this test starts. Windows only: elsewhere the
-// primitive says "not implemented" and the test checks just that. It covers what the native layer is trusted to do: send the request as given, return the
+// The real HTTP primitive (shim/win/http.cpp over WinHTTP, shim/posix/http.cpp over libsoup 3) against a small server on the loopback interface that this test starts.
+// Without libsoup 3 the POSIX primitive answers "not implemented" (5) and the test checks just that. It covers what the native layer is trusted to do: send the request as given, return the
 // status, headers and body as they came, follow no redirect, keep no cookie, cut at the byte limit, stop at the time limit and on a cancel, and say what
 // kind of failure it was. TLS is not tested here (it needs a certificate); see the manual for how that was checked by hand.
 #include <cstdio>
@@ -12,18 +12,27 @@
 static int g_failed = 0, g_passed = 0;
 static void check(const char* name, bool ok) { if (ok) { ++g_passed; std::printf("PASS %s\n", name); } else { ++g_failed; std::printf("FAIL %s\n", name); } }
 
-#ifndef _WIN32
-int main() {
-    int status = 0, flags = 0;
-    std::string headers, body;
-    check("another platform answers 'not implemented' and sends nothing",
-          app_http_request(1, "c", "GET", "http://127.0.0.1:1/", {}, "", 1000, 100, status, headers, body, flags) == 5);
-    std::printf("http shim test: %d passed, %d failed\n", g_passed, g_failed);
-    return g_failed == 0 ? 0 : 1;
-}
-#else
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+typedef SOCKET sock_t;
+static unsigned long long nowMs() { return GetTickCount64(); }
+static void sleepMs(int ms) { Sleep(static_cast<DWORD>(ms)); }
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <chrono>
+typedef int sock_t;
+#define INVALID_SOCKET (-1)
+#define SD_SEND SHUT_WR
+static int closesocket(int s) { return close(s); }
+static unsigned long long nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+static void sleepMs(int ms) { usleep(static_cast<useconds_t>(ms) * 1000); }
+#endif
 #include <zlib.h>
 
 #include <atomic>
@@ -61,10 +70,10 @@ std::string gzipOf(const std::string& in) {
     return out;
 }
 
-void sendAll(SOCKET c, const std::string& s) {
+void sendAll(sock_t c, const std::string& s) {
     size_t at = 0;
     while (at < s.size()) {
-        const int n = send(c, s.data() + at, static_cast<int>(s.size() - at), 0);
+        const auto n = send(c, s.data() + at, static_cast<int>(s.size() - at), 0);
         if (n <= 0) return;
         at += static_cast<size_t>(n);
     }
@@ -74,7 +83,7 @@ std::string response(int status, const std::string& extraHeaders, const std::str
     return "HTTP/1.1 " + std::to_string(status) + " X\r\nConnection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n" + extraHeaders + "\r\n" + body;
 }
 
-void serveOne(SOCKET c) {
+void serveOne(sock_t c) {
     std::string in;
     char buf[4096];
     size_t headEnd = std::string::npos;
@@ -110,7 +119,7 @@ void serveOne(SOCKET c) {
         else sendAll(c, response(200, "", text));
     }
     else if (path == "/204") sendAll(c, "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
-    else if (path == "/slow") { for (int i = 0; i < 80 && !g_stop; ++i) Sleep(50); sendAll(c, response(200, "", "late")); }
+    else if (path == "/slow") { for (int i = 0; i < 80 && !g_stop; ++i) sleepMs(50); sendAll(c, response(200, "", "late")); }
     else if (path == "/auth") sendAll(c, response(401, "WWW-Authenticate: NTLM\r\nWWW-Authenticate: Negotiate\r\n", "no"));
     else sendAll(c, response(404, "", "not here"));
     shutdown(c, SD_SEND);
@@ -120,16 +129,33 @@ void serveOne(SOCKET c) {
 }  // namespace
 
 int main() {
+#ifndef _WIN32
+    {
+        int st = 0, fl = 0;
+        std::string h, b;
+        if (app_http_request(1, "c", "GET", "http://127.0.0.1:1/", {}, "", 1000, 100, st, h, b, fl) == 5) {        // built without libsoup 3
+            check("without libsoup 3 the primitive answers 'not implemented' and sends nothing", true);
+            std::printf("http shim test: %d passed, %d failed\n", g_passed, g_failed);
+            return 0;
+        }
+    }
+#endif
+#ifdef _WIN32
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
-    SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#endif
+    sock_t listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = 0;
     bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
     listen(listener, 16);
+#ifdef _WIN32
     int len = sizeof addr;
+#else
+    socklen_t len = sizeof addr;
+#endif
     getsockname(listener, reinterpret_cast<sockaddr*>(&addr), &len);
     const std::string base = "http://127.0.0.1:" + std::to_string(ntohs(addr.sin_port));
     std::thread server([&] {
@@ -137,8 +163,8 @@ int main() {
         while (!g_stop) {
             fd_set fds; FD_ZERO(&fds); FD_SET(listener, &fds);
             timeval tv{0, 100000};
-            if (select(0, &fds, nullptr, nullptr, &tv) > 0) {
-                SOCKET c = accept(listener, nullptr, nullptr);
+            if (select(static_cast<int>(listener) + 1, &fds, nullptr, nullptr, &tv) > 0) {
+                sock_t c = accept(listener, nullptr, nullptr);
                 if (c != INVALID_SOCKET) handlers.emplace_back([c] { serveOne(c); });
             }
         }
@@ -187,15 +213,15 @@ int main() {
     check("a body exactly at the limit is not cut", get("/ok", 5000, 5) == 0 && body == "Hello" && (flags & 2) == 0);
     check("a larger body arrives whole under a larger limit", get("/big", 5000, 200000) == 0 && body.size() == 100000 && (flags & 2) == 0);
 
-    const ULONGLONG t0 = GetTickCount64();
+    const unsigned long long t0 = nowMs();
     const int slow = get("/slow", 600);
-    const ULONGLONG took = GetTickCount64() - t0;
+    const unsigned long long took = nowMs() - t0;
     check("the time limit stops a slow server and says so", slow == 0 && (flags & 1) != 0 && took < 2500);
 
-    std::thread canceller([] { Sleep(300); cancelRegistry().cancel(1, "abandoned"); });
-    const ULONGLONG t1 = GetTickCount64();
+    std::thread canceller([] { sleepMs(300); cancelRegistry().cancel(1, "abandoned"); });
+    const unsigned long long t1 = nowMs();
     const int c = app_http_request(1, "abandoned", "GET", base + "/slow", {}, "", 20000, 1 << 20, status, headers, body, flags);
-    const ULONGLONG cancelledAfter = GetTickCount64() - t1;
+    const unsigned long long cancelledAfter = nowMs() - t1;
     canceller.join();
     check("a cancel stops the request and says so", c == 0 && (flags & 8) != 0 && cancelledAfter < 2500);
     cancelRegistry().forget(1, "abandoned");
@@ -212,8 +238,9 @@ int main() {
     g_stop = true;
     server.join();
     closesocket(listener);
+#ifdef _WIN32
     WSACleanup();
+#endif
     std::printf("http shim test: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
-#endif

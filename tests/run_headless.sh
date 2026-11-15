@@ -59,11 +59,13 @@ runProgram() { # name expected
 bash "$HERE/scripts/pack_assets.sh" - "$W/stub"          # (no embedded web files in these)
 NSRC="$HERE/shim/watch.cpp $HERE/shim/assets.cpp $W/stub/assets_embedded.cpp $HERE/shim/os.cpp $HERE/shim/$PLAT/fs.cpp $HERE/shim/$PLAT/proc.cpp $HERE/shim/$PLAT/watch.cpp $HERE/shim/$PLAT/instance.cpp $HERE/shim/$PLAT/http.cpp $HERE/tests/doubles/headless_shim.cpp $HERE/tests/doubles/test_support.cpp"
 NOBJS=""
+SOUPF=""; SOUPL=""
+if [ "$PLAT" != win ] && command -v pkg-config > /dev/null 2>&1 && pkg-config --exists libsoup-3.0 2> /dev/null; then SOUPF="$(pkg-config --cflags libsoup-3.0)"; SOUPL="$(pkg-config --libs libsoup-3.0)"; fi      # (the POSIX HTTP primitive; without it the test checks the "not implemented" answer)
 NP=()
 i=0
 for s in $NSRC; do
     i=$((i + 1))
-    "$CXX" --std=c++17 $OPT_LEVEL -c "$s" -o "$W/native_$i.o" &
+    "$CXX" --std=c++17 $OPT_LEVEL $SOUPF -c "$s" -o "$W/native_$i.o" &
     NP+=($!)
     NOBJS="$NOBJS $W/native_$i.o"
 done
@@ -72,7 +74,7 @@ TPIDS=()
 for t in proc watch assets instance http; do
     src="$HERE/tests/${t}_$( [ $t = assets ] && echo test || echo shim_test).cpp"
     (
-        "$CXX" --std=c++17 $OPT_LEVEL "$src" $NOBJS -pthread -lz $( [ "$PLAT" = win ] && echo "-lwinhttp -lws2_32 -ladvapi32 -lshell32 -lole32" ) -o "$W/$t.exe" > "$W/$t.log" 2>&1 || { echo "$t TEST BUILD FAILED" >> "$W/$t.log"; echo bad > "$W/$t.verdict"; exit 0; }
+        "$CXX" --std=c++17 $OPT_LEVEL "$src" $NOBJS -pthread -lz $SOUPL $( [ "$PLAT" = win ] && echo "-lwinhttp -lws2_32 -ladvapi32 -lshell32 -lole32" ) -o "$W/$t.exe" > "$W/$t.log" 2>&1 || { echo "$t TEST BUILD FAILED" >> "$W/$t.log"; echo bad > "$W/$t.verdict"; exit 0; }
         TOUT="$("$W/$t.exe")"; TRC=$?
         printf '%s\n' "$TOUT" | grep -v '^PASS' >> "$W/$t.log"
         if [ "$TRC" -eq 0 ]; then echo ok > "$W/$t.verdict"; else echo bad > "$W/$t.verdict"; fi
