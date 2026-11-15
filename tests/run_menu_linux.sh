@@ -3,6 +3,7 @@
 # From outside, with xdotool: the page must fill the window under the bar (it is told its size); Ctrl+O and Ctrl+S choose their items, once each; F5 ticks Grid and a second F5
 # unticks it; Alt+V opens the View menu with the keyboard and Down, Return choose Grid; a right click in the page opens the page's own pop-up and Down, Return choose the first
 # item (the page is told, and so is the program); Escape on the pop-up chooses nothing. Then a CONTROL: a shim that does not hook shortcuts; Ctrl+O must then fail to choose.
+# (F5 is sent by its keycode, 71 on every evdev keymap: xdotool 3.2016 sends the NAME as a level that needs Alt on some keymaps, and the shortcut then does not match.)
 # What it cannot do: look at the menu (appearance, high-DPI drawing); opening a menu by clicking its title with a synthetic mouse did not open it under WSLg, so the keyboard does.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,7 +34,7 @@ story() { # dir shim-dir-or-empty -> 0 if the whole story worked
     xdotool key ctrl+o; waitfor '^click file.open$' 5 || fail "Ctrl+O did not choose Open" || return 1
     xdotool key ctrl+s; waitfor '^click file.save$' 5 && waitfor '^page saw file.save$' 5 || fail "Ctrl+S did not choose Save (or the page was not told)" || return 1
     [ "$(count file.open)" = 1 ] || fail "Ctrl+O chose Open $(count file.open) times" || return 1
-    xdotool key F5; waitfor '^click view.grid$' 5 || fail "F5 did not choose Grid" || return 1
+    xdotool key 71; waitfor '^click view.grid$' 5 || fail "F5 did not choose Grid" || return 1
     echo "Ctrl+O, Ctrl+S and F5 chose their items, once each, and the page was told"
 
     # 3: the keyboard opens a menu of the bar

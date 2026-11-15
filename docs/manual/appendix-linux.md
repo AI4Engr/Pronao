@@ -1,7 +1,8 @@
 # Appendix D: Pronao on Linux
 
-The window layer for Linux uses GTK 3 and WebKitGTK from the system. It is a first version, written and tested under WSL with WSLg (X11 through `GDK_BACKEND=x11`),
-**not yet tried on a real Linux desktop**; the first run on one is the test that counts. Everything below says what was run and what was not.
+The window layer for Linux uses GTK 3 and WebKitGTK from the system. It is a first version, tested in two places: under WSL with WSLg (Ubuntu 22.04, WebKitGTK 2.50,
+X11 through `GDK_BACKEND=x11`) and on a clean Ubuntu 26.04 server with a virtual X display (Xvfb) and the openbox window manager (WebKitGTK 2.52), where `scripts/setup.sh`
+was run from a fresh clone. **Neither is a full desktop session with a person at it**, and Wayland was not tried. Everything below says what was run and what was not.
 
 ## Build and run
 
@@ -23,8 +24,8 @@ a program for people has to say so (a `.deb` depends on them, an AppImage or Fla
 | Navigation guard, `window.open`, new windows | yes (WebKitGTK `decide-policy` and `create`) | same script |
 | Native dialogs (open, save, folder, message boxes) | yes (GTK file chooser and message dialog) | same script: a message box and an Open dialog are shown and closed from outside |
 | Close button asks (`confirmClose`) | yes | same script |
-| Window control: minimize, maximize, hide, full screen, always on top, no frame, fixed size, modal windows, monitors, position | yes; a window manager may refuse a request | self-test (state, size); not every call has its own test |
-| Remembered window place | yes, size always; position only on X11 | `tests/run_placement_linux.sh`: three starts in a row, no creep; a place on no monitor is brought back |
+| Window control: minimize, maximize, hide, full screen, always on top, no frame, fixed size, modal windows, monitors, position | yes; a window manager may refuse a request | self-test (state, size) and the placement test (maximize, restore); not every call has its own test |
+| Remembered window place | yes, size always; position only on X11 | `tests/run_placement_linux.sh`: three starts in a row, no creep; maximized, reopened maximized, restored to the old size (needs `wmctrl`); a place on no monitor is brought back |
 | Menu bar, shortcuts, the page's pop-up menu | yes (GTK menu bar; the page is told its size under it) | `tests/run_menu_linux.sh` |
 | One running copy of a program | yes (a lock file and a unix socket under `$XDG_RUNTIME_DIR/pronao`, mode 0700, same user only) | `tests/run_instance_linux.sh` |
 | Dropped files | yes (paths from the desktop's own drag data) | `tests/run_system_linux.sh`: a real drag between two windows with `tests/xdrag.c` |
@@ -38,11 +39,11 @@ a program for people has to say so (a `.deb` depends on them, an AppImage or Fla
 - **Tray icon and tray menu.** `openTray` returns false. There is no tray API common to Linux desktops.
 - **HTTP from the backend** (`http.request`): the Windows implementation uses WinHTTP; the Linux file answers `unsupported`.
 - **Following the desktop's own scheme change while the program runs.** The code listens for GTK's theme settings, but no test plays a change of the desktop's scheme.
-- **Maximize and restore of the remembered place** was not run by a test (no window-manager tool is assumed); the code path is the same as `setMenu`'s and the self-test's.
 - **Wayland.** A program cannot ask where its window is or put it somewhere under Wayland, so a saved position is meaningless there (the size is kept); `GDK_BACKEND=x11` makes
   it work as on X11 through XWayland. `startDrag` (a custom title bar) needs the compositor's help and works only while the button is down.
 - **Tiling window managers** ignore moving and resizing requests.
-- **Clicking a menu title with a synthetic mouse** did not open the menu under WSLg, so the test opens it with the keyboard (Alt and the mnemonic). A person with a mouse is the check that is missing.
+- **Clicking a menu title with a synthetic mouse** did not open the menu under WSLg's compositor, so the test opens it with the keyboard (Alt and the mnemonic). Under openbox a synthetic
+  click on a title, and on an item, did choose it (tried by hand, not in the script). A person with a mouse on a real desktop is the check that is missing.
 - **Look of the menu and dialogs**, high-DPI drawing, a screen reader.
 - **The code is trusted, not checked**: `shim/posix/` is C++ like `shim/win/` (see the README's platform table for its size).
 
@@ -55,6 +56,12 @@ a program for people has to say so (a `.deb` depends on them, an AppImage or Fla
   The first `drop.enter` reports `x: 0, y: 0`.
 - **Context menu** (right click) is off in a release build, as on Windows.
 
+## Notes from the second machine
+
+- A window that was resized and maximized before it was shown was restored by the window manager to 200 x 200 (its first size), not to the remembered one. The shim now maximizes
+  300 ms after it has applied the size and place. Found only on the second machine; the placement test checks it.
+- `xdotool` 3.2016 sent F5 *by name* with Alt held on a keymap where F5 appears at many levels, so the shortcut did not match. That was the test tool, not the program; the menu test sends F5 by its keycode (71).
+
 ## Two workarounds worth knowing
 
 - WebKitGTK 2.50 aborts the process when its context is released by the C library's exit handlers (found with AddressSanitizer). The shim holds one extra reference to the context
@@ -65,9 +72,9 @@ a program for people has to say so (a `.deb` depends on them, an AppImage or Fla
 
 ```bash
 bash tests/run_headless.sh                   # no window
-bash tests/run_window_selftest_linux.sh      # needs a display (X11, or WSLg: GDK_BACKEND=x11), xdotool, gcc, libx11-dev
+bash tests/run_window_selftest_linux.sh      # needs a display (X11, WSLg with GDK_BACKEND=x11, or Xvfb + a window manager such as openbox), xdotool, gcc, libx11-dev
 bash tests/run_menu_linux.sh
-bash tests/run_placement_linux.sh
+bash tests/run_placement_linux.sh            # maximize is tested when wmctrl is installed
 bash tests/run_system_linux.sh
 bash tests/run_instance_linux.sh
 bash tests/run_notify_linux.sh               # also needs dbus-run-session and python3 with PyGObject

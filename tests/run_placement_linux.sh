@@ -2,7 +2,7 @@
 # Window places for real on Linux (X11, or WSLg with GDK_BACKEND=x11): the window is moved and resized from outside (xdotool), the place must be saved; started again it must
 # open where it was, every time (a place that is saved and applied must not creep: some window managers report a window at another place than they put it); a place on no
 # monitor is brought back onto one, and one that is too big is made to fit. Then a CONTROL: a shim that never applies a remembered place.
-# What it cannot do: maximize (a window manager's own function; no tool is assumed), a physical mouse drag, Wayland (a program cannot know or set where its window is there).
+# Maximize is tested when wmctrl is installed. What it cannot do: a physical mouse drag, Wayland (a program cannot know or set where its window is there).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export GDK_BACKEND="${GDK_BACKEND:-x11}" DISPLAY="${DISPLAY:-:0}" GSETTINGS_BACKEND=memory
@@ -45,6 +45,17 @@ story() { # dir shim-dir-or-empty -> 0 if the whole story worked
         [ "$(tr -d '\n\t ' < "$FILE" | grep -o '"x":[0-9-]*,"y":[0-9-]*')" = "$(echo "$saved" | grep -o '"x":[0-9-]*,"y":[0-9-]*')" ] || { echo "the place crept: $(tr -d '\n\t ' < "$FILE") (was $saved)"; return 1; }
     done
     echo "three starts in a row: the place did not creep"
+    # maximize (needs wmctrl and a window manager that does it): saved as maximized with the restored size kept, opened maximized again, and restoring gives the old place
+    if command -v wmctrl > /dev/null 2>&1; then
+        do_max() { wmctrl -ir "$WIN" -b add,maximized_vert,maximized_horz; waitfile '"max":[[:space:]]*true' && grep -Eq '"w":[[:space:]]*640' "$FILE"; }
+        session max1 do_max || { echo "maximizing was not saved with the restored size: $(tr -d '
+	 ' < "$FILE")"; return 1; }
+        back_restore() { local g; g="$(size_of)"; echo "reopened maximized: $g"; [ "${g%%x*}" -gt 700 ] && wmctrl -ir "$WIN" -b remove,maximized_vert,maximized_horz && waitfile '"max":[[:space:]]*false' && sleep 1 && [ "$(size_of)" = "640x480" ]; }
+        session max2 back_restore || { echo "reopening maximized, or restoring, failed"; return 1; }
+        echo "maximized, reopened maximized, restored to the old size"
+    else
+        echo "(wmctrl is not installed: maximize not tested)"
+    fi
     # a place on no monitor is brought back onto one; one that is too big is made to fit
     printf '{"main": {"x": 30000, "y": 30000, "w": 640, "h": 480, "max": false}}' > "$FILE"
     check_inside() { local p; p="$(xdotool getwindowgeometry "$WIN" | sed -n 's/.*Position: \([0-9-]*\),\([0-9-]*\).*/\1 \2/p')"; echo "from nowhere to: $p"; set -- $p; [ "$1" -lt 5000 ] && [ "$2" -lt 5000 ] && [ "$1" -ge -100 ]; }
@@ -61,9 +72,9 @@ python3 - "$C/shim/posix/window.cpp" <<'PYEOF' || { echo "CONTROL SETUP FAILED";
 import sys
 p = sys.argv[1]
 s = open(p, encoding='utf-8', newline='').read()
-key = "        gtk_window_move(w, x, y);\n        if (maximized)"
+key = "        gtk_window_move(w, x, y);" + chr(10)
 assert s.count(key) == 1
-open(p, 'w', encoding='utf-8', newline='').write(s.replace(key, "        if (maximized)"))
+open(p, "w", encoding="utf-8", newline="").write(s.replace(key, ""))
 PYEOF
 if story "$C/case" "$C/shim" > "$C/out.txt" 2>&1; then echo "CONTROL DID NOT FAIL: the test does not need the place to be applied"; exit 1; fi
 echo "control: without applying the remembered place the test fails, as it must"

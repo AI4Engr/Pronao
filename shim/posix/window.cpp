@@ -148,13 +148,21 @@ gboolean settle(gpointer data) {
 }
 }
 
+static gboolean maximizeLater(gpointer window) {
+    gtk_window_maximize(GTK_WINDOW(window));
+    g_object_unref(window);
+    return G_SOURCE_REMOVE;
+}
+
 int app_linux_placement(int handle, int x, int y, int width, int height, int maximized) {
     return app_ui_call(handle, [=](void* native) {
         GtkWindow* w = gtkWindow(native);
         if (!w) return;
         gtk_window_resize(w, width, height);
         gtk_window_move(w, x, y);
-        if (maximized) gtk_window_maximize(w);
+        // A window that is resized and maximized before it has been shown at that size is restored by the window manager to the size it first had (200 x 200 here), not
+        // to the one asked for: so it is first given time to take its size and place, and maximized after that.
+        if (maximized) g_timeout_add(300, maximizeLater, g_object_ref(w));
         else g_timeout_add(250, settle, new Wanted{GTK_WINDOW(g_object_ref(w)), x, y});
     }) ? 1 : 0;
 }

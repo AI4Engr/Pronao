@@ -200,12 +200,12 @@ CeeLing runs the loop, so no callback has to cross into CeeLing. [How it works](
 | | |
 |---|---|
 | Windows 10 and 11 | the platform: the headless suite, real-window tests, a release build, signing. Needs the WebView2 Runtime (Windows 11 has it; `app.checkRuntime` says so on a computer without it) |
-| Linux | a first version of the whole window layer on GTK 3 and WebKitGTK: window, dialogs, menu bar, shortcuts, dropped files, one instance, notifications, remembered place; run and tested under WSL with WSLg, **not yet on a real Linux desktop**. No tray icon, no backend HTTP. [Appendix D](docs/manual/appendix-linux.md) lists what was run and what was not. Needs `libgtk-3` and `libwebkit2gtk-4.1` on the machine that runs the program |
+| Linux | a first version of the whole window layer on GTK 3 and WebKitGTK: window, dialogs, menu bar, shortcuts, dropped files, one instance, notifications, remembered place; run and tested under WSL with WSLg and on Ubuntu 26.04 under Xvfb + openbox, **not yet in a full desktop session or under Wayland**. No tray icon, no backend HTTP. [Appendix D](docs/manual/appendix-linux.md) lists what was run and what was not. Needs `libgtk-3` and `libwebkit2gtk-4.1` on the machine that runs the program |
 | macOS | not tried |
 
 ## Not a good fit (yet)
 
-Pronao is not a good choice today if you need a window on macOS, a tray icon on Linux, an installer or auto-update, a plugin ecosystem, a stable API, or a track record: it is a prototype, its window is mature on one platform (Windows) and new on a second (Linux, tested only under WSLg so far).
+Pronao is not a good choice today if you need a window on macOS, a tray icon on Linux, an installer or auto-update, a plugin ecosystem, a stable API, or a track record: it is a prototype, its window is mature on one platform (Windows) and new on a second (Linux, tested under WSLg and a virtual X display so far).
 
 ## What is and is not checked
 
