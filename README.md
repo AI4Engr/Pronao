@@ -191,7 +191,7 @@ CeeLing main thread:  app_next_call()  <-- blocks on the queue
 ```
 
 * **`src/`** is CeeLing, checked by the compiler. Every decision is here: which files a page may reach, which programs it may start, what a dialog may say.
-* **`shim/`** is hand-written C++ and is trusted, not checked (2,409 lines of code for Windows, 1,363 for Linux, counted by `scripts/shim_lines.sh`). It opens the window, queues calls, opens files and runs programs, as small primitives. It holds no application logic.
+* **`shim/`** is hand-written C++ and is trusted, not checked (about 2,800 lines of code for Windows and 2,600 for Linux, counted by `scripts/shim_lines.sh`). It opens the window, queues calls, opens files and runs programs, as small primitives. It holds no application logic.
 
 CeeLing runs the loop, so no callback has to cross into CeeLing. [How it works](docs/manual/02-how-it-works.md) has the details.
 
@@ -200,12 +200,12 @@ CeeLing runs the loop, so no callback has to cross into CeeLing. [How it works](
 | | |
 |---|---|
 | Windows 10 and 11 | the platform: the headless suite, real-window tests, a release build, signing. Needs the WebView2 Runtime (Windows 11 has it; `app.checkRuntime` says so on a computer without it) |
-| Linux | files, programs, folder watching and opening links are implemented and run under the headless suite and the sanitizers (WSL); no window, dialogs, menu or tray |
+| Linux | a first version of the whole window layer on GTK 3 and WebKitGTK: window, dialogs, menu bar, shortcuts, dropped files, one instance, notifications, remembered place; run and tested under WSL with WSLg, **not yet on a real Linux desktop**. No tray icon, no backend HTTP. [Appendix D](docs/manual/appendix-linux.md) lists what was run and what was not. Needs `libgtk-3` and `libwebkit2gtk-4.1` on the machine that runs the program |
 | macOS | not tried |
 
 ## Not a good fit (yet)
 
-Pronao is not a good choice today if you need a window on macOS or Linux, an installer or auto-update, a plugin ecosystem, a stable API, or a track record: it is a prototype, and its window has been tried on one platform.
+Pronao is not a good choice today if you need a window on macOS, a tray icon on Linux, an installer or auto-update, a plugin ecosystem, a stable API, or a track record: it is a prototype, its window is mature on one platform (Windows) and new on a second (Linux, tested only under WSLg so far).
 
 ## What is and is not checked
 
@@ -213,7 +213,7 @@ CeeLing checks the command table and everything the commands do with their own d
 
 ## FAQ
 
-**Is it an alternative to Electron or Tauri?** For small programs, in one way: it is much smaller, and the backend is checked. It has far fewer features, no installer or auto-update, and a window only on Windows (on Linux the files, programs and watching run under the tests, but there is no window yet). If you need those, use Tauri or Electron.
+**Is it an alternative to Electron or Tauri?** For small programs, in one way: it is much smaller, and the backend is checked. It has far fewer features, no installer or auto-update, and a window on Windows, and a new, less tested one on Linux (no macOS). If you need those, use Tauri or Electron.
 
 **Who is it for?** People who want to write the backend of a desktop program in CeeLing and have the compiler reject its memory errors, and who want one small `.exe` to hand to someone.
 
@@ -221,7 +221,7 @@ CeeLing checks the command table and everything the commands do with their own d
 
 ## Documentation
 
-* **[User manual](docs/manual/README.md):** ten chapters and two appendices, from getting started to shipping, including [what a command does from the page to the reply](docs/manual/appendix-command-journey.md) and [the compile errors you will meet](docs/manual/appendix-compile-errors.md).
+* **[User manual](docs/manual/README.md):** ten chapters and four appendices, from getting started to shipping, including [what a command does from the page to the reply](docs/manual/appendix-command-journey.md) and [the compile errors you will meet](docs/manual/appendix-compile-errors.md).
 * **[Examples](examples/README.md)** and the [comparison with Tauri and Electron](docs/comparison/README.md).
 * [Source map](docs/manual/source-map.md): where things are in the repository.
 * [Chapter 16 of the CeeLing guide](https://github.com/AI4Engr/CeeLing/blob/main/docs/language-guide/16-case-study-pronao.md): what the language did to this program, with counts of the checks it inserted and what they cost.
@@ -235,6 +235,7 @@ bash tests/run_headless.sh       # about 20 s, no window; runs on Windows and un
 bash tests/run_examples.sh       # builds and checks every example (several minutes)
 bash tests/run_sanitizers.sh     # AddressSanitizer, UBSan, ThreadSanitizer; needs WSL with g++
 bash tests/run_window_selftest.sh   # a real WebView2 window; Windows only (more real-window scripts: tests/run_*_window.sh)
+bash tests/run_window_selftest_linux.sh   # a real GTK window on Linux or WSLg (more: tests/run_*_linux.sh)
 ```
 
 ## License

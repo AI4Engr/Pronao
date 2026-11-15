@@ -76,7 +76,9 @@
   window.pronao.onDragLeave = function (fn) { return window.pronao.on('drop.leave', fn); };
   (function () {
     var depth = 0, lastOver = 0;
-    var files = function (e) { var t = e.dataTransfer && e.dataTransfer.types; return window.__pronao_drop === true && !e.defaultPrevented && !!t && Array.prototype.indexOf.call(t, 'Files') >= 0; };
+    // (WebKitGTK lists a drag of files as 'text/uri-list', with no 'Files'; the program, which has the real paths, ignores a list that holds no file on this machine)
+    var kind = function (t) { return Array.prototype.indexOf.call(t, 'Files') >= 0 || (typeof window.__pronao_drop_native === 'function' && Array.prototype.indexOf.call(t, 'text/uri-list') >= 0); };
+    var files = function (e) { var t = e.dataTransfer && e.dataTransfer.types; return window.__pronao_drop === true && !e.defaultPrevented && !!t && kind(t); };
     var at = function (e) { return { x: Math.round(e.clientX), y: Math.round(e.clientY) }; };
     var say = function (name, payload) { window.__pronao_emit([name, payload]); };
     window.addEventListener('dragenter', function (e) {
@@ -101,6 +103,8 @@
       // the engine turns the File objects into paths for the program (the page never sees them)
       if (list && list.length && window.chrome && window.chrome.webview && window.chrome.webview.postMessageWithAdditionalObjects) {
         window.chrome.webview.postMessageWithAdditionalObjects('pronao.drop ' + p.x + ' ' + p.y, list);
+      } else if (typeof window.__pronao_drop_native === 'function') {
+        window.__pronao_drop_native(p.x, p.y);                 // (Linux: the program has the paths from the desktop's own drag data; this only says that the page saw the drop)
       }
     });
   })();

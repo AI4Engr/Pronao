@@ -25,8 +25,7 @@ Size: `scripts/pack_assets.sh` stores a file as a gzip stream when that makes it
 `Content-Encoding`, because WebView2 does not unpack an encoding on a response a program makes itself (the page received the gzip bytes when that was tried).
 Measured on the draw.io editor (see `examples/drawio`): 54 MB of files made a 55.8 MB program before, and 22.6 MB with this (after also leaving out about 6 MB
 of files that example does not use). A static Next.js export of about 120 files was 4 MB before this change; it was not measured again. This adds zlib to the native layer's
-link line (`-lz`; MinGW-w64 and Linux have it), and each request for a compressed file inflates it again, with no cache. One site per process, Windows only (a custom scheme in
-WebKitGTK is the Linux way), no range requests, no streaming. The origin is yours to choose: a front end ported from Tauri may expect `http://tauri.localhost`,
+link line (`-lz`; MinGW-w64 and Linux have it), and each request for a compressed file inflates it again, with no cache. One site per process, on Windows and on Linux (there as a custom scheme, `pronao://<host>/`, because WebKitGTK cannot intercept `http`: see appendix D), no range requests, no streaming. The origin is yours to choose: a front end ported from Tauri may expect `http://tauri.localhost`,
 because its server's CORS list already contains it.
 
 ## Giving the program to someone else

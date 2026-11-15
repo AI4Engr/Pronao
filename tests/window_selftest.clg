@@ -17,6 +17,8 @@ public:
     }
 };
 
+ext_fn int app_os_windows();
+
 int main() {
     App app = new App();
     Verdict verdict = new Verdict();
@@ -47,11 +49,17 @@ int main() {
         return 2;
     }
     std::vector<string> slowArgs;
-    slowArgs.push_back("-n");
-    slowArgs.push_back("{n:int:1:60}");
-    slowArgs.push_back("127.0.0.1");
-    if (!app.allowProgram("slow", "ping", slowArgs, 60000, 100000)) {
-        std::cout << "selftest FAILED: ping not found" << std::endl;
+    string slowProgram = "sleep";                // a program that takes n seconds: ping on Windows, sleep elsewhere
+    if (app_os_windows() == 1) {
+        slowProgram = "ping";
+        slowArgs.push_back("-n");
+        slowArgs.push_back("{n:int:1:60}");
+        slowArgs.push_back("127.0.0.1");
+    } else {
+        slowArgs.push_back("{n:int:1:60}");
+    }
+    if (!app.allowProgram("slow", slowProgram, slowArgs, 60000, 100000)) {
+        std::cout << "selftest FAILED: " << slowProgram << " not found" << std::endl;
         return 2;
     }
     app.setAsyncTimeout("aforever", 1000);

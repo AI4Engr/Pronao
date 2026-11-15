@@ -15,6 +15,13 @@
 #include "webview/webview.h"
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <gdk-pixbuf/gdk-pixbuf.h>
+#include <gtk/gtk.h>
+
+// the icon the build compiled in (scripts/build.sh ICON=<file.png>), absent otherwise
+extern const unsigned char app_icon_png[] __attribute__((weak));
+extern const unsigned long app_icon_png_size __attribute__((weak));
 #endif
 
 namespace {
@@ -126,6 +133,63 @@ LRESULT CALLBACK guardProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 #endif
 
+#ifndef _WIN32
+// Linux (GTK 3). The window's place is reported once it has stopped changing (a drag makes many configure events), as the RESTORED rectangle: while the window is
+// maximized or full screen the last ordinary rectangle is kept, which is what the application should save. Under Wayland a program cannot know where its window is;
+// there x and y are what GTK reports (0, 0), so a program that saves positions should save only the size on that platform.
+struct LinuxPlace {
+    int x = 0, y = 0, width = 0, height = 0;
+    guint timer = 0;
+};
+
+gboolean reportLinuxPlacement(gpointer data) {
+    GtkWidget* window = static_cast<GtkWidget*>(data);
+    App* a = static_cast<App*>(g_object_get_data(G_OBJECT(window), "pronao-app"));
+    LinuxPlace* place = static_cast<LinuxPlace*>(g_object_get_data(G_OBJECT(window), "pronao-place"));
+    if (!a || !place) return G_SOURCE_REMOVE;
+    place->timer = 0;
+    GdkWindow* gw = gtk_widget_get_window(window);
+    const GdkWindowState state = gw ? gdk_window_get_state(gw) : static_cast<GdkWindowState>(0);
+    if (state & (GDK_WINDOW_STATE_ICONIFIED | GDK_WINDOW_STATE_FULLSCREEN | GDK_WINDOW_STATE_WITHDRAWN)) return G_SOURCE_REMOVE;
+    const bool maximized = (state & GDK_WINDOW_STATE_MAXIMIZED) != 0;
+    if (!maximized) {
+        gtk_window_get_position(GTK_WINDOW(window), &place->x, &place->y);
+        gtk_window_get_size(GTK_WINDOW(window), &place->width, &place->height);
+    }
+    if (!a->track.load() || place->width <= 0) return G_SOURCE_REMOVE;
+    std::string record("window\0placement\0", 17);
+    for (long v : {static_cast<long>(place->x), static_cast<long>(place->y), static_cast<long>(place->width), static_cast<long>(place->height), maximized ? 1L : 0L}) {
+        record += std::to_string(v);
+        record += '\0';
+    }
+    a->calls.push(std::string(), record, 100);
+    return G_SOURCE_REMOVE;
+}
+
+gboolean onLinuxConfigure(GtkWidget* window, GdkEvent*, gpointer) {
+    LinuxPlace* place = static_cast<LinuxPlace*>(g_object_get_data(G_OBJECT(window), "pronao-place"));
+    if (place && !place->timer) place->timer = g_timeout_add(300, reportLinuxPlacement, window);
+    return FALSE;
+}
+
+gboolean onLinuxWindowState(GtkWidget* window, GdkEvent*, gpointer) {
+    return onLinuxConfigure(window, nullptr, nullptr);
+}
+
+// the colour scheme of the desktop changed (GTK's theme name or its dark preference): a real change queues the record "window" "theme" 0|1, once the program has asked
+void onLinuxThemeNotify(GObject*, GParamSpec*, gpointer window) {
+    App* a = static_cast<App*>(g_object_get_data(G_OBJECT(window), "pronao-app"));
+    if (!a) return;
+    const int mode = a->themeMode.load();
+    const int now = app_theme_system();
+    if (now < 0 || mode < 0 || now == a->systemTheme.exchange(now)) return;
+    std::string record("window\0theme\0", 13);
+    record += now == 1 ? "1" : "0";
+    record += '\0';
+    a->calls.push(std::string(), record, 100);
+}
+#endif
+
 // runs `op` on the UI thread (without waiting); 0 if the window is gone
 int onUi(int handle, std::function<void(webview::webview&)> op) {
     auto app = lookup(handle);
@@ -159,16 +223,61 @@ int app_open(std::string title, int width, int height, std::string html, std::st
                 const int refused = raw->calls.admit(id, req, raw->maxRequest, raw->maxQueued);
                 if (refused == 1 || refused == 2) w.resolve(id, 1, refusalJson(refused));
             }, nullptr);
+#ifndef _WIN32
+            // the page's drop event (src/bridge.js): the paths of the files come from GTK's drag data, not from the page (shim/posix/drop.cpp)
+            w.bind("__pronao_drop_native", [raw, &w](const std::string& id, const std::string& req, void*) {
+                long x = 0, y = 0;
+                if (std::sscanf(req.c_str(), "[%ld,%ld]", &x, &y) == 2) app_drop_deliver(raw->nav->handle, x, y);
+                w.resolve(id, 0, "null");
+            }, nullptr);
+#endif
 #ifdef _WIN32
             const std::string site = assetStore()->origin();
             if (!site.empty()) raw->nav->prefixes.push_back(site + "/");
             app_nav_install(w.browser_controller().value(), raw->nav, debug);
             app_assets_install(w.browser_controller().value(), assetStore());
             raw->controller = w.browser_controller().value();
+#else
+            // Linux (GTK 3, WebKitGTK): the same hooks as above, in shim/posix/nav.cpp and assets.cpp; the program's site is shown under pronao://<host>/
+            const std::string site = assetStore()->origin();
+            if (!site.empty()) raw->nav->prefixes.push_back(app_web_url(site) + "/");
+            app_nav_install(w.browser_controller().value(), raw->nav, debug);
+            app_assets_install(w.browser_controller().value(), assetStore());
+            raw->controller = w.browser_controller().value();
 #endif
             if (!init_js.empty()) w.init(init_js);
+#ifdef _WIN32
             if (!url.empty()) w.navigate(url);
+#else
+            if (!url.empty()) w.navigate(app_web_url(url));
+#endif
             else w.set_html(html);
+#ifndef _WIN32
+            // the close button (and Alt+F4): with app.confirmClose the program is told and decides, as WM_CLOSE is held back on Windows
+            GtkWidget* gtkWindow = static_cast<GtkWidget*>(w.window().value());
+            raw->hwnd = gtkWindow;
+            g_signal_connect(gtkWindow, "delete-event", G_CALLBACK(+[](GtkWidget*, GdkEvent*, gpointer p) -> gboolean {
+                App* a = static_cast<App*>(p);
+                if (!a->guard.load()) return FALSE;
+                a->calls.push(std::string(), std::string("window\0close_requested\0", 23), 100);
+                return TRUE;
+            }), raw);
+            if (app_icon_png && app_icon_png_size > 0) {                 // the program's icon (ICON= in scripts/build.sh), if it was given
+                GdkPixbufLoader* loader = gdk_pixbuf_loader_new_with_type("png", nullptr);
+                if (loader && gdk_pixbuf_loader_write(loader, app_icon_png, app_icon_png_size, nullptr) && gdk_pixbuf_loader_close(loader, nullptr)) {
+                    if (GdkPixbuf* pixbuf = gdk_pixbuf_loader_get_pixbuf(loader)) gtk_window_set_icon(GTK_WINDOW(gtkWindow), pixbuf);
+                }
+                if (loader) g_object_unref(loader);
+            }
+            g_object_set_data(G_OBJECT(gtkWindow), "pronao-app", raw);
+            g_object_set_data_full(G_OBJECT(gtkWindow), "pronao-place", new LinuxPlace(), +[](gpointer p) { delete static_cast<LinuxPlace*>(p); });
+            g_signal_connect(gtkWindow, "configure-event", G_CALLBACK(onLinuxConfigure), nullptr);
+            g_signal_connect(gtkWindow, "window-state-event", G_CALLBACK(onLinuxWindowState), nullptr);
+            if (GtkSettings* settings = gtk_settings_get_default()) {
+                g_signal_connect_object(settings, "notify::gtk-theme-name", G_CALLBACK(onLinuxThemeNotify), gtkWindow, static_cast<GConnectFlags>(0));
+                g_signal_connect_object(settings, "notify::gtk-application-prefer-dark-theme", G_CALLBACK(onLinuxThemeNotify), gtkWindow, static_cast<GConnectFlags>(0));
+            }
+#endif
 #ifdef _WIN32
             HWND hwnd = static_cast<HWND>(w.window().value());
             SetPropW(hwnd, L"pronao", raw);
@@ -259,7 +368,7 @@ int app_window_state(int handle, int state) {
         else ShowWindow(hwnd, state == 1 ? SW_MINIMIZE : state == 2 ? SW_MAXIMIZE : SW_RESTORE);
     });
 #else
-    return (void)handle, (void)state, -1;
+    return app_linux_state(handle, state);
 #endif
 }
 
@@ -279,7 +388,10 @@ int app_monitors(std::string& out) {
     out = c.primary + c.others;
     return out.empty() ? 4 : 0;
 #else
-    return (void)out, -1;
+    for (int h = 1;; h++) {                                  // the monitors are asked through any window that is open (GTK is used on its own thread)
+        if (!lookup(h)) { if (h > static_cast<int>(g_table.size())) return 4; continue; }
+        if (app_linux_monitors(h, out) == 0) return 0;
+    }
 #endif
 }
 
@@ -298,7 +410,12 @@ int app_window_theme(int handle, int mode) {
     });
     return ran ? rc : 4;
 #else
-    return (void)handle, (void)mode, -1;
+    if (mode < 0 || mode > 2) return 5;
+    auto app = lookup(handle);
+    if (!app) return 4;
+    app->systemTheme = app_theme_system();                 // (before the first change this program makes: app_theme_system keeps answering with the desktop's own setting)
+    app->themeMode = mode;
+    return app_linux_theme(handle, mode);
 #endif
 }
 
@@ -311,7 +428,12 @@ int app_drop_accept(int handle, int on) {
     const int ran = app_ui_call(handle, [&](void* window) { rc = app_drop_set(window, app->controller.load(), handle, on == 1); });
     return ran ? rc : 4;
 #else
-    return (void)handle, (void)on, -1;
+    if (on != 0 && on != 1) return 5;
+    auto app = lookup(handle);
+    if (!app) return 4;
+    int rc = 4;
+    const int ran = app_ui_call(handle, [&](void* window) { rc = app_drop_set(window, app->controller.load(), handle, on == 1); });
+    return ran ? rc : 4;
 #endif
 }
 
@@ -323,7 +445,7 @@ int app_window_placement(int handle, int x, int y, int width, int height, int ma
         if (maximized) ShowWindow(hwnd, SW_MAXIMIZE);
     });
 #else
-    return (void)handle, (void)x, (void)y, (void)width, (void)height, (void)maximized, -1;
+    return app_linux_placement(handle, x, y, width, height, maximized);
 #endif
 }
 
@@ -357,7 +479,7 @@ int app_window_rect(int handle, std::string& out) {
     out = text;
     return 0;
 #else
-    return (void)handle, out.clear(), -1;
+    return app_linux_rect(handle, out);
 #endif
 }
 
@@ -404,7 +526,7 @@ int app_window_style(int handle, int what, int on) {
         }
     });
 #else
-    return (void)handle, (void)what, (void)on, -1;
+    return app_linux_style(handle, what, on);
 #endif
 }
 
@@ -417,7 +539,7 @@ int app_window_drag(int handle, int edge) {
         SendMessageW(hwnd, WM_NCLBUTTONDOWN, edge == 0 ? HTCAPTION : static_cast<WPARAM>(edge), 0);          // returns when the button is released
     });
 #else
-    return (void)handle, (void)edge, -1;
+    return app_linux_drag(handle, edge);
 #endif
 }
 
@@ -436,7 +558,11 @@ int app_window_modal(int child, int owner, int on) {
     }
     return 0;
 #else
-    return (void)child, (void)owner, (void)on, -1;
+    auto c = lookup(child);
+    auto o = lookup(owner);
+    if (!c || !o || child == owner) return 4;
+    if (on) c->modalOwner = owner; else c->modalOwner.exchange(0);
+    return app_linux_modal(child, owner, on);
 #endif
 }
 
@@ -475,6 +601,9 @@ int app_limits(int handle, int max_request, int max_queued) {
 
 int app_navigation_allow(int handle, std::vector<std::string> prefixes) {
     auto app = lookup(handle);
+#ifndef _WIN32
+    for (auto& p : prefixes) p = app_web_url(p);        // the program's own site is shown under pronao://<host>/ here
+#endif
     if (app) { std::lock_guard<std::mutex> lock(app->nav->m); app->nav->prefixes = std::move(prefixes); }
     return app ? 1 : 0;
 }
@@ -531,6 +660,9 @@ int app_close(int handle) {
     app_watch_stop_all(handle);
     app_menu_forget(handle);
     app_tray_forget(handle);
+#ifndef _WIN32
+    app_drop_closed(handle);
+#endif
     app_terminate(handle);
     if (app->ui.joinable()) app->ui.join();
     app->calls.close();

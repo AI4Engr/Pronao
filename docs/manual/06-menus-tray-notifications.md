@@ -30,7 +30,7 @@ w.setChecked("view.grid", true);
   F1 to F12 may stand alone. A menu bar's top level must be submenus only.
 - **A click** (or a shortcut pressed while the page has the keyboard) reaches `onMenu` with the id. An id the menu does not have, a submenu and a greyed item are ignored even if the native layer reported them.
 - **Shortcuts** are matched in the browser engine before the page sees the key, so they work while the page holds the keyboard; the key is not passed on. Held-down keys do not repeat the action.
-- **Where it works:** Windows. Elsewhere `setMenu` returns false and the program runs without a bar.
+- **Where it works:** Windows and Linux (GTK menu bar; `tests/run_menu_linux.sh`). Elsewhere `setMenu` returns false and the program runs without a bar.
 - **Test:** `tests/menu_main.clg` (53 checks: the rules, the flat spec the native layer gets, click handling with a test double) and `tests/run_menu_window.sh` (a real window; items are chosen and keys typed from outside with `tests/window_poke.cpp`:
   the bar has the declared items, a chosen item and a shortcut reach the program, F5 ticks and unticks, a greyed item and its shortcut do nothing, the page fits under the bar, two controls that must fail).
 - **Not verified automatically:** opening the menu with the mouse and looking at it (drawing, high-DPI, keyboard navigation inside the menu), the Alt mnemonics, and that a screen reader can use the menu.
@@ -97,7 +97,8 @@ pronao.onNotificationClick(function (id) { /* the user clicked a notification TH
 
 - **What is checked:** the title is 1 to 63 bytes of text on one line, the text 1 to 255 bytes (line breaks allowed), no control characters, the kind is one of three, the id is a name (1 to 64 letters, digits, `.`, `_`, `-`).
   The page chooses nothing else: no icon, no sound, no link, no buttons. At most one notification every 2 seconds, for the application and the page together.
-- **How it is shown:** Windows' balloon / toast from a notification-area icon (no registration, no installer, no Start-menu shortcut needed). Under Windows 10 and 11 it appears as a toast and goes to the notification
+- **How it is shown on Linux:** through the desktop's notification service (`org.freedesktop.Notifications` on the session bus); there is no tray icon, a click on the notification (its default action) reaches the program as on Windows, and with no service `notify` returns `unsupported`. `tests/run_notify_linux.sh` runs it against a stand-in service.
+- **How it is shown (Windows):** Windows' balloon / toast from a notification-area icon (no registration, no installer, no Start-menu shortcut needed). Under Windows 10 and 11 it appears as a toast and goes to the notification
   centre. The notification-only icon is added when there is something to say and removed when the notification is clicked or has timed out (and, whatever happens, after 15 seconds).
 - **A click** runs the handler of `onNotificationClick` with the id (`""` if none was given); for a notification the page asked for it also reaches that window's page as the event `notification.click {id}`.
 - **Whether it is shown at all is the system's decision:** Focus Assist / Do Not Disturb, the user's notification settings, and a full-screen program can all hide it, and then no click will ever come. A program must not rely on a

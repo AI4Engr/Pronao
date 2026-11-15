@@ -13,7 +13,7 @@
 # console window. Its output (std::cout) goes nowhere then, which is why the tests use the console build.
 # APP_VERSION=1.2.3 (APP_NAME, APP_COMPANY, APP_DESCRIPTION, APP_COPYRIGHT): the version resource of the exe, shown by Explorer under Properties > Details.
 # ICON=<file.ico>: the program's icon (Windows): compiled into the exe as resource 1, so Explorer shows it, and the window (and so the taskbar) uses it. Without
-# it the system's default icon is shown. scripts/make_icon.py makes a placeholder.
+# it the system's default icon is shown. scripts/make_icon.py makes a placeholder. On Linux ICON is a .png and only the window uses it (see below in the script).
 # SIGN_COMMAND='signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 THUMBPRINT %1' (RELEASE=1 only): run as the very last step, on the finished exe, with %1
 # replaced by its path (as one argument, whatever characters the path has; write %1 bare, not in quotes). Any signing tool works: signtool, relic, artifact-signing-cli, osslsigncode,
 # a script. SIGN_VERIFY_COMMAND (same %1) runs after it, for example 'signtool verify /pa %1'. If either fails, or the signing command leaves the exe unchanged, the build FAILS and the
@@ -139,7 +139,8 @@ fi
 SHIM="${SHIM:-$HERE/shim}"      # (tests/negative_controls.sh builds against a doctored copy)
 DOUBLES="${DOUBLES:-$HERE/tests/doubles}"
 # a native source depends on the headers beside it: they are part of its cache key
-NKEY="$(cat "$SHIM"/*.h "$SHIM/$PLAT"/*.h "$DOUBLES"/*.h 2>/dev/null | md5sum | cut -d' ' -f1)"
+# (shim/posix has no .h: the failing cat of an empty glob must not end the script under pipefail)
+NKEY="$( { cat "$SHIM"/*.h "$SHIM/$PLAT"/*.h "$DOUBLES"/*.h 2>/dev/null || true; } | md5sum | cut -d' ' -f1)"
 # ASSETS=<folder>: the web files compiled into the program (served from memory; see scripts/pack_assets.sh)
 bash "$HERE/scripts/pack_assets.sh" "${ASSETS:--}" "$WORK/assets" || exit 1
 NATIVE=("$SHIM/watch.cpp" "$SHIM/assets.cpp" "$WORK/assets/assets_embedded.cpp" "$SHIM/os.cpp" "$SHIM/$PLAT/fs.cpp" "$SHIM/$PLAT/proc.cpp" "$SHIM/$PLAT/watch.cpp")
@@ -148,6 +149,14 @@ if [ "$MODE" = "--headless" ]; then
     LINK="-pthread -lz"
 else
     INC="-I $HERE/third_party/webview/core/include -I $HERE/third_party/webview2/build/native/include"
+    GTKLIBS=""
+    if [ "$PLAT" = posix ]; then
+        # the window is GTK 3 with WebKitGTK (the webview library's Linux backend): 4.1 if it is installed, else 4.0
+        WEBKIT=""; for v in webkit2gtk-4.1 webkit2gtk-4.0; do pkg-config --exists "$v" 2>/dev/null && { WEBKIT="$v"; break; }; done
+        [ -n "$WEBKIT" ] && pkg-config --exists gtk+-3.0 || { echo "build.sh: a window on Linux needs GTK 3 and WebKitGTK: sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev (or -4.0-dev)" >&2; exit 1; }
+        INC="$INC $(pkg-config --cflags gtk+-3.0 "$WEBKIT")"
+        GTKLIBS="$(pkg-config --libs gtk+-3.0 "$WEBKIT")"
+    fi
     spawn cc "$SHIM/app_shim.cpp" "$WORK/app_shim.o" --std=c++14 -O1 -Wno-unknown-pragmas $SECTIONS ${RELEASE:+-DAPP_RELEASE} $INC
     OBJS+=("$WORK/app_shim.o")
     NATIVE+=("$SHIM/$PLAT/dialog.cpp" "$SHIM/$PLAT/shell.cpp" "$SHIM/$PLAT/instance.cpp" "$SHIM/$PLAT/menu.cpp" "$SHIM/$PLAT/runtime.cpp")
@@ -157,8 +166,15 @@ else
     [ -f "$SHIM/$PLAT/drop.cpp" ] && NATIVE+=("$SHIM/$PLAT/drop.cpp")
     NATIVE+=("$SHIM/$PLAT/http.cpp")
     [ -f "$SHIM/$PLAT/assets.cpp" ] && NATIVE+=("$SHIM/$PLAT/assets.cpp")
-    LINK="-static -lz -lwinhttp -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
-    if [ "${GUI:-${RELEASE:+1}}" = 1 ] && [ "$PLAT" = win ]; then LINK="-mwindows $LINK"; fi
+    [ -f "$SHIM/$PLAT/window.cpp" ] && NATIVE+=("$SHIM/$PLAT/window.cpp")
+    [ -f "$SHIM/$PLAT/gtkmenu.cpp" ] && NATIVE+=("$SHIM/$PLAT/gtkmenu.cpp")
+    [ -f "$SHIM/$PLAT/notify.cpp" ] && NATIVE+=("$SHIM/$PLAT/notify.cpp")
+    if [ "$PLAT" = win ]; then
+        LINK="-static -lz -lwinhttp -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -luuid"
+        if [ "${GUI:-${RELEASE:+1}}" = 1 ]; then LINK="-mwindows $LINK"; fi
+    else
+        LINK="-pthread -lz -ldl $GTKLIBS"
+    fi
 fi
 for n in "${NATIVE[@]}"; do
     o="$WORK/native_$(basename "$(dirname "$n")")_$(basename "$n" .cpp).o"
@@ -168,6 +184,22 @@ done
 spawn cc "$EMBED" "$WORK/embedded.o"
 finish
 [ -f "$WORK/assets/assets_blob.o" ] && OBJS+=("$WORK/assets/assets_blob.o")
+if [ -n "${ICON:-}" ] && [ "$MODE" != "--headless" ] && [ "$PLAT" != win ]; then
+    # Linux: ICON is a .png (at least 48x48 is best), compiled in as a byte array; the window uses it (the title bar, the task switcher, the taskbar of most desktops).
+    # A desktop shows the icon of an INSTALLED program from its .desktop file, not from the executable: that file is the packager's (docs/manual/10-distribution.md).
+    [ -f "$ICON" ] || { echo "ICON $ICON does not exist" >&2; exit 1; }
+    [ "$(head -c8 "$ICON" | od -An -tx1 | tr -d ' 
+')" = "89504e470d0a1a0a" ] || { echo "ICON $ICON is not a .png file (the Linux build takes a PNG)" >&2; exit 1; }
+    {
+        echo 'extern const unsigned char app_icon_png[] = {'
+        od -An -v -tu1 "$ICON" | tr -s ' 
+' ',' | sed 's/^,//'
+        echo '0};'
+        echo "extern const unsigned long app_icon_png_size = $(stat -c %s "$ICON");"
+    } > "$WORK/icon_data.cpp"
+    "$CXX" -c "$WORK/icon_data.cpp" -o "$WORK/icon_data.o" || { echo "the icon could not be compiled in" >&2; exit 1; }
+    OBJS+=("$WORK/icon_data.o")
+fi
 if { [ -n "${ICON:-}" ] || [ -n "${APP_VERSION:-}" ]; } && [ "$MODE" != "--headless" ] && [ "$PLAT" = win ]; then
     : > "$WORK/icon.rc"
     if [ -n "${ICON:-}" ]; then

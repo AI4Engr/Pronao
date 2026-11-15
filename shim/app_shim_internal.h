@@ -25,6 +25,20 @@ void app_nav_install(void* controller, std::shared_ptr<NavRules> rules, int debu
 class AssetStore;
 std::shared_ptr<AssetStore> assetStore();
 void app_assets_install(void* controller, std::shared_ptr<AssetStore> store);
+#ifndef _WIN32
+// Linux: the address a page is shown under for an address of the program's site ("http://host/x" -> "pronao://host/x", see shim/posix/assets.cpp); any other address as it is.
+std::string app_web_url(const std::string& url);
+
+// Linux (shim/posix/window.cpp): window control with GTK, each run on the window's UI thread.
+int app_linux_state(int handle, int state);
+int app_linux_monitors(int handle, std::string& out);
+int app_linux_rect(int handle, std::string& out);
+int app_linux_style(int handle, int what, int on);
+int app_linux_drag(int handle, int edge);
+int app_linux_modal(int child, int owner, int on);
+int app_linux_placement(int handle, int x, int y, int width, int height, int maximized);
+int app_linux_theme(int handle, int mode);
+#endif
 
 // Stops every watch of a window; used by app_close, never by CeeLing.
 int app_watch_stop_all(int handle);
@@ -48,6 +62,11 @@ int app_theme_page(void* controller, int mode);
 // shim/win/drop.cpp: switches file-drop handling on or off for a window (UI thread only). app_drop_forget: the window is being destroyed.
 int app_drop_set(void* nativeWindow, void* controller, int handle, bool on);
 void app_drop_forget(void* nativeWindow);
+#ifndef _WIN32
+// Linux (shim/posix/drop.cpp): the page has seen a drop (x, y in CSS pixels): queue the paths the desktop handed the window with it. app_drop_closed: the window is gone.
+void app_drop_deliver(int handle, long x, long y);
+void app_drop_closed(int handle);
+#endif
 
 // A modal window has closed: its owner can be used again. Called from the modal window's window procedure.
 void app_window_modal_ended(int owner);

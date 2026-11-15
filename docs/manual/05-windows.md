@@ -20,7 +20,7 @@ With `confirmClose`, pressing the window's X (or Alt+F4) no longer closes the wi
 record. If the page has said it has unsaved work (`setDirty`), CeeLing asks with a native box whose text is the
 application's, never the page's, and closes only on "Yes"; with nothing unsaved the window just closes. `window.close` is the
 page closing its own window and is not asked about. Title and size values are checked in CeeLing before they reach the
-window. Windows only for now; the real-window self-test presses the X, answers the box and checks the title, size, maximize
+window. Windows and Linux (appendix D); the real-window self-test presses the X, answers the box and checks the title, size, maximize
 and restore.
 
 ## Window layout: position, full screen, always on top, no title bar, fixed size, modal windows
@@ -147,5 +147,6 @@ python3 scripts/make_icon.py app.ico my-app [RRGGBB]         # a placeholder: a 
 - **Where it shows (Windows):** in Explorer (the icon is compiled into the exe as resource 1), in the window's title bar, in Alt+Tab and on the taskbar (the window takes the same resource, big and small).
   Without `ICON` the system's default icon stays. The build refuses a file that is not an `.ico` and one that does not exist.
 - **Replace the placeholder** with a real `.ico` that has several sizes (16, 24, 32, 48, 256). The placeholder is a plain 32-bit image so that no tool is needed to make it.
-- **Not done:** the tray icon (it will use the same resource), Linux and macOS icons, a version resource (the "Details" tab of the exe's properties).
+- **On Linux** `ICON=<file.png>` is compiled in as bytes and used for the window (the title bar and the task switcher); a desktop shows an installed program's icon from its `.desktop` file, which is the packager's. `ICON` must be a PNG there.
+- **Not done:** the tray icon (it will use the same resource), macOS icons, a version resource (the "Details" tab of the exe's properties).
 - **Test:** `tests/run_icon.sh` builds with and without an icon and reads the colour in the middle of the icon back from the exe and from the running window, big and small; the build without an icon must not show it.

@@ -14,6 +14,8 @@ public:
     }
 };
 
+ext_fn int app_os_windows();
+
 int main() {
     App app = new App();
     app.command("ping", closure Command [] (Item args) {
@@ -26,7 +28,12 @@ int main() {
     }
     int handle = app.handle;
     app.command("selftest", closure Command [verdict, handle] (Item args) {
-        string expected = "{\"origin\":\"http://app.localhost\",\"css\":\"rgb(1, 2, 3)\",\"script\":true,\"json\":42,\"png\":true,\"missing\":404,\"alias\":true,\"storage\":\"v\",\"bridge\":\"pong\",\"frame\":true,\"blocked\":2,\"still\":true}";
+        // the program's files are shown under http://app.localhost on Windows and pronao://app.localhost on Linux (shim/posix/assets.cpp); nothing else differs
+        string origin = "http://app.localhost";
+        if (app_os_windows() != 1) {
+            origin = "pronao://app.localhost";
+        }
+        string expected = "{\"origin\":\"" + origin + "\",\"css\":\"rgb(1, 2, 3)\",\"script\":true,\"json\":42,\"png\":true,\"missing\":404,\"alias\":true,\"storage\":\"v\",\"bridge\":\"pong\",\"frame\":true,\"blocked\":2,\"still\":true}";
         string got = printUnformatted(args);
         verdict.ok = got == expected;
         if (got != expected) {
