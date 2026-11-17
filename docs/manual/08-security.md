@@ -21,7 +21,13 @@ app.allowOnlyCommands(names);                    // optional: this window's page
   navigation and a popup, and fails if the guard is removed. Windows only.
 - **A window's own command list.** `app.allowOnlyCommands(names)` (after the commands are registered) limits what this window's
   page can call; anything else, registered or not, is answered `{code: "forbidden"}` (so names cannot be probed), and a name that
-  is not registered makes the call return false and change nothing. One `App` is one window; a second window will need its own.
+  is not registered makes the call return false and change nothing. (One `App` now serves any number of windows, each with a list of its own.)
+- **What a second window can reach (checked 2026-11-16, `tests/isolation_main.clg`).** The folders the application allowed and the files the user gave (a dialog pick, a dropped
+  file) belong to **the program**, not to a window: the file policy keeps no record of which window a grant came from. So when the user picks a file in window A, window B's page
+  can read it too, if B may call `fs.read`; a file dropped on B is readable from A. Windows of one program share one site and one origin, so both pages are the application's own
+  code, but if one of them shows something less trusted, give it a list of its own (`allowOnlyCommands`) that leaves the file commands out: the test shows such a window gets
+  `forbidden` for both kinds of grant. `revokeGrants()` ends every grant at once. **Not done:** grants that belong to the window that received them (and end when it closes).
+  The two checks that describe today's behaviour are marked KNOWN GAP in the test and are the ones that change when that is built.
 
 ## What is and is not checked
 

@@ -1,0 +1,119 @@
+//ceeling 0.1
+// What a SECOND window can reach through what the user gave the FIRST (F4 in TODO.md). The user's own grants, a file picked in a dialog and a file dropped on a window, are
+// applied to the program-wide file policy (src/files.clg `FileGate`), which does not record which window they came from. This program opens two windows of one program and
+// states what each can do with the other's grants, through the same queue a page uses, against the headless window double.
+// The checks marked KNOWN GAP describe today's behaviour on purpose: when grants become per window they are the ones that must change.
+#include "text.clh"
+#include "core.clh"
+#include "files.clh"
+#include "settings.clh"
+#include "app.clh"
+#include "support.clh"
+
+ext_fn int app_test_inject(int handle, string id, string request);
+ext_fn int app_test_take_response(int handle, ref string id, ref int status, ref string json);
+ext_fn int app_test_response_ready(int handle);
+ext_fn int app_os_windows();
+ext_fn int app_test_make_temp_dir(ref string out);
+ext_fn int app_test_write_raw(string path, string data);
+ext_fn int app_test_dialog_push(string answer);
+ext_fn int app_test_drop(int handle, string kind, int x, int y, string paths);
+
+// a path under the scratch folder in the form the system writes it (the policy compares paths as the system gives them)
+string under(string dir, string leaf) {
+    if (app_os_windows() == 1) {
+        return dir + "\\" + leaf;
+    }
+    return dir + "/" + leaf;
+}
+
+// one request from window h's page, served until its answer is there: "status json"
+string roundTripOn(App app, int h, string id, string request) {
+    app_test_inject(h, id, request);
+    int turns = 0;
+    while (app_test_response_ready(h) == 0 && turns < 500) {
+        app.serveOne(20);
+        turns = turns + 1;
+    }
+    string gotId = "";
+    int status = 0;
+    string json = "";
+    if (app_test_take_response(h, gotId, status, json) != 1) {
+        return "NO RESPONSE";
+    }
+    return intToString(status) + " " + json;
+}
+
+// the path list of a drop record: each path ended by a NUL
+string nul(string a) {
+    string r = a;
+    r.push_back(char(0));
+    return r;
+}
+
+string readOf(App app, int window, string id, string path) {
+    return roundTripOn(app, window, id, requestText("fs.read", pathArgs(path)));
+}
+
+int main() {
+    App app = new App();
+    string dir = "";
+    app_test_make_temp_dir(dir);
+    string pickedInA = under(dir, "picked_in_a.txt");
+    string droppedOnB = under(dir, "dropped_on_b.txt");
+    string untouched = under(dir, "untouched.txt");
+    app_test_write_raw(pickedInA, "A's file");
+    app_test_write_raw(droppedOnB, "B's file");
+    app_test_write_raw(untouched, "nobody chose this");
+    app.enableFileCommands(1000);
+    app.enableDialogCommands();
+    app.command("ping", closure Command [] (Item args) {
+        return createString("pong");
+    });
+    check("no window yet", app.windows.count() == 0);
+    check("window A opens", app.open("a", 100, 100, "<html></html>", "", false));
+    int a = app.handle;
+    int b = app.openWindow("b", 100, 100, false, "");
+    check("window B opens", b != 0 && a != b);
+    check("drops are accepted (the user gives a file by dropping it on a window)", app.enableFileDrop(4, false));
+
+    // nothing is reachable before the user gives something
+    check("neither window reads a file before anyone chose it", startsWithText(readOf(app, a, "n1", pickedInA), "1 {\"code\":\"forbidden\"") &&
+          startsWithText(readOf(app, b, "n2", pickedInA), "1 {\"code\":\"forbidden\""));
+
+    // A's user picks a file in a dialog that A's page opened
+    app_test_dialog_push("path:" + pickedInA);
+    string pick = roundTripOn(app, a, "p1", requestText("dialog.open", createObject()));
+    check("A's page picks a file in a dialog", startsWithText(pick, "0 {\"path\":\""));
+    check("A reads the file its user picked", readOf(app, a, "r1", pickedInA) == "0 {\"text\":\"A's file\"}");
+    check("KNOWN GAP (F4): B reads the file that A's user picked: a dialog grant belongs to the program, not to a window",
+          readOf(app, b, "r2", pickedInA) == "0 {\"text\":\"A's file\"}");
+    check("neither window reads a file nobody chose", startsWithText(readOf(app, b, "r3", untouched), "1 {\"code\":\"forbidden\"") &&
+          startsWithText(readOf(app, a, "r3a", untouched), "1 {\"code\":\"forbidden\""));
+
+    // a file is dropped on B
+    app_test_drop(b, "files", 10, 20, nul(droppedOnB));
+    int turns = 0;
+    while (turns < 20) {
+        app.serveOne(10);
+        turns = turns + 1;
+    }
+    check("B reads the file dropped on it", readOf(app, b, "r4", droppedOnB) == "0 {\"text\":\"B's file\"}");
+    check("KNOWN GAP (F4): A reads the file dropped on B: a drop grant belongs to the program, not to a window",
+          readOf(app, a, "r5", droppedOnB) == "0 {\"text\":\"B's file\"}");
+
+    // what the program can do today about it: B's own list of commands leaves out the file commands
+    std::vector<string> onlyPing;
+    onlyPing.push_back("ping");
+    Window windowB = app.windows.get(b);
+    check("B is given a list of its own that leaves out the file commands", windowB.allowOnlyCommands(onlyPing));
+    check("then B cannot read what A's user picked, nor its own dropped file (the command is forbidden to it)",
+          startsWithText(readOf(app, b, "r6", pickedInA), "1 {\"code\":\"forbidden\"") && startsWithText(readOf(app, b, "r7", droppedOnB), "1 {\"code\":\"forbidden\""));
+    check("and A, which has the whole list, still reads what its user picked", readOf(app, a, "r8", pickedInA) == "0 {\"text\":\"A's file\"}");
+
+    // revoking: the program ends every grant at once
+    app.revokeGrants();
+    check("after revokeGrants neither window reads a granted file", startsWithText(readOf(app, a, "r9", pickedInA), "1 {\"code\":\"forbidden\"") &&
+          startsWithText(readOf(app, a, "r10", droppedOnB), "1 {\"code\":\"forbidden\""));
+    return 0;
+}

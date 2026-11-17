@@ -23,6 +23,7 @@ EXPECTED_MENU=100
 EXPECTED_NOTIFY=33
 EXPECTED_LAYOUT=32
 EXPECTED_SYSTEM=48
+EXPECTED_ISOLATION=15
 W="${TMPDIR:-/tmp}/pronao-headless"
 rm -rf "$W"; mkdir -p "$W"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLAT=win ;; *) PLAT=posix ;; esac
@@ -114,6 +115,8 @@ BS=("$B1" "$B2" "$B3" "$B4" "$B5" "$B6" "$B7" "$B8" "$B9" "$B10" "$B11")
 BS+=($!)
 ( EXTRA="$HERE/tests/support.clg" WORK="$W/work_http_main" bash "$HERE/scripts/build.sh" "$HERE/tests/http_main.clg" "$W/http_main.exe" --headless > "$W/http_main.build" 2>&1 ) &
 BS+=($!)
+( EXTRA="$HERE/tests/support.clg" WORK="$W/work_isolation_main" bash "$HERE/scripts/build.sh" "$HERE/tests/isolation_main.clg" "$W/isolation_main.exe" --headless > "$W/isolation_main.build" 2>&1 ) &
+BS+=($!)
 
 for p in "${BS[@]}"; do wait "$p"; done
 runProgram files_main "$EXPECTED_FILES" &
@@ -145,9 +148,12 @@ NAMES="$NAMES file_extras_main"
 runProgram http_main "$EXPECTED_HTTP" &
 PIDS+=($!)
 NAMES="$NAMES http_main"
+runProgram isolation_main "$EXPECTED_ISOLATION" &
+PIDS+=($!)
+NAMES="$NAMES isolation_main"
 for p in "${PIDS[@]}" "${TPIDS[@]}"; do wait "$p"; done
 
-for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main file_extras_main site_main http_main; do
+for n in headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main file_extras_main site_main http_main isolation_main; do
     [ -f "$W/$n.log" ] || continue
     cat "$W/$n.log"
     [ "$(cat "$W/$n.verdict" 2> /dev/null)" = ok ] || OK=0
