@@ -24,6 +24,7 @@ TSAN="-fsanitize=thread -fno-omit-frame-pointer -g -O1"
 LIBS="cjson_item cjson_api cjson_parse cjson_print $APP_MODULES embedded"
 EXPECTED_SITE=38
 EXPECTED_HTTP=82
+EXPECTED_ISOLATION=23
 MAXPAR="${MAXPAR:-8}"
 mkdir -p sec
 
@@ -113,7 +114,8 @@ sec_asan_menu() { sec_asan_program menu_main $EXPECTED_MENU; }
 sec_asan_notify() { sec_asan_program notify_main $EXPECTED_NOTIFY; }
 sec_asan_layout() { sec_asan_program layout_main $EXPECTED_LAYOUT; }
 sec_asan_system() { sec_asan_program system_main $EXPECTED_SYSTEM; }
-sec_asan_http() { EXTRA_LIBS=support sec_asan_program http_main $EXPECTED_HTTP; }
+# (one section for both: they share the test helpers' object file, which two sections building at the same time would race on)
+sec_asan_http() { EXTRA_LIBS=support sec_asan_program http_main $EXPECTED_HTTP && EXTRA_LIBS=support sec_asan_program isolation_main $EXPECTED_ISOLATION; }
 
 sec_asan_site() {
     local rc pass bad

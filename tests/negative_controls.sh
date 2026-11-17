@@ -42,7 +42,7 @@ s = s.replace(old, new)
 open(p, 'w', encoding='utf-8', newline='').write(s.replace('\n', '\r\n') if crlf else s)
 PYEOF
     local extra=""
-    [ "$5" = "file_extras_main" ] || [ "$5" = "http_main" ] && extra="$HERE/tests/support.clg"
+    [ "$5" = "file_extras_main" ] || [ "$5" = "http_main" ] || [ "$5" = "isolation_main" ] && extra="$HERE/tests/support.clg"
     local assets="-"
     [ "$5" = "site_main" ] && assets="$HERE/tests/site"
     ASSETS="$assets" EXTRA="$extra" SRC="$dir/src" SHIM="$dir/shim" DOUBLES="$dir/tests/doubles" WORK="$dir/work" bash "$HERE/scripts/build.sh" "$HERE/tests/$5.clg" "$dir/t.exe" --headless > "$dir/build.log" 2>&1 || { echo "BUILD FAILED: $1"; tail -5 "$dir/build.log"; bad=1; return; }
@@ -64,6 +64,11 @@ control "watch limit" app.clg 'if (owner.watches.states.size() >= 32) {' 'if (fa
 control "dialog title check" dialogs.clg 'if (!plainText(title, 200)) {' 'if (false) {' headless_main "an over-long title is refused"
 control "a call is answered once" shim/queue.h '    bool answer(const std::string& id) { std::lock_guard<std::mutex> l(m_); return pending_.erase(id) > 0; }' '    bool answer(const std::string& id) { return true; }' headless_main "and nothing else arrives"
 control "a window command list" dispatch.clg '        if (!defaultRestricted) {' '        if (true) {' headless_main "a registered command that is not listed is forbidden"
+control "a grant is seen only by its window" files.clg '        return grant[i] == 0 || owner[i] == 0 || caller == 0 || shared || owner[i] == caller;' '        return true;' isolation_main "B does not: a dialog grant belongs"
+control "the dispatcher tells the file policy who is calling" dispatch.clg '                files.caller = appHandle;' '                files.caller = 0;' isolation_main "B does not: a dialog grant belongs"
+control "a drop is granted to the window it was dropped on" app.clg '        gate.caller = from;                       // what is dropped on a window is granted to that window' '        gate.caller = 0;' isolation_main "A does not: a drop grant belongs"
+control "a closed window keeps no grants" app.clg '        gate.revokeGrantsOf(gone);                // a closed window keeps no grants' '' isolation_main "withdrawn when A closed"
+control "shareGrants(false) closes again" files.clg '        return grant[i] == 0 || owner[i] == 0 || caller == 0 || shared || owner[i] == caller;' '        return grant[i] == 0 || owner[i] == 0 || caller == 0 || owner[i] == caller;' isolation_main "with shareGrants(true) B reads"
 control "dev server must be loopback" windows.clg '    if (host != "localhost" && host != "127.0.0.1" && host != "[::1]") {' '    if (false) {' headless_main "another host is refused"
 control "pending calls are told apart by window" later.clg '            if (ids[i] == id && handles[i] == handle) {' '            if (ids[i] == id) {' headless_main "a record for window b settles b's pending call only"
 control "cancel tags are told apart by window" dispatch.clg '            if (tags[i] == tag && tagHandles[i] == handle) {' '            if (tags[i] == tag) {' headless_main "and leaves a's call with the same tag and id running"

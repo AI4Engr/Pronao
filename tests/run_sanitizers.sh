@@ -23,7 +23,7 @@ rm -rf "$BASE/repo/shim_nolock"
 bash "$HERE/scripts/pack_assets.sh" - "$BASE/repo"          # (no embedded web files in these builds)
 
 # transpile everything twice: plain (work) and with the pooled allocator (work_pool)
-MAINS="headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main site_main http_main"
+MAINS="headless_main files_main programs_main store_main links_main instance_main placement_main menu_main notify_main layout_main system_main site_main http_main isolation_main"
 TESTLIB="support"          # the helpers http_main uses (linked into that program only)
 for variant in work work_pool; do
     flags=""; [ "$variant" = "work_pool" ] && flags="--pool-shared"
@@ -100,7 +100,8 @@ cp "$HERE/tests/wsl_run.sh" "$HERE/scripts/modules.sh" "$BASE/"
 
 if command -v cygpath >/dev/null 2>&1; then
     # Windows: the sanitizer half runs in WSL, which reaches the folder as /mnt/<drive>/... (asked of WSL itself, so any drive works)
-    WSL_BASE="$(MSYS_NO_PATHCONV=1 wsl ${WSL_DISTRO:+-d "$WSL_DISTRO"} -- wslpath -a "$(cygpath -m "$BASE")" | tr -d '')"
+    WSL_BASE="$(MSYS_NO_PATHCONV=1 wsl ${WSL_DISTRO:+-d "$WSL_DISTRO"} -- wslpath -a "$(cygpath -m "$BASE")" | tr -d '
+')"
     [ -n "$WSL_BASE" ] || { echo "WSL did not translate $BASE (is WSL installed? set WSL_DISTRO=<name> to choose a distribution)"; exit 1; }
     MSYS_NO_PATHCONV=1 wsl ${WSL_DISTRO:+-d "$WSL_DISTRO"} -- bash "$WSL_BASE/wsl_run.sh" "$WSL_BASE"
 else

@@ -1,8 +1,8 @@
 //ceeling 0.1
-// What a SECOND window can reach through what the user gave the FIRST (F4 in TODO.md). The user's own grants, a file picked in a dialog and a file dropped on a window, are
-// applied to the program-wide file policy (src/files.clg `FileGate`), which does not record which window they came from. This program opens two windows of one program and
-// states what each can do with the other's grants, through the same queue a page uses, against the headless window double.
-// The checks marked KNOWN GAP describe today's behaviour on purpose: when grants become per window they are the ones that must change.
+// What a SECOND window can reach through what the user gave the FIRST (F4 in TODO.md). A file picked in a dialog or dropped on a window is granted to THAT window only
+// (src/files.clg `FileGate`: an owner for every grant, the calling window told by the dispatcher); the folders the application allowed are every window's. This program opens
+// two windows of one program and states what each can reach, through the same queue a page uses, against the headless window double. Before 2026-11-16 the grants were
+// program-wide: two of these checks then said B reads what A's user picked and A reads what was dropped on B (they are the ones that changed).
 #include "text.clh"
 #include "core.clh"
 #include "files.clh"
@@ -18,6 +18,8 @@ ext_fn int app_test_make_temp_dir(ref string out);
 ext_fn int app_test_write_raw(string path, string data);
 ext_fn int app_test_dialog_push(string answer);
 ext_fn int app_test_drop(int handle, string kind, int x, int y, string paths);
+ext_fn int app_test_close_window(int handle);
+ext_fn int app_test_mkdir_raw(string path);
 
 // a path under the scratch folder in the form the system writes it (the policy compares paths as the system gives them)
 string under(string dir, string leaf) {
@@ -51,6 +53,10 @@ string nul(string a) {
     return r;
 }
 
+bool forbidden(string reply) {
+    return startsWithText(reply, "1 {\"code\":\"forbidden\"");
+}
+
 string readOf(App app, int window, string id, string path) {
     return roundTripOn(app, window, id, requestText("fs.read", pathArgs(path)));
 }
@@ -78,18 +84,15 @@ int main() {
     check("drops are accepted (the user gives a file by dropping it on a window)", app.enableFileDrop(4, false));
 
     // nothing is reachable before the user gives something
-    check("neither window reads a file before anyone chose it", startsWithText(readOf(app, a, "n1", pickedInA), "1 {\"code\":\"forbidden\"") &&
-          startsWithText(readOf(app, b, "n2", pickedInA), "1 {\"code\":\"forbidden\""));
+    check("neither window reads a file before anyone chose it", forbidden(readOf(app, a, "n1", pickedInA)) && forbidden(readOf(app, b, "n2", pickedInA)));
 
     // A's user picks a file in a dialog that A's page opened
     app_test_dialog_push("path:" + pickedInA);
     string pick = roundTripOn(app, a, "p1", requestText("dialog.open", createObject()));
     check("A's page picks a file in a dialog", startsWithText(pick, "0 {\"path\":\""));
     check("A reads the file its user picked", readOf(app, a, "r1", pickedInA) == "0 {\"text\":\"A's file\"}");
-    check("KNOWN GAP (F4): B reads the file that A's user picked: a dialog grant belongs to the program, not to a window",
-          readOf(app, b, "r2", pickedInA) == "0 {\"text\":\"A's file\"}");
-    check("neither window reads a file nobody chose", startsWithText(readOf(app, b, "r3", untouched), "1 {\"code\":\"forbidden\"") &&
-          startsWithText(readOf(app, a, "r3a", untouched), "1 {\"code\":\"forbidden\""));
+    check("B does not: a dialog grant belongs to the window whose dialog it was", forbidden(readOf(app, b, "r2", pickedInA)));
+    check("neither window reads a file nobody chose", forbidden(readOf(app, b, "r3", untouched)) && forbidden(readOf(app, a, "r3a", untouched)));
 
     // a file is dropped on B
     app_test_drop(b, "files", 10, 20, nul(droppedOnB));
@@ -99,21 +102,51 @@ int main() {
         turns = turns + 1;
     }
     check("B reads the file dropped on it", readOf(app, b, "r4", droppedOnB) == "0 {\"text\":\"B's file\"}");
-    check("KNOWN GAP (F4): A reads the file dropped on B: a drop grant belongs to the program, not to a window",
-          readOf(app, a, "r5", droppedOnB) == "0 {\"text\":\"B's file\"}");
+    check("A does not: a drop grant belongs to the window it was dropped on", forbidden(readOf(app, a, "r5", droppedOnB)));
+    check("and A still reads its own, B still reads its own, and B does not read A's", readOf(app, a, "r5a", pickedInA) == "0 {\"text\":\"A's file\"}" &&
+          readOf(app, b, "r5b", droppedOnB) == "0 {\"text\":\"B's file\"}" && forbidden(readOf(app, b, "r5c", pickedInA)));
 
-    // what the program can do today about it: B's own list of commands leaves out the file commands
+    // a folder the application allowed is every window's, grants are not
+    string sharedDir = under(dir, "shared");
+    app_test_mkdir_raw(sharedDir);
+    app_test_write_raw(under(sharedDir, "note.txt"), "everyone");
+    check("a folder the application allows is reached by both windows", app.allowFolder(sharedDir) &&
+          readOf(app, a, "f1", under(sharedDir, "note.txt")) == "0 {\"text\":\"everyone\"}" && readOf(app, b, "f2", under(sharedDir, "note.txt")) == "0 {\"text\":\"everyone\"}");
+
+    // a program in which one window picks and another opens can say so
+    app.shareGrants(true);
+    check("with shareGrants(true) B reads what A's user picked and A what was dropped on B", readOf(app, b, "s1", pickedInA) == "0 {\"text\":\"A's file\"}" &&
+          readOf(app, a, "s2", droppedOnB) == "0 {\"text\":\"B's file\"}");
+    app.shareGrants(false);
+    check("and with shareGrants(false) it is closed again", forbidden(readOf(app, b, "s3", pickedInA)) && forbidden(readOf(app, a, "s4", droppedOnB)));
+
+    // a window's own list of commands is a second, independent limit
     std::vector<string> onlyPing;
     onlyPing.push_back("ping");
     Window windowB = app.windows.get(b);
     check("B is given a list of its own that leaves out the file commands", windowB.allowOnlyCommands(onlyPing));
-    check("then B cannot read what A's user picked, nor its own dropped file (the command is forbidden to it)",
-          startsWithText(readOf(app, b, "r6", pickedInA), "1 {\"code\":\"forbidden\"") && startsWithText(readOf(app, b, "r7", droppedOnB), "1 {\"code\":\"forbidden\""));
+    check("then B cannot even read its own dropped file (the command is forbidden to it)", forbidden(readOf(app, b, "r7", droppedOnB)));
     check("and A, which has the whole list, still reads what its user picked", readOf(app, a, "r8", pickedInA) == "0 {\"text\":\"A's file\"}");
+
+    // a closed window keeps no grants
+    app.shareGrants(true);
+    app_test_close_window(a);
+    int rounds = 0;
+    while (app.windows.count() > 1 && rounds < 100) {
+        app.serveOne(20);
+        rounds = rounds + 1;
+    }
+    check("window A closed", app.windows.count() == 1);
+    Window windowB2 = app.windows.get(b);
+    std::vector<string> everything;
+    everything.push_back("ping");
+    everything.push_back("fs.read");
+    check("B may call fs.read again", windowB2.allowOnlyCommands(everything));
+    check("even with grants shared, what A's user picked was withdrawn when A closed", forbidden(readOf(app, b, "c1", pickedInA)));
+    check("what was dropped on B is still B's", readOf(app, b, "c2", droppedOnB) == "0 {\"text\":\"B's file\"}");
 
     // revoking: the program ends every grant at once
     app.revokeGrants();
-    check("after revokeGrants neither window reads a granted file", startsWithText(readOf(app, a, "r9", pickedInA), "1 {\"code\":\"forbidden\"") &&
-          startsWithText(readOf(app, a, "r10", droppedOnB), "1 {\"code\":\"forbidden\""));
+    check("after revokeGrants B no longer reads what was dropped on it", forbidden(readOf(app, b, "r10", droppedOnB)));
     return 0;
 }

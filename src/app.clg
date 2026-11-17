@@ -110,6 +110,7 @@ public:
         laters = new LaterBook();
         pumps = new PumpBook();
         gate = new FileGate();
+        dispatcher.files = gate;
         settings = new SettingsStore();
         links = new LinkRules();
         httpRules = new HttpRules();
@@ -365,7 +366,9 @@ public:
 
     // A "drop" record from window `from` becomes the event drop.files (see DropRules.eventFor).
     void onDropRecord(int from, std::vector<string> f) {
+        gate.caller = from;                       // what is dropped on a window is granted to that window
         string made = drops.eventFor(f);
+        gate.caller = 0;
         if (made.length() > 0) {
             emitEvent(from, "drop.files", made);
         }
@@ -373,6 +376,13 @@ public:
 
     void revokeGrants() {
         gate.revokeGrants();
+    }
+
+    // By default a file the user picked in a window's dialog or dropped on a window can be read only by that window (and the grant ends when the window closes);
+    // a folder the application allowed with allowFolder is every window's. `shareGrants(true)` makes every grant every window's again, for a program in which one
+    // window picks and another opens. It applies to grants made from now on and to the ones that exist.
+    void shareGrants(bool on) {
+        gate.shared = on;
     }
 
     // Registers fs.read, fs.readBytes, fs.write, fs.writeBytes, fs.list, fs.stat, fs.exists, fs.mkdir and fs.remove. Every path goes through the FileGate, which checks it
@@ -882,11 +892,13 @@ public:
         }
         string id = f[1];
         FsResult g = new FsResult(0, "");
+        gate.caller = from;                       // the grant belongs to the window whose dialog it was
         if (f[2] == "1") {
             g = gate.grantFolder(f[3]);
         } else {
             g = gate.grantFile(f[3]);
         }
+        gate.caller = 0;
         if (g.status != 0) {
             replyError(from, id, fsCodeFor(g.status), "the chosen path cannot be used");
             return;
@@ -1859,6 +1871,7 @@ public:
 
     // A window's queue closed: its work is told to stop (callCancelled), its book entries go, and the next window becomes the primary one if this was.
     void windowGone(int gone) {
+        gate.revokeGrantsOf(gone);                // a closed window keeps no grants
         app_cancel_all(gone);
         dispatcher.forgetWindow(gone);
         laters.forgetWindow(gone);

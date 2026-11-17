@@ -140,7 +140,9 @@ public:
     // the thread is stopped and "stopped" is the last event.
     void flush(FileGate gate, int handle, int index) {
         WatchState s = states[index];
+        gate.caller = handle;                     // the watch is this window's: it is checked with what this window may reach
         FsResult now = gate.resolve(s.root, 2);
+        gate.caller = 0;
         if (now.status != 0 || now.text != s.root) {
             string reason = "access_revoked";
             if (now.status == 2) {

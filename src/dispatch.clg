@@ -169,6 +169,7 @@ public:
 
     CommandRules rules;
     CallContext caller;
+    FileGate files;                    // the file policy: told which window is calling, so a grant is only seen by the window that got it
 
     Dispatcher() {
         defaultTimeoutMs = 0;
@@ -408,8 +409,14 @@ public:
             // a local first: the checker cannot resolve a method call made directly on `handlers[index]`
             Command handler = handlers[index];
             caller.handle = appHandle;
+            if (files != nullptr) {
+                files.caller = appHandle;
+            }
             Item result = handler.call(args);
             caller.handle = 0;
+            if (files != nullptr) {
+                files.caller = 0;
+            }
             if (result == nullptr) {
                 return new Reply(0, "null");
             }
@@ -420,6 +427,9 @@ public:
             return new Reply(0, text);
         } catch (string message) {
             caller.handle = 0;
+            if (files != nullptr) {
+                files.caller = 0;
+            }
             return new Reply(1, errorJson(errorCodeOf(message), errorTextOf(message)));
         }
         return new Reply(1, errorJson("internal", "unreachable"));

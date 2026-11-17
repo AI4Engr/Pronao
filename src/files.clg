@@ -112,10 +112,22 @@ public:
     std::vector<string> paths;     // canonical plain paths, no trailing separator (except a drive or "/")
     std::vector<int> exact;        // 1: a granted FILE, only this very path matches
     std::vector<int> grant;        // 1: added by a dialog, withdrawable
+    std::vector<int> owner;        // the window a grant came from (0: a folder the application allowed, which every window sees)
+    int caller;                    // the window whose request is being served (0: the application's own code, which sees every grant)
+    bool shared;                   // true: every window sees every grant (what the policy did before grants belonged to windows)
     int windows;
 
     FileGate() {
         windows = app_os_windows();
+        caller = 0;
+        shared = false;
+    }
+
+    // Whether entry i counts for the request being served. A folder the application allowed counts for everybody; a grant (a file the user
+    // picked in a dialog or dropped on a window) counts only for the window it came from, unless the application said grants are shared.
+    // (A grant made by the application's own code, with no window calling, has owner 0 and counts for everybody.)
+    bool seen(int i) {
+        return grant[i] == 0 || owner[i] == 0 || caller == 0 || shared || owner[i] == caller;
     }
 
     string sep() {
@@ -145,6 +157,10 @@ public:
     bool allowedFinal(string fin) {
         int i = 0;
         while (i < paths.size()) {
+            if (!seen(i)) {
+                i = i + 1;
+                continue;
+            }
             if (exact[i] == 1) {
                 if (fin == paths[i]) {
                     return true;
@@ -165,6 +181,10 @@ public:
         }
         int i = 0;
         while (i < paths.size()) {
+            if (!seen(i)) {
+                i = i + 1;
+                continue;
+            }
             string r = paths[i];
             if (windows == 1) {
                 r = lowerAscii(r);
@@ -185,7 +205,7 @@ public:
     bool isRootItself(string fin) {
         int i = 0;
         while (i < paths.size()) {
-            if (exact[i] == 0 && paths[i] == fin) {
+            if (seen(i) && exact[i] == 0 && paths[i] == fin) {
                 return true;
             }
             i = i + 1;
@@ -205,11 +225,14 @@ public:
         return "";
     }
 
+    // how many grants the current window holds (the limit of 256 is per window)
     int grantCount() {
         int n = 0;
         int i = 0;
         while (i < grant.size()) {
-            n = n + grant[i];
+            if (grant[i] == 1 && owner[i] == caller) {
+                n = n + 1;
+            }
             i = i + 1;
         }
         return n;
@@ -456,6 +479,11 @@ public:
         paths.push_back(p);
         exact.push_back(isExact);
         grant.push_back(isGrant);
+        if (isGrant == 1) {
+            owner.push_back(caller);
+        } else {
+            owner.push_back(0);
+        }
     }
 
     void clear() {
@@ -463,6 +491,7 @@ public:
             paths.pop_back();
             exact.pop_back();
             grant.pop_back();
+            owner.pop_back();
         }
     }
 
@@ -472,7 +501,7 @@ public:
         string canonical = fin;
         int i = 0;
         while (i < paths.size()) {
-            if (grant[i] == 1 && exact[i] == isExact && paths[i] == canonical) {
+            if (grant[i] == 1 && owner[i] == caller && exact[i] == isExact && paths[i] == canonical) {
                 return new FsResult(0, canonical);
             }
             i = i + 1;
@@ -533,23 +562,40 @@ public:
         return addGrant(join(parent.fin, leaf), 1);
     }
 
+    // Ends every grant, whichever window it came from (the application's own folders stay).
     void revokeGrants() {
+        revokeWhere(-1);
+    }
+
+    // Ends the grants one window holds (a closed window keeps none).
+    void revokeGrantsOf(int window) {
+        revokeWhere(window);
+    }
+
+    void revokeWhere(int window) {
         std::vector<string> keptPaths;
         std::vector<int> keptExact;
+        std::vector<int> keptGrant;
+        std::vector<int> keptOwner;
         int i = 0;
         while (i < paths.size()) {
-            if (grant[i] == 0) {
+            if (grant[i] == 0 || (window >= 0 && owner[i] != window)) {
                 keptPaths.push_back(paths[i]);
                 keptExact.push_back(exact[i]);
+                keptGrant.push_back(grant[i]);
+                keptOwner.push_back(owner[i]);
             }
             i = i + 1;
         }
         clear();
         int k = 0;
+        int savedCaller = caller;
         while (k < keptPaths.size()) {
-            add(keptPaths[k], keptExact[k], 0);
+            caller = keptOwner[k];
+            add(keptPaths[k], keptExact[k], keptGrant[k]);
             k = k + 1;
         }
+        caller = savedCaller;
     }
 
     // An existing path the file commands could reach, as its canonical absolute form (links resolved), or the failure.

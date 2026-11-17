@@ -106,7 +106,8 @@ const { button } = await pronao.dialog.message({ title: 'Delete?', message: 'Del
 ```
 **A pick is a grant.** What the user chooses in a native dialog becomes reachable through the file commands, exactly that
 file (or, for a folder pick, that folder), and nothing around it: the neighbour files and the parent are still refused,
-and `app.revokeGrants()` withdraws all of it. So a page cannot reach a file the application did not give it and the user
+and `app.revokeGrants()` withdraws all of it. The grant belongs to the window whose dialog it was: another window of the same program cannot use it (unless the
+application calls `app.shareGrants(true)`), and it ends when that window closes ([chapter 8](08-security.md)). So a page cannot reach a file the application did not give it and the user
 did not choose. The returned `path` is in the form the file commands accept (links resolved); use it as is. Dialogs are
 asynchronous commands, so the rest of the application keeps running while one is open. Filters are checked (at most 20,
 extensions of letters, digits, `_` and `-`), as are titles and messages (200 and 4000 bytes). Windows only for now (the
@@ -126,7 +127,7 @@ pronao.onDrop(async ({ x, y, files, skipped }) => {      // files: [{path, kind:
 pronao.onDragEnter(({ x, y }) => {}); pronao.onDragOver(({ x, y }) => {}); pronao.onDragLeave(() => {});    // to draw a drop zone
 ```
 
-- **What is granted:** exactly the dropped file (or folder, if allowed), as a dialog pick is: the file next to it is not reachable; at most 256 grants exist at a time (`app.revokeGrants()` takes them back). `skipped` counts the paths
+- **What is granted:** exactly the dropped file (or folder, if allowed), as a dialog pick is: the file next to it is not reachable; at most 256 grants per window exist at a time, and a drop is granted to the window it was dropped on (`app.revokeGrants()` takes them all back). `skipped` counts the paths
   that were over the limit, are not plain text, do not exist (any more), or are folders when folders are not accepted.
 - **Where the paths come from.** The browser engine owns the window's drop target, and the program cannot take it over (tried: a drop target registered on the program's own window is never asked, because the engine's windows sit
   between the pointer and it). So `src/bridge.js` listens to the page's drag events and, on a drop, hands the engine the files (`postMessageWithAdditionalObjects`); the engine names their paths for the program. This needs

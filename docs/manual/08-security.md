@@ -22,12 +22,13 @@ app.allowOnlyCommands(names);                    // optional: this window's page
 - **A window's own command list.** `app.allowOnlyCommands(names)` (after the commands are registered) limits what this window's
   page can call; anything else, registered or not, is answered `{code: "forbidden"}` (so names cannot be probed), and a name that
   is not registered makes the call return false and change nothing. (One `App` now serves any number of windows, each with a list of its own.)
-- **What a second window can reach (checked 2026-11-16, `tests/isolation_main.clg`).** The folders the application allowed and the files the user gave (a dialog pick, a dropped
-  file) belong to **the program**, not to a window: the file policy keeps no record of which window a grant came from. So when the user picks a file in window A, window B's page
-  can read it too, if B may call `fs.read`; a file dropped on B is readable from A. Windows of one program share one site and one origin, so both pages are the application's own
-  code, but if one of them shows something less trusted, give it a list of its own (`allowOnlyCommands`) that leaves the file commands out: the test shows such a window gets
-  `forbidden` for both kinds of grant. `revokeGrants()` ends every grant at once. **Not done:** grants that belong to the window that received them (and end when it closes).
-  The two checks that describe today's behaviour are marked KNOWN GAP in the test and are the ones that change when that is built.
+- **What a second window can reach (2026-11-16, `tests/isolation_main.clg`, 23 checks and five controls).** The folders the application allowed (`allowFolder`) are every
+  window's. A **grant**, a file the user picked in a window's dialog or dropped on a window, belongs to **that window**: when the user picks a file in window A, window B's page
+  cannot read it (`forbidden`), and a file dropped on B cannot be read from A. A grant ends when its window closes, `revokeGrants()` still ends every grant at once, and the
+  limit of 256 is per window. A program in which one window picks and another opens can say so with `app.shareGrants(true)` (every window then sees every grant that exists;
+  switching it off closes them again). Before this date the policy was program-wide: the test found that B read what A's user picked. A window's own list of commands
+  (`allowOnlyCommands`) is a second, independent limit. **Not done:** handing one grant to one other window (there is only the switch for all), and grants per origin (all
+  windows of a program share one site and one origin, so the window is the unit).
 
 ## What is and is not checked
 
